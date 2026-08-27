@@ -473,6 +473,10 @@ func recordAzureDeployment(ctx context.Context, client *http.Client, baseURL, cl
 		"managed_identity_name": config.ManagedIdentityName, "bot_resource_name": config.BotResourceName,
 		"runtime_image": config.RuntimeImage, "runtime_control_plane_url": config.RuntimeControlPlaneURL,
 	}
+	if config.CreateTeamsApp {
+		metadata["teams_app_created_by_kei"] = "true"
+		metadata["teams_app_id"] = config.TeamsAppID
+	}
 	return runtimeInstallationAction(ctx, client, baseURL, cliToken, config.InstallationID, "deployment", map[string]any{"deployment": metadata})
 }
 
