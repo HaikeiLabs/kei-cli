@@ -115,6 +115,10 @@ type azureDeploymentConfig struct {
 	TeamsAppPasswordSecretName   string
 	TeamsAppID                   string
 	TeamsTenantID                string
+	CreateTeamsApp               bool
+	TeamsAppDisplayName          string
+	TeamsAppPassword             string
+	TeamsManifestPath            string
 	RuntimeControlPlaneURL       string
 	RuntimeImage                 string
 	ContainerAppName             string
@@ -144,6 +148,9 @@ func runBotDeployCommand(args []string, stdout, stderr io.Writer, client *http.C
 	teamsAppPasswordSecretName := flags.String("teams-app-password-secret", "", "existing Key Vault secret name for the Teams app password")
 	teamsAppID := flags.String("teams-app-id", "", "Microsoft Entra application (client) ID")
 	teamsTenantID := flags.String("teams-tenant-id", "", "Microsoft Entra tenant ID")
+	createTeamsApp := flags.Bool("create-teams-app", false, "create a single-tenant Microsoft Entra app and service principal using the active Azure login")
+	teamsAppDisplayName := flags.String("teams-app-display-name", "", "display name for a newly created Teams app")
+	teamsManifestPath := flags.String("teams-manifest", "", "write a Teams app manifest with the deployed bot endpoint")
 	runtimeControlPlaneURL := flags.String("runtime-control-plane-url", "", "public Kei runtime control-plane URL")
 	runtimeImage := flags.String("image", "", "published Kei Bot Runtime OCI image")
 	containerAppName := flags.String("app-name", "", "Container App name")
@@ -163,6 +170,9 @@ func runBotDeployCommand(args []string, stdout, stderr io.Writer, client *http.C
 		TeamsAppPasswordSecretName:   *teamsAppPasswordSecretName,
 		TeamsAppID:                   *teamsAppID,
 		TeamsTenantID:                *teamsTenantID,
+		CreateTeamsApp:               *createTeamsApp,
+		TeamsAppDisplayName:          *teamsAppDisplayName,
+		TeamsManifestPath:            *teamsManifestPath,
 		RuntimeControlPlaneURL:       *runtimeControlPlaneURL,
 		RuntimeImage:                 *runtimeImage,
 		ContainerAppName:             *containerAppName,
@@ -187,25 +197,38 @@ func newAzureDeploymentConfig(config azureDeploymentConfig) (azureDeploymentConf
 	if err != nil {
 		return config, errors.New("--installation must be a UUID")
 	}
-	if config.ResourceGroup == "" || config.Location == "" || config.KeyVaultName == "" || config.TeamsAppPasswordSecretName == "" || config.TeamsAppID == "" || config.TeamsTenantID == "" || config.RuntimeControlPlaneURL == "" || config.RuntimeImage == "" {
-		return config, errors.New("--installation, --resource-group, --location, --key-vault, --teams-app-password-secret, --teams-app-id, --teams-tenant-id, --runtime-control-plane-url, and --image are required")
+	if config.ResourceGroup == "" || config.Location == "" || config.KeyVaultName == "" || config.RuntimeControlPlaneURL == "" || config.RuntimeImage == "" {
+		return config, errors.New("--installation, --resource-group, --location, --key-vault, --runtime-control-plane-url, and --image are required")
+	}
+	if !config.CreateTeamsApp && (config.TeamsAppPasswordSecretName == "" || config.TeamsAppID == "" || config.TeamsTenantID == "") {
+		return config, errors.New("existing-app deployments require --teams-app-password-secret, --teams-app-id, and --teams-tenant-id (or use --create-teams-app)")
 	}
 	if !azureKeyVaultNamePattern.MatchString(config.KeyVaultName) {
 		return config, errors.New("--key-vault must be a valid Azure Key Vault name")
 	}
+	shortID := strings.ReplaceAll(installation.String(), "-", "")[:12]
+	if config.CreateTeamsApp && config.TeamsAppDisplayName == "" {
+		config.TeamsAppDisplayName = "Kei Bot " + shortID
+	}
+	if config.TeamsAppPasswordSecretName == "" {
+		config.TeamsAppPasswordSecretName = "kei-teams-app-password-" + shortID
+	}
 	if !azureSecretNamePattern.MatchString(config.TeamsAppPasswordSecretName) {
 		return config, errors.New("--teams-app-password-secret must be a valid Key Vault secret name")
 	}
-	if _, err := uuid.Parse(config.TeamsAppID); err != nil {
-		return config, errors.New("--teams-app-id must be a UUID")
+	if config.TeamsAppID != "" {
+		if _, err := uuid.Parse(config.TeamsAppID); err != nil {
+			return config, errors.New("--teams-app-id must be a UUID")
+		}
 	}
-	if _, err := uuid.Parse(config.TeamsTenantID); err != nil {
-		return config, errors.New("--teams-tenant-id must be a UUID")
+	if config.TeamsTenantID != "" {
+		if _, err := uuid.Parse(config.TeamsTenantID); err != nil {
+			return config, errors.New("--teams-tenant-id must be a UUID")
+		}
 	}
 	if err := validateRuntimeControlPlaneURL(config.RuntimeControlPlaneURL); err != nil {
 		return config, err
 	}
-	shortID := strings.ReplaceAll(installation.String(), "-", "")[:12]
 	if config.RuntimeSecretName == "" {
 		config.RuntimeSecretName = "kei-runtime-" + shortID
 	}
@@ -259,7 +282,24 @@ func deployAzure(ctx context.Context, apiURL string, config azureDeploymentConfi
 	if err := requireAzureKeyVaultRBAC(ctx, config, runner); err != nil {
 		return err
 	}
+	if config.CreateTeamsApp {
+		if err := provisionTeamsApp(ctx, &config, runner); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Created Microsoft Entra app %s for the Teams bot.\n", config.TeamsAppID)
+	}
 	vaultURL := azureKeyVaultURL(config.KeyVaultName)
+	if config.TeamsAppPassword != "" {
+		exists, err := vault.Exists(ctx, vaultURL, config.TeamsAppPasswordSecretName)
+		if err != nil {
+			return fmt.Errorf("check Teams app password in Azure Key Vault: %w", err)
+		}
+		if !exists {
+			if err := vault.Set(ctx, vaultURL, config.TeamsAppPasswordSecretName, config.TeamsAppPassword); err != nil {
+				return errors.New("could not write the Teams app password to Azure Key Vault")
+			}
+		}
+	}
 	exists, err := vault.Exists(ctx, vaultURL, config.RuntimeSecretName)
 	if err != nil {
 		return fmt.Errorf("check runtime secret in Azure Key Vault: %w", err)
@@ -280,6 +320,11 @@ func deployAzure(ctx context.Context, apiURL string, config azureDeploymentConfi
 	if err := applyAzureBicep(ctx, config, runner); err != nil {
 		return fmt.Errorf("apply Azure deployment: %w", err)
 	}
+	if config.TeamsManifestPath != "" {
+		if err := writeTeamsManifest(ctx, config, runner); err != nil {
+			return err
+		}
+	}
 	if err := recordAzureDeployment(ctx, client, baseURL, cliToken, config); err != nil {
 		return err
 	}
@@ -292,6 +337,80 @@ func deployAzure(ctx context.Context, apiURL string, config azureDeploymentConfi
 	}
 	fmt.Fprintln(stdout, "Azure Teams runtime deployment completed.")
 	fmt.Fprintf(stdout, "Runtime credential reference: %s/secrets/%s\n", vaultURL, config.RuntimeSecretName)
+	return nil
+}
+
+type azureAppRegistration struct {
+	AppID string `json:"appId"`
+}
+
+type azureAppCredential struct {
+	Password string `json:"password"`
+}
+
+// provisionTeamsApp uses Azure CLI's Microsoft Graph-backed app commands so
+// customers do not need to manually create an Entra app for the one-shot path.
+// The generated password is held in memory only long enough to write Key Vault.
+func provisionTeamsApp(ctx context.Context, config *azureDeploymentConfig, runner azureCommandRunner) error {
+	name := config.TeamsAppDisplayName
+	appOutput, err := runner.Output(ctx, "az", "ad", "app", "create", "--display-name", name, "--sign-in-audience", "AzureADMyOrg", "--query", "{appId:appId}", "--output", "json", "--only-show-errors")
+	if err != nil {
+		return fmt.Errorf("create Microsoft Entra app: %w", err)
+	}
+	var app azureAppRegistration
+	if err := json.Unmarshal(appOutput, &app); err != nil || app.AppID == "" {
+		return errors.New("create Microsoft Entra app returned no application ID")
+	}
+	if _, err := uuid.Parse(app.AppID); err != nil {
+		return errors.New("create Microsoft Entra app returned an invalid application ID")
+	}
+	if err := runner.Run(ctx, "az", "ad", "sp", "create", "--id", app.AppID, "--only-show-errors"); err != nil {
+		return fmt.Errorf("create Teams app service principal: %w", err)
+	}
+	secretOutput, err := runner.Output(ctx, "az", "ad", "app", "credential", "reset", "--id", app.AppID, "--append", "--display-name", "kei-runtime", "--years", "2", "--query", "{password:password}", "--output", "json", "--only-show-errors")
+	if err != nil {
+		return fmt.Errorf("create Teams app client secret: %w", err)
+	}
+	var credential azureAppCredential
+	if err := json.Unmarshal(secretOutput, &credential); err != nil || credential.Password == "" {
+		return errors.New("create Teams app client secret returned no password")
+	}
+	tenantOutput, err := runner.Output(ctx, "az", "account", "show", "--query", "tenantId", "--output", "tsv", "--only-show-errors")
+	if err != nil {
+		return fmt.Errorf("resolve Azure tenant: %w", err)
+	}
+	tenantID := strings.TrimSpace(string(tenantOutput))
+	if _, err := uuid.Parse(tenantID); err != nil {
+		return errors.New("Azure account returned an invalid tenant ID")
+	}
+	config.TeamsAppID, config.TeamsTenantID, config.TeamsAppPassword = app.AppID, tenantID, credential.Password
+	return nil
+}
+
+func writeTeamsManifest(ctx context.Context, config azureDeploymentConfig, runner azureCommandRunner) error {
+	output, err := runner.Output(ctx, "az", "containerapp", "show", "--name", config.ContainerAppName, "--resource-group", config.ResourceGroup, "--query", "properties.configuration.ingress.fqdn", "--output", "tsv", "--only-show-errors")
+	if err != nil {
+		return fmt.Errorf("resolve deployed Teams bot endpoint: %w", err)
+	}
+	fqdn := strings.TrimSpace(string(output))
+	if fqdn == "" {
+		return errors.New("deployed Teams bot has no public endpoint")
+	}
+	manifest := map[string]any{
+		"$schema":         "https://developer.microsoft.com/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
+		"manifestVersion": "1.16", "version": "1.0.0", "id": config.TeamsAppID,
+		"packageName": "com.haikeilabs.kei.bot", "developer": map[string]string{"name": "Kei", "websiteUrl": "https://haikeilabs.com", "privacyUrl": "https://haikeilabs.com/privacy", "termsOfUseUrl": "https://haikeilabs.com/terms"},
+		"name": map[string]string{"short": "Kei Bot", "full": "Kei Bot"}, "description": map[string]string{"short": "Kei policy-aware bot", "full": "Kei policy-aware Teams bot"},
+		"icons": map[string]string{"outline": "outline.png", "color": "color.png"}, "accentColor": "#FFFFFF",
+		"staticTabs": []any{}, "bots": []any{map[string]any{"botId": config.TeamsAppID, "scopes": []string{"personal", "team", "groupchat"}, "supportsFiles": false, "isNotificationOnly": false, "webApplicationInfo": map[string]string{"id": config.TeamsAppID, "resource": "https://api.botframework.com"}, "validDomains": []string{fqdn}}},
+	}
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode Teams manifest: %w", err)
+	}
+	if err := os.WriteFile(config.TeamsManifestPath, append(data, '\n'), 0o600); err != nil {
+		return fmt.Errorf("write Teams manifest: %w", err)
+	}
 	return nil
 }
 

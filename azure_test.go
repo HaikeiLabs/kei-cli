@@ -218,6 +218,51 @@ func TestAzureDeploymentConfigRejectsInsecureControlPlaneURL(t *testing.T) {
 	}
 }
 
+type provisioningAzureRunner struct {
+	runs []string
+}
+
+func (r *provisioningAzureRunner) Run(_ context.Context, name string, args ...string) error {
+	r.runs = append(r.runs, name+" "+strings.Join(args, " "))
+	return nil
+}
+
+func (r *provisioningAzureRunner) Output(_ context.Context, name string, args ...string) ([]byte, error) {
+	command := name + " " + strings.Join(args, " ")
+	r.runs = append(r.runs, command)
+	switch {
+	case strings.Contains(command, "ad app create"):
+		return []byte(`{"appId":"42345678-1234-1234-1234-123456789012"}`), nil
+	case strings.Contains(command, "credential reset"):
+		return []byte(`{"password":"one-time-password"}`), nil
+	case strings.Contains(command, "account show"):
+		return []byte("52345678-1234-1234-1234-123456789012\n"), nil
+	default:
+		return nil, errors.New("unexpected command: " + command)
+	}
+}
+
+func TestProvisionTeamsAppUsesAzureCLIWithoutReturningSecret(t *testing.T) {
+	config := testAzureDeploymentConfig(t)
+	config.CreateTeamsApp = true
+	config.TeamsAppDisplayName = "Customer Kei Bot"
+	runner := &provisioningAzureRunner{}
+	if err := provisionTeamsApp(context.Background(), &config, runner); err != nil {
+		t.Fatal(err)
+	}
+	if config.TeamsAppID != "42345678-1234-1234-1234-123456789012" || config.TeamsTenantID != "52345678-1234-1234-1234-123456789012" {
+		t.Fatalf("unexpected app identity: %+v", config)
+	}
+	if config.TeamsAppPassword != "one-time-password" {
+		t.Fatalf("password was not retained for Key Vault handoff")
+	}
+	for _, command := range runner.runs {
+		if strings.Contains(command, "one-time-password") {
+			t.Fatalf("client secret leaked into Azure CLI command: %q", command)
+		}
+	}
+}
+
 func TestDeployAzureRejectsVaultWithoutRBACBeforeCredentialRequest(t *testing.T) {
 	config := testAzureDeploymentConfig(t)
 	store := &memoryCredentialStore{server: "https://kei.example.test", token: "cli-access-token"}
