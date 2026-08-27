@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
@@ -119,6 +121,7 @@ type azureDeploymentConfig struct {
 	ContainerAppsEnvironmentName string
 	ManagedIdentityName          string
 	BotResourceName              string
+	RuntimeHeartbeatTimeout      time.Duration
 }
 
 type runtimeCredentialResponse struct {
@@ -147,6 +150,7 @@ func runBotDeployCommand(args []string, stdout, stderr io.Writer, client *http.C
 	containerAppsEnvironmentName := flags.String("environment-name", "", "Container Apps environment name")
 	managedIdentityName := flags.String("identity-name", "", "user-assigned managed identity name")
 	botResourceName := flags.String("bot-name", "", "Azure Bot resource name")
+	heartbeatTimeout := flags.Duration("heartbeat-timeout", 5*time.Minute, "maximum time to wait for the runtime heartbeat")
 	if err := flags.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -165,6 +169,7 @@ func runBotDeployCommand(args []string, stdout, stderr io.Writer, client *http.C
 		ContainerAppsEnvironmentName: *containerAppsEnvironmentName,
 		ManagedIdentityName:          *managedIdentityName,
 		BotResourceName:              *botResourceName,
+		RuntimeHeartbeatTimeout:      *heartbeatTimeout,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "bot deploy azure: %v\n", err)
@@ -222,6 +227,12 @@ func newAzureDeploymentConfig(config azureDeploymentConfig) (azureDeploymentConf
 	if config.BotResourceName == "" {
 		config.BotResourceName = config.ContainerAppName
 	}
+	if config.RuntimeHeartbeatTimeout == 0 {
+		config.RuntimeHeartbeatTimeout = 5 * time.Minute
+	}
+	if config.RuntimeHeartbeatTimeout < time.Second {
+		return config, errors.New("--heartbeat-timeout must be at least one second")
+	}
 	return config, nil
 }
 
@@ -269,8 +280,155 @@ func deployAzure(ctx context.Context, apiURL string, config azureDeploymentConfi
 	if err := applyAzureBicep(ctx, config, runner); err != nil {
 		return fmt.Errorf("apply Azure deployment: %w", err)
 	}
+	if err := recordAzureDeployment(ctx, client, baseURL, cliToken, config); err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, "Waiting for the deployed runtime to report its installation heartbeat...")
+	if err := waitForRuntimeHeartbeat(ctx, client, baseURL, cliToken, config.InstallationID, config.RuntimeHeartbeatTimeout); err != nil {
+		return err
+	}
+	if err := runtimeInstallationAction(ctx, client, baseURL, cliToken, config.InstallationID, "bind", nil); err != nil {
+		return err
+	}
 	fmt.Fprintln(stdout, "Azure Teams runtime deployment completed.")
 	fmt.Fprintf(stdout, "Runtime credential reference: %s/secrets/%s\n", vaultURL, config.RuntimeSecretName)
+	return nil
+}
+
+type runtimeInstallationStatus struct {
+	ID              string         `json:"id"`
+	Platform        string         `json:"platform,omitempty"`
+	DisplayName     string         `json:"display_name,omitempty"`
+	Status          string         `json:"status"`
+	BindingStatus   string         `json:"binding_status"`
+	Deployment      map[string]any `json:"deployment,omitempty"`
+	RuntimeVersion  *string        `json:"runtime_version,omitempty"`
+	LastHeartbeatAt *time.Time     `json:"last_heartbeat_at,omitempty"`
+}
+
+// runBotStatusCommand prints installation state and safe deployment metadata.
+// The runtime credential is never returned by the status endpoint.
+func runBotStatusCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
+	flags := flag.NewFlagSet("bot status", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	apiURL := flags.String("api-url", keiWebURL(), "Kei web URL")
+	installationID := flags.String("installation", "", "Kei installation ID")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if flags.NArg() != 0 || *installationID == "" {
+		fmt.Fprintln(stderr, "bot status requires --installation ID")
+		return 2
+	}
+	if _, err := uuid.Parse(*installationID); err != nil {
+		fmt.Fprintln(stderr, "bot status: --installation must be a UUID")
+		return 2
+	}
+	baseURL, err := normalizedKeiWebURL(*apiURL)
+	if err != nil {
+		fmt.Fprintf(stderr, "bot status: %v\n", err)
+		return 2
+	}
+	cliToken, err := store.Load(baseURL)
+	if err != nil {
+		fmt.Fprintln(stderr, "bot status: not logged in; run kei login first")
+		return 1
+	}
+	status, err := getRuntimeInstallationStatus(context.Background(), client, baseURL, cliToken, *installationID)
+	if err != nil {
+		fmt.Fprintf(stderr, "bot status: %v\n", err)
+		return 1
+	}
+	if err := json.NewEncoder(stdout).Encode(status); err != nil {
+		fmt.Fprintf(stderr, "bot status: write response: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func recordAzureDeployment(ctx context.Context, client *http.Client, baseURL, cliToken string, config azureDeploymentConfig) error {
+	metadata := map[string]string{
+		"provider": "azure", "resource_group": config.ResourceGroup, "location": config.Location,
+		"key_vault_name": config.KeyVaultName, "runtime_secret_name": config.RuntimeSecretName,
+		"container_app_name": config.ContainerAppName, "container_apps_environment_name": config.ContainerAppsEnvironmentName,
+		"managed_identity_name": config.ManagedIdentityName, "bot_resource_name": config.BotResourceName,
+		"runtime_image": config.RuntimeImage, "runtime_control_plane_url": config.RuntimeControlPlaneURL,
+	}
+	return runtimeInstallationAction(ctx, client, baseURL, cliToken, config.InstallationID, "deployment", map[string]any{"deployment": metadata})
+}
+
+func waitForRuntimeHeartbeat(ctx context.Context, client *http.Client, baseURL, cliToken, installationID string, timeout time.Duration) error {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		status, err := getRuntimeInstallationStatus(ctx, client, baseURL, cliToken, installationID)
+		if err != nil {
+			return err
+		}
+		if status.LastHeartbeatAt != nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return errors.New("timed out waiting for the deployed runtime heartbeat; the installation remains pending")
+		case <-ticker.C:
+		}
+	}
+}
+
+func getRuntimeInstallationStatus(ctx context.Context, client *http.Client, baseURL, cliToken, installationID string) (*runtimeInstallationStatus, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/cli/runtime-installations/"+url.PathEscape(installationID), nil)
+	if err != nil {
+		return nil, fmt.Errorf("build runtime status request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+cliToken)
+	response, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("get runtime status: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("runtime status returned %d", response.StatusCode)
+	}
+	var status runtimeInstallationStatus
+	if err := json.NewDecoder(io.LimitReader(response.Body, 32<<10)).Decode(&status); err != nil {
+		return nil, fmt.Errorf("decode runtime status: %w", err)
+	}
+	if status.ID == "" {
+		return nil, errors.New("runtime status response is incomplete")
+	}
+	return &status, nil
+}
+
+func runtimeInstallationAction(ctx context.Context, client *http.Client, baseURL, cliToken, installationID, action string, payload any) error {
+	var body io.Reader
+	if payload != nil {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("encode runtime %s request: %w", action, err)
+		}
+		body = bytes.NewReader(encoded)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/cli/runtime-installations/"+url.PathEscape(installationID)+"/"+action, body)
+	if err != nil {
+		return fmt.Errorf("build runtime %s request: %w", action, err)
+	}
+	req.Header.Set("Authorization", "Bearer "+cliToken)
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	response, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("runtime %s request: %w", action, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("runtime %s returned %d", action, response.StatusCode)
+	}
 	return nil
 }
 

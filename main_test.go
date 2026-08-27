@@ -113,3 +113,26 @@ func TestInitCreatesPublicInstallationWithoutExposingCredential(t *testing.T) {
 		t.Fatalf("init output exposed a credential: %q", output.String())
 	}
 }
+
+func TestBotStatusPrintsSafeInstallationMetadata(t *testing.T) {
+	installationID := "12345678-1234-1234-1234-123456789012"
+	store := &memoryCredentialStore{token: "cli-session-token"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/cli/runtime-installations/"+installationID || r.Method != http.MethodGet {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer cli-session-token" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		_, _ = w.Write([]byte(`{"id":"12345678-1234-1234-1234-123456789012","platform":"teams","status":"active","binding_status":"verified","deployment":{"key_vault_name":"customerkeivault","runtime_secret_name":"kei-runtime-123"}}`))
+	}))
+	defer server.Close()
+	store.server = server.URL
+	var stdout, stderr bytes.Buffer
+	if code := runBotStatusCommand([]string{"--api-url", server.URL, "--installation", installationID}, &stdout, &stderr, server.Client(), store); code != 0 {
+		t.Fatalf("status command exit = %d, stderr=%s", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "kh_live_") || !strings.Contains(stdout.String(), `"binding_status":"verified"`) {
+		t.Fatalf("unsafe or incomplete status output: %s", stdout.String())
+	}
+}

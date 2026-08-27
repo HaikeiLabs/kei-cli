@@ -111,14 +111,30 @@ func TestDeployAzureWritesRuntimeCredentialOnlyToKeyVault(t *testing.T) {
 	const runtimeToken = "kh_live_never_appear_in_output"
 	config := testAzureDeploymentConfig(t)
 	store := &memoryCredentialStore{token: "cli-access-token"}
+	var deploymentBody string
+	bound := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/cli/runtime-installations/12345678-1234-1234-1234-123456789012/credential" {
-			t.Fatalf("unexpected credential path %q", r.URL.Path)
-		}
 		if got := r.Header.Get("Authorization"); got != "Bearer cli-access-token" {
 			t.Fatalf("Authorization = %q", got)
 		}
-		json.NewEncoder(w).Encode(runtimeCredentialResponse{RuntimeToken: runtimeToken})
+		switch r.URL.Path {
+		case "/api/cli/runtime-installations/12345678-1234-1234-1234-123456789012/credential":
+			json.NewEncoder(w).Encode(runtimeCredentialResponse{RuntimeToken: runtimeToken})
+		case "/api/cli/runtime-installations/12345678-1234-1234-1234-123456789012/deployment":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			deploymentBody = string(body)
+			w.WriteHeader(http.StatusNoContent)
+		case "/api/cli/runtime-installations/12345678-1234-1234-1234-123456789012":
+			_, _ = w.Write([]byte(`{"id":"12345678-1234-1234-1234-123456789012","status":"pending","binding_status":"unverified","last_heartbeat_at":"2026-08-26T00:00:00Z"}`))
+		case "/api/cli/runtime-installations/12345678-1234-1234-1234-123456789012/bind":
+			bound = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
 	}))
 	defer server.Close()
 	store.server = server.URL
@@ -143,6 +159,12 @@ func TestDeployAzureWritesRuntimeCredentialOnlyToKeyVault(t *testing.T) {
 			t.Fatalf("runtime token leaked outside Key Vault: %q", value)
 		}
 	}
+	if strings.Contains(deploymentBody, runtimeToken) || !strings.Contains(deploymentBody, `"runtime_secret_name"`) {
+		t.Fatalf("unsafe or incomplete deployment metadata: %s", deploymentBody)
+	}
+	if !bound {
+		t.Fatal("installation was not bound after its heartbeat")
+	}
 	if !strings.Contains(runner.templateContent, "keyVaultUrl") || !strings.Contains(runner.templateContent, "KEI_RUNTIME_TOKEN") {
 		t.Fatal("Bicep template does not configure the Key Vault runtime-token reference")
 	}
@@ -150,15 +172,25 @@ func TestDeployAzureWritesRuntimeCredentialOnlyToKeyVault(t *testing.T) {
 
 func TestDeployAzureReusesExistingSecretWithoutRequestingCredential(t *testing.T) {
 	config := testAzureDeploymentConfig(t)
-	store := &memoryCredentialStore{server: "https://kei.example.test", token: "cli-access-token"}
 	vault := &recordingAzureSecretStore{exists: true}
 	runner := &recordingAzureCommandRunner{}
-	client := &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
-		return nil, errors.New("credential endpoint must not be called")
-	})}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/cli/runtime-installations/12345678-1234-1234-1234-123456789012/credential":
+			t.Fatal("credential endpoint must not be called")
+		case "/api/cli/runtime-installations/12345678-1234-1234-1234-123456789012/deployment", "/api/cli/runtime-installations/12345678-1234-1234-1234-123456789012/bind":
+			w.WriteHeader(http.StatusNoContent)
+		case "/api/cli/runtime-installations/12345678-1234-1234-1234-123456789012":
+			_, _ = w.Write([]byte(`{"id":"12345678-1234-1234-1234-123456789012","status":"pending","binding_status":"unverified","last_heartbeat_at":"2026-08-26T00:00:00Z"}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	store := &memoryCredentialStore{server: server.URL, token: "cli-access-token"}
 	var output bytes.Buffer
 
-	if err := deployAzure(context.Background(), store.server, config, &output, client, store, vault, runner); err != nil {
+	if err := deployAzure(context.Background(), store.server, config, &output, server.Client(), store, vault, runner); err != nil {
 		t.Fatal(err)
 	}
 	if vault.setCalls != 0 {
