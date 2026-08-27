@@ -77,7 +77,7 @@ func main() {
 
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Kei deployment CLI")
-	fmt.Fprintln(w, "\nUsage:\n  kei login [--api-url URL]\n  kei bot init --platform teams|discord|slack --agent ID --name NAME [--api-url URL]\n  kei bot status --installation ID [--api-url URL]\n  kei bot deploy azure --installation ID --resource-group NAME --location REGION --key-vault NAME --teams-app-password-secret NAME --teams-app-id ID --teams-tenant-id ID --runtime-control-plane-url URL --image OCI_IMAGE")
+	fmt.Fprintln(w, "\nUsage:\n  kei login [--api-url URL]\n  kei bot init --platform teams|discord|slack --agent ID --name NAME [--api-url URL]\n  kei bot status --installation ID [--api-url URL]\n  kei bot deploy azure --installation ID --resource-group NAME --location REGION --key-vault NAME --teams-app-password-secret NAME --teams-app-id ID --teams-tenant-id ID --runtime-control-plane-url URL --image OCI_IMAGE\n  kei bot destroy azure --installation ID [--confirm-destroy ID] [--api-url URL]")
 }
 
 func runLoginCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
@@ -110,6 +110,8 @@ func runBotCommand(args []string, stdout, stderr io.Writer, client *http.Client,
 		return runBotDeployCommand(args[1:], stdout, stderr, client, store)
 	case "status":
 		return runBotStatusCommand(args[1:], stdout, stderr, client, store)
+	case "destroy":
+		return runBotDestroyCommand(args[1:], stdout, stderr, os.Stdin, client, store, osAzureCommandRunner{stdout: stdout, stderr: stderr})
 	default:
 		fmt.Fprintf(stderr, "unknown bot command %q\n", args[0])
 		return 2
