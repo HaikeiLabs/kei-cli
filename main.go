@@ -77,7 +77,7 @@ func main() {
 
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Kei deployment CLI")
-	fmt.Fprintln(w, "\nUsage:\n  kei login [--api-url URL]\n  kei bot init --platform teams|discord|slack --agent ID --name NAME [--api-url URL]\n  kei bot status --installation ID [--api-url URL]\n  kei bot deploy azure --installation ID --resource-group NAME --location REGION --key-vault NAME --runtime-control-plane-url URL --image OCI_IMAGE [--create-teams-app --teams-app-display-name NAME]\n  kei bot deploy azure --installation ID --resource-group NAME --location REGION --key-vault NAME --teams-app-password-secret NAME --teams-app-id ID --teams-tenant-id ID --runtime-control-plane-url URL --image OCI_IMAGE [--teams-manifest PATH]\n  kei bot destroy azure --installation ID [--confirm-destroy ID] [--api-url URL]")
+	fmt.Fprintln(w, "\nUsage:\n  kei login [--api-url URL]\n  kei bot init --platform teams|discord|slack --name NAME [--agent ID] [--api-url URL]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default] [--api-url URL]\n  kei bot status --installation ID [--api-url URL]\n  kei bot deploy azure --installation ID --resource-group NAME --location REGION --key-vault NAME --runtime-control-plane-url URL --image OCI_IMAGE [--create-teams-app --teams-app-display-name NAME]\n  kei bot deploy azure --installation ID --resource-group NAME --location REGION --key-vault NAME --teams-app-password-secret NAME --teams-app-id ID --teams-tenant-id ID --runtime-control-plane-url URL --image OCI_IMAGE [--teams-manifest PATH]\n  kei bot destroy azure --installation ID [--confirm-destroy ID] [--api-url URL]")
 }
 
 func runLoginCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
@@ -106,6 +106,8 @@ func runBotCommand(args []string, stdout, stderr io.Writer, client *http.Client,
 	switch args[0] {
 	case "init":
 		return runBotInitCommand(args[1:], stdout, stderr, client, store)
+	case "agents":
+		return runBotAgentsCommand(args[1:], stdout, stderr, client, store)
 	case "deploy":
 		return runBotDeployCommand(args[1:], stdout, stderr, client, store)
 	case "status":
@@ -128,8 +130,8 @@ func runBotInitCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
-	if flags.NArg() != 0 || *agentID == "" || *displayName == "" || (*platform != "teams" && *platform != "discord" && *platform != "slack") {
-		fmt.Fprintln(stderr, "bot init requires --platform teams|discord|slack, --agent ID, and --name NAME")
+	if flags.NArg() != 0 || *displayName == "" || (*platform != "teams" && *platform != "discord" && *platform != "slack") {
+		fmt.Fprintln(stderr, "bot init requires --platform teams|discord|slack and --name NAME")
 		return 2
 	}
 	if err := initBot(context.Background(), *apiURL, *agentID, *platform, *displayName, stdout, client, store); err != nil {
@@ -140,7 +142,7 @@ func runBotInitCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 }
 
 type createRuntimeInstallationRequest struct {
-	AgentID     string `json:"agent_id"`
+	AgentID     string `json:"agent_id,omitempty"`
 	Platform    string `json:"platform"`
 	DisplayName string `json:"display_name"`
 }

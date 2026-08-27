@@ -136,3 +136,36 @@ func TestBotStatusPrintsSafeInstallationMetadata(t *testing.T) {
 		t.Fatalf("unsafe or incomplete status output: %s", stdout.String())
 	}
 }
+
+func TestBotAgentsAddUsesCLIOrganizationScopedEndpoint(t *testing.T) {
+	installationID := "12345678-1234-1234-1234-123456789012"
+	agentID := "22345678-1234-1234-1234-123456789012"
+	store := &memoryCredentialStore{token: "cli-session-token"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wantPath := "/api/cli/runtime-installations/" + installationID + "/agents"
+		if r.URL.Path != wantPath || r.Method != http.MethodPost {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer cli-session-token" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["agent_id"] != agentID || body["default"] != true {
+			t.Fatalf("unexpected assignment body: %#v", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"installation_id":"` + installationID + `","agent_id":"` + agentID + `","is_default":true}`))
+	}))
+	defer server.Close()
+	store.server = server.URL
+	var stdout, stderr bytes.Buffer
+	if code := runBotAgentsAdd([]string{"--api-url", server.URL, "--installation", installationID, "--agent", agentID, "--default"}, &stdout, &stderr, server.Client(), store); code != 0 {
+		t.Fatalf("agent add exit = %d, stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), agentID) {
+		t.Fatalf("agent add output did not include assignment: %s", stdout.String())
+	}
+}
