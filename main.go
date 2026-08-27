@@ -21,12 +21,17 @@ const defaultKeiWebURL = "https://app.haikeilabs.com"
 
 type credentialStore interface {
 	Save(serverURL, token string) error
+	Load(serverURL string) (string, error)
 }
 
 type osKeychainStore struct{}
 
 func (osKeychainStore) Save(serverURL, token string) error {
 	return keyring.Set("kei-cli", keychainAccount(serverURL), token)
+}
+
+func (osKeychainStore) Load(serverURL string) (string, error) {
+	return keyring.Get("kei-cli", keychainAccount(serverURL))
 }
 
 type deviceAuthorizationStartRequest struct {
@@ -59,6 +64,8 @@ func main() {
 	switch os.Args[1] {
 	case "login":
 		os.Exit(runLoginCommand(os.Args[2:], os.Stdout, os.Stderr, &http.Client{Timeout: 15 * time.Second}, osKeychainStore{}))
+	case "bot":
+		os.Exit(runBotCommand(os.Args[2:], os.Stdout, os.Stderr, &http.Client{Timeout: 15 * time.Second}, osKeychainStore{}))
 	case "help", "--help", "-h":
 		printUsage(os.Stdout)
 	default:
@@ -70,7 +77,7 @@ func main() {
 
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Kei deployment CLI")
-	fmt.Fprintln(w, "\nUsage:\n  kei login [--api-url URL]")
+	fmt.Fprintln(w, "\nUsage:\n  kei login [--api-url URL]\n  kei bot init --platform teams|discord|slack --agent ID --name NAME [--api-url URL]")
 }
 
 func runLoginCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
@@ -89,6 +96,97 @@ func runLoginCommand(args []string, stdout, stderr io.Writer, client *http.Clien
 		return 1
 	}
 	return 0
+}
+
+func runBotCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "bot requires a subcommand")
+		return 2
+	}
+	switch args[0] {
+	case "init":
+		return runBotInitCommand(args[1:], stdout, stderr, client, store)
+	default:
+		fmt.Fprintf(stderr, "unknown bot command %q\n", args[0])
+		return 2
+	}
+}
+
+func runBotInitCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
+	flags := flag.NewFlagSet("bot init", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	apiURL := flags.String("api-url", keiWebURL(), "Kei web URL")
+	platform := flags.String("platform", "", "bot platform")
+	agentID := flags.String("agent", "", "Kei agent ID")
+	displayName := flags.String("name", "", "installation name")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if flags.NArg() != 0 || *agentID == "" || *displayName == "" || (*platform != "teams" && *platform != "discord" && *platform != "slack") {
+		fmt.Fprintln(stderr, "bot init requires --platform teams|discord|slack, --agent ID, and --name NAME")
+		return 2
+	}
+	if err := initBot(context.Background(), *apiURL, *agentID, *platform, *displayName, stdout, client, store); err != nil {
+		fmt.Fprintf(stderr, "bot init failed: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+type createRuntimeInstallationRequest struct {
+	AgentID     string `json:"agent_id"`
+	Platform    string `json:"platform"`
+	DisplayName string `json:"display_name"`
+}
+
+type createRuntimeInstallationResponse struct {
+	ID            string `json:"id"`
+	Platform      string `json:"platform"`
+	DisplayName   string `json:"display_name"`
+	Status        string `json:"status"`
+	BindingStatus string `json:"binding_status"`
+}
+
+// initBot creates public installation metadata only. Runtime credentials are
+// intentionally created later by `kei bot deploy` and delivered directly to a
+// customer secret manager, never to terminal output or local CLI config.
+func initBot(ctx context.Context, apiURL, agentID, platform, displayName string, stdout io.Writer, client *http.Client, store credentialStore) error {
+	baseURL, err := normalizedKeiWebURL(apiURL)
+	if err != nil {
+		return err
+	}
+	token, err := store.Load(baseURL)
+	if err != nil {
+		return errors.New("not logged in; run kei login first")
+	}
+	body, err := json.Marshal(createRuntimeInstallationRequest{AgentID: agentID, Platform: platform, DisplayName: displayName})
+	if err != nil {
+		return fmt.Errorf("encode installation request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/cli/runtime-installations", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build installation request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	response, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("create installation: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusCreated {
+		return fmt.Errorf("create installation returned %d", response.StatusCode)
+	}
+	var installation createRuntimeInstallationResponse
+	if err := json.NewDecoder(response.Body).Decode(&installation); err != nil {
+		return fmt.Errorf("decode installation response: %w", err)
+	}
+	if installation.ID == "" {
+		return errors.New("installation response is incomplete")
+	}
+	fmt.Fprintf(stdout, "Created pending %s installation %q (%s).\n", platform, displayName, installation.ID)
+	fmt.Fprintln(stdout, "Run kei bot deploy azure to deliver its runtime credential to Key Vault and deploy the bot.")
+	return nil
 }
 
 func login(ctx context.Context, apiURL, clientName string, stdout io.Writer, client *http.Client, store credentialStore, sleep func(time.Duration)) error {
