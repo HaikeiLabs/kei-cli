@@ -19,9 +19,10 @@ import (
 // destroy path uses resource IDs returned by Azure rather than rebuilding IDs
 // from user input, then applies an additional allowlist before deletion.
 type azureManagedResource struct {
-	ID   string `json:"id"`
-	Type string `json:"type"`
-	Name string `json:"name"`
+	ID   string            `json:"id"`
+	Type string            `json:"type"`
+	Name string            `json:"name"`
+	Tags map[string]string `json:"tags,omitempty"`
 }
 
 type azureDestroyPlan struct {
@@ -33,6 +34,13 @@ type azureDestroyPlan struct {
 	Retained       []string
 }
 
+type azureDestroyOptions struct {
+	ResourceGroup        string
+	EnvironmentName      string
+	DeleteEnvironment    bool
+	PreserveInstallation bool
+}
+
 func runBotDestroyCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore, runner azureCommandRunner) int {
 	if len(args) == 0 || args[0] != "azure" {
 		fmt.Fprintln(stderr, "bot destroy currently supports only: kei bot destroy azure")
@@ -42,6 +50,10 @@ func runBotDestroyCommand(args []string, stdout, stderr io.Writer, stdin io.Read
 	flags.SetOutput(stderr)
 	apiURL := flags.String("api-url", keiWebURL(), "Kei web URL")
 	installationID := flags.String("installation", "", "Kei installation ID")
+	resourceGroup := flags.String("resource-group", "", "Azure resource group (required when deployment metadata is unavailable)")
+	environmentName := flags.String("environment-name", "", "Container Apps environment name (required with --delete-environment)")
+	deleteEnvironment := flags.Bool("delete-environment", false, "also delete the named Container Apps environment")
+	preserveInstallation := flags.Bool("preserve-installation", false, "delete Azure resources without disabling the Kei installation")
 	confirmation := flags.String("confirm-destroy", "", "non-interactive confirmation; must exactly equal --installation")
 	if err := flags.Parse(args[1:]); err != nil {
 		return 2
@@ -54,11 +66,17 @@ func runBotDestroyCommand(args []string, stdout, stderr io.Writer, stdin io.Read
 		fmt.Fprintln(stderr, "bot destroy azure: --installation must be a UUID")
 		return 2
 	}
+	if *deleteEnvironment && *environmentName == "" {
+		fmt.Fprintln(stderr, "bot destroy azure: --environment-name is required with --delete-environment")
+		return 2
+	}
 	if *confirmation != "" && *confirmation != *installationID {
 		fmt.Fprintln(stderr, "bot destroy azure: --confirm-destroy must exactly match --installation")
 		return 2
 	}
-	if err := destroyAzure(context.Background(), *apiURL, *installationID, *confirmation, stdout, stderr, stdin, client, store, runner); err != nil {
+	if err := destroyAzureWithOptions(context.Background(), *apiURL, *installationID, *confirmation, stdout, stderr, stdin, client, store, runner, azureDestroyOptions{
+		ResourceGroup: *resourceGroup, EnvironmentName: *environmentName, DeleteEnvironment: *deleteEnvironment, PreserveInstallation: *preserveInstallation,
+	}); err != nil {
 		fmt.Fprintf(stderr, "bot destroy azure failed: %v\n", err)
 		return 1
 	}
@@ -66,6 +84,10 @@ func runBotDestroyCommand(args []string, stdout, stderr io.Writer, stdin io.Read
 }
 
 func destroyAzure(ctx context.Context, apiURL, installationID, confirmation string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore, runner azureCommandRunner) error {
+	return destroyAzureWithOptions(ctx, apiURL, installationID, confirmation, stdout, stderr, stdin, client, store, runner, azureDestroyOptions{})
+}
+
+func destroyAzureWithOptions(ctx context.Context, apiURL, installationID, confirmation string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore, runner azureCommandRunner, options azureDestroyOptions) error {
 	baseURL, err := normalizedKeiWebURL(apiURL)
 	if err != nil {
 		return err
@@ -82,20 +104,32 @@ func destroyAzure(ctx context.Context, apiURL, installationID, confirmation stri
 	if err != nil {
 		return err
 	}
-	resources, err := listAzureInstallationResources(ctx, runner, status)
+	resourceGroup := options.ResourceGroup
+	if resourceGroup == "" {
+		resourceGroup, _ = runtimeDeploymentString(status, "resource_group")
+	}
+	if resourceGroup == "" {
+		return errors.New("installation has no Azure resource group metadata; pass --resource-group")
+	}
+	resources, err := listAzureInstallationResourcesForResourceGroup(ctx, runner, resourceGroup, status.ID)
 	if err != nil {
 		return err
 	}
-	plan, err := newAzureDestroyPlan(status, subscriptionID, resources)
+	plan, err := newAzureDestroyPlanWithOptions(status, subscriptionID, resources, resourceGroup, options)
 	if err != nil {
 		return err
+	}
+	if options.PreserveInstallation && status.Status != "pending" && status.Status != "active" {
+		return fmt.Errorf("cannot preserve installation in %q state; only pending or active installations can be redeployed", status.Status)
 	}
 	printAzureDestroyPlan(stdout, plan)
 	if err := confirmAzureDestroy(stdin, stderr, confirmation, plan); err != nil {
 		return err
 	}
 
-	if status.Status == "pending" || status.Status == "active" {
+	if options.PreserveInstallation {
+		fmt.Fprintln(stdout, "Preserving the Kei runtime installation for redeployment.")
+	} else if status.Status == "pending" || status.Status == "active" {
 		if err := runtimeInstallationAction(ctx, client, baseURL, cliToken, installationID, "disable", nil); err != nil {
 			return fmt.Errorf("disable installation before resource deletion: %w", err)
 		}
@@ -111,10 +145,18 @@ func destroyAzure(ctx context.Context, apiURL, installationID, confirmation stri
 		}
 	}
 	if len(plan.Resources) == 0 {
-		fmt.Fprintln(stdout, "No matching Kei-owned Azure resources were found; the installation remains disabled.")
+		if options.PreserveInstallation {
+			fmt.Fprintln(stdout, "No matching Kei-owned Azure resources were found; the installation remains available for redeployment.")
+		} else {
+			fmt.Fprintln(stdout, "No matching Kei-owned Azure resources were found; the installation remains disabled.")
+		}
 		return nil
 	}
-	fmt.Fprintln(stdout, "Azure runtime resources deleted. The Kei installation remains disabled for audit and recovery.")
+	if options.PreserveInstallation {
+		fmt.Fprintln(stdout, "Azure runtime resources deleted. The Kei installation remains available for redeployment.")
+	} else {
+		fmt.Fprintln(stdout, "Azure runtime resources deleted. The Kei installation remains disabled for audit and recovery.")
+	}
 	return nil
 }
 
@@ -131,27 +173,61 @@ func listAzureInstallationResources(ctx context.Context, runner azureCommandRunn
 	if !ok {
 		return nil, errors.New("installation has no Azure resource group metadata")
 	}
-	output, err := runner.Output(ctx, "az", "resource", "list", "--resource-group", resourceGroup, "--tag", "keiInstallationId="+status.ID, "--query", "[].{id:id,type:type,name:name}", "--output", "json", "--only-show-errors")
-	if err != nil {
-		return nil, errors.New("could not list Azure resources tagged for this installation")
+	return listAzureInstallationResourcesForResourceGroup(ctx, runner, resourceGroup, status.ID)
+}
+
+func listAzureInstallationResourcesForResourceGroup(ctx context.Context, runner azureCommandRunner, resourceGroup, installationID string) ([]azureManagedResource, error) {
+	output, err := runner.Output(ctx, "az", "resource", "list", "--resource-group", resourceGroup, "--tag", "keiInstallationId="+installationID, "--query", "[].{id:id,type:type,name:name}", "--output", "json", "--only-show-errors")
+	if err == nil {
+		var resources []azureManagedResource
+		if unmarshalErr := json.Unmarshal(output, &resources); unmarshalErr != nil {
+			return nil, errors.New("Azure returned invalid tagged-resource data")
+		}
+		return resources, nil
 	}
-	var resources []azureManagedResource
-	if err := json.Unmarshal(output, &resources); err != nil {
-		return nil, errors.New("Azure returned invalid tagged-resource data")
+
+	// Some Azure CLI/resource-provider combinations reject server-side tag
+	// filtering. Fall back to listing the resource group and filtering tags
+	// locally so failed deployments can still be cleaned up.
+	output, fallbackErr := runner.Output(ctx, "az", "resource", "list", "--resource-group", resourceGroup, "--query", "[].{id:id,type:type,name:name,tags:tags}", "--output", "json", "--only-show-errors")
+	if fallbackErr != nil {
+		return nil, fmt.Errorf("could not list Azure resources tagged for this installation: %w", err)
+	}
+	var allResources []azureManagedResource
+	if unmarshalErr := json.Unmarshal(output, &allResources); unmarshalErr != nil {
+		return nil, errors.New("Azure returned invalid resource data")
+	}
+	resources := make([]azureManagedResource, 0, len(allResources))
+	for _, resource := range allResources {
+		if resource.Tags["keiInstallationId"] == installationID {
+			resources = append(resources, resource)
+		}
 	}
 	return resources, nil
 }
 
 func newAzureDestroyPlan(status *runtimeInstallationStatus, subscriptionID string, resources []azureManagedResource) (azureDestroyPlan, error) {
+	return newAzureDestroyPlanWithOptions(status, subscriptionID, resources, "", azureDestroyOptions{})
+}
+
+func newAzureDestroyPlanWithOptions(status *runtimeInstallationStatus, subscriptionID string, resources []azureManagedResource, resourceGroup string, options azureDestroyOptions) (azureDestroyPlan, error) {
 	if status == nil || status.ID == "" {
 		return azureDestroyPlan{}, errors.New("installation status is incomplete")
 	}
-	if provider, ok := runtimeDeploymentString(status, "provider"); !ok || provider != "azure" {
+	explicitResourceGroup := resourceGroup != ""
+	if provider, ok := runtimeDeploymentString(status, "provider"); !ok {
+		if !explicitResourceGroup {
+			return azureDestroyPlan{}, errors.New("installation is not an Azure runtime")
+		}
+	} else if provider != "azure" {
 		return azureDestroyPlan{}, errors.New("installation is not an Azure runtime")
 	}
-	resourceGroup, ok := runtimeDeploymentString(status, "resource_group")
-	if !ok {
-		return azureDestroyPlan{}, errors.New("installation has no Azure resource group metadata")
+	if resourceGroup == "" {
+		var ok bool
+		resourceGroup, ok = runtimeDeploymentString(status, "resource_group")
+		if !ok {
+			return azureDestroyPlan{}, errors.New("installation has no Azure resource group metadata")
+		}
 	}
 	installation, err := uuid.Parse(status.ID)
 	if err != nil {
@@ -164,6 +240,12 @@ func newAzureDestroyPlan(status *runtimeInstallationStatus, subscriptionID strin
 		"Microsoft.ManagedIdentity/userAssignedIdentities": baseName + "-identity",
 		"Microsoft.OperationalInsights/workspaces":         baseName + "-logs",
 	}
+	if options.DeleteEnvironment {
+		if options.EnvironmentName == "" {
+			return azureDestroyPlan{}, errors.New("environment name is required when deleting the Container Apps environment")
+		}
+		allowed["Microsoft.App/managedEnvironments"] = options.EnvironmentName
+	}
 	plan := azureDestroyPlan{
 		InstallationID: status.ID,
 		DisplayName:    status.DisplayName,
@@ -171,9 +253,11 @@ func newAzureDestroyPlan(status *runtimeInstallationStatus, subscriptionID strin
 		ResourceGroup:  resourceGroup,
 		Retained: []string{
 			"customer Key Vault and all secrets",
-			"Container Apps environment (it may be shared)",
 			"resources with custom names or without this installation tag",
 		},
+	}
+	if !options.DeleteEnvironment {
+		plan.Retained = append(plan.Retained, "Container Apps environment (it may be shared)")
 	}
 	for _, resource := range resources {
 		if expectedName, ok := allowed[resource.Type]; ok && resource.Name == expectedName && resource.ID != "" {

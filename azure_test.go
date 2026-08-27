@@ -201,6 +201,31 @@ func TestDeployAzureReusesExistingSecretWithoutRequestingCredential(t *testing.T
 	}
 }
 
+func TestRequestRuntimeCredentialRotatesAfterExistingCredential(t *testing.T) {
+	const installationID = "12345678-1234-1234-1234-123456789012"
+	requests := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.Path)
+		switch r.URL.Path {
+		case "/api/cli/runtime-installations/" + installationID + "/credential":
+			http.Error(w, "runtime credential already exists", http.StatusConflict)
+		case "/api/cli/runtime-installations/" + installationID + "/rotate":
+			json.NewEncoder(w).Encode(runtimeCredentialResponse{RuntimeToken: "rotated-token"})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	token, err := requestRuntimeCredential(context.Background(), server.Client(), server.URL, "cli-token", installationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "rotated-token" || len(requests) != 2 {
+		t.Fatalf("token=%q requests=%v", token, requests)
+	}
+}
+
 func TestAzureDeploymentConfigRejectsInsecureControlPlaneURL(t *testing.T) {
 	config := azureDeploymentConfig{
 		InstallationID:             "12345678-1234-1234-1234-123456789012",
@@ -218,6 +243,79 @@ func TestAzureDeploymentConfigRejectsInsecureControlPlaneURL(t *testing.T) {
 	}
 }
 
+func TestAzureDeploymentConfigDefaultsProvisionedResourceNames(t *testing.T) {
+	config, err := newAzureDeploymentConfig(azureDeploymentConfig{
+		InstallationID:         "12345678-1234-1234-1234-123456789012",
+		CreateResourceGroup:    true,
+		CreateKeyVault:         true,
+		Location:               "eastus",
+		CreateTeamsApp:         true,
+		RuntimeControlPlaneURL: "https://runtime-api.example.test",
+		RuntimeImage:           "ghcr.io/haikeilabs/kei-teams-runtime:test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.ResourceGroup != "kei-123456781234" {
+		t.Fatalf("resource group = %q", config.ResourceGroup)
+	}
+	if config.KeyVaultName != "kei123456781234vault" {
+		t.Fatalf("key vault = %q", config.KeyVaultName)
+	}
+}
+
+func TestEnsureAzureInfrastructureCreatesRequestedResources(t *testing.T) {
+	runner := &recordingAzureCommandRunner{}
+	config := azureDeploymentConfig{
+		ResourceGroup:       "kei-test-rg",
+		CreateResourceGroup: true,
+		Location:            "eastus",
+		KeyVaultName:        "keittestvault",
+		CreateKeyVault:      true,
+	}
+	if err := ensureAzureInfrastructure(context.Background(), config, runner); err != nil {
+		t.Fatal(err)
+	}
+	if runner.name != "az" || len(runner.args) == 0 || runner.args[0] != "keyvault" || runner.args[1] != "create" {
+		t.Fatalf("last Azure command = %q %q", runner.name, runner.args)
+	}
+}
+
+type existingKeyVaultAzureRunner struct {
+	createAttempted bool
+}
+
+func (r *existingKeyVaultAzureRunner) Run(_ context.Context, name string, args ...string) error {
+	if name == "az" && len(args) > 1 && args[0] == "keyvault" && args[1] == "create" {
+		r.createAttempted = true
+		return errors.New("the specified vault already exists")
+	}
+	return nil
+}
+
+func (r *existingKeyVaultAzureRunner) Output(_ context.Context, name string, args ...string) ([]byte, error) {
+	if name != "az" || len(args) < 2 || args[0] != "keyvault" || args[1] != "show" {
+		return nil, errors.New("unexpected Azure command")
+	}
+	return []byte(`{"resourceGroup":"kei-test-rg","enableRbacAuthorization":true}`), nil
+}
+
+func TestEnsureAzureInfrastructureReusesExistingKeyVault(t *testing.T) {
+	runner := &existingKeyVaultAzureRunner{}
+	config := azureDeploymentConfig{
+		ResourceGroup:  "kei-test-rg",
+		CreateKeyVault: true,
+		Location:       "eastus",
+		KeyVaultName:   "keittestvault",
+	}
+	if err := ensureAzureInfrastructure(context.Background(), config, runner); err != nil {
+		t.Fatal(err)
+	}
+	if !runner.createAttempted {
+		t.Fatal("expected Key Vault create attempt")
+	}
+}
+
 type provisioningAzureRunner struct {
 	runs []string
 }
@@ -231,6 +329,8 @@ func (r *provisioningAzureRunner) Output(_ context.Context, name string, args ..
 	command := name + " " + strings.Join(args, " ")
 	r.runs = append(r.runs, command)
 	switch {
+	case strings.Contains(command, "ad app list"):
+		return []byte(`[]`), nil
 	case strings.Contains(command, "ad app create"):
 		return []byte(`{"appId":"42345678-1234-1234-1234-123456789012"}`), nil
 	case strings.Contains(command, "credential reset"):

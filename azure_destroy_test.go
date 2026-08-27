@@ -111,10 +111,121 @@ func TestDestroyAzureRequiresExactConfirmationBeforeDisabling(t *testing.T) {
 	}
 }
 
+func TestDestroyAzureCanPreserveInstallationForRedeploy(t *testing.T) {
+	installationID := "12345678-1234-1234-1234-123456789012"
+	baseName := "kei-123456781234"
+	disableCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case http.MethodGet + " /api/cli/runtime-installations/" + installationID:
+			_, _ = io.WriteString(w, `{"id":"12345678-1234-1234-1234-123456789012","display_name":"production-teams","status":"active","deployment":{"provider":"azure","resource_group":"customer-kei"}}`)
+		case http.MethodPost + " /api/cli/runtime-installations/" + installationID + "/disable":
+			disableCalled = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected control-plane request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	runner := &recordingAzureDestroyRunner{resources: []azureManagedResource{{
+		ID:   "/subscriptions/sub/resourceGroups/customer-kei/providers/Microsoft.ManagedIdentity/userAssignedIdentities/" + baseName + "-identity",
+		Type: "Microsoft.ManagedIdentity/userAssignedIdentities",
+		Name: baseName + "-identity",
+	}}}
+	store := &memoryCredentialStore{server: server.URL, token: "cli-access-token"}
+	var stdout bytes.Buffer
+	if err := destroyAzureWithOptions(context.Background(), server.URL, installationID, "", &stdout, io.Discard, strings.NewReader("production-teams\n"), server.Client(), store, runner, azureDestroyOptions{PreserveInstallation: true}); err != nil {
+		t.Fatal(err)
+	}
+	if disableCalled {
+		t.Fatal("preserved installation was disabled")
+	}
+	if !strings.Contains(stdout.String(), "available for redeployment") {
+		t.Fatalf("preserve output missing: %s", stdout.String())
+	}
+}
+
 func TestDestroyCommandRejectsGenericNonInteractiveConfirmation(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runBotDestroyCommand([]string{"azure", "--installation", "12345678-1234-1234-1234-123456789012", "--confirm-destroy", "yes"}, &stdout, &stderr, strings.NewReader(""), &http.Client{}, &memoryCredentialStore{}, &recordingAzureDestroyRunner{})
 	if code != 2 || !strings.Contains(stderr.String(), "exactly match") {
 		t.Fatalf("unexpected confirmation validation: exit=%d stderr=%q", code, stderr.String())
+	}
+}
+
+func TestAzureDestroyPlanAllowsExplicitEnvironmentDeletion(t *testing.T) {
+	installationID := "12345678-1234-1234-1234-123456789012"
+	baseName := "kei-123456781234"
+	environmentName := baseName + "-env"
+	plan, err := newAzureDestroyPlanWithOptions(
+		&runtimeInstallationStatus{ID: installationID, DisplayName: "failed-teams"},
+		"subscription-123",
+		[]azureManagedResource{{
+			ID:   "/subscriptions/sub/resourceGroups/customer-kei/providers/Microsoft.App/managedEnvironments/" + environmentName,
+			Type: "Microsoft.App/managedEnvironments",
+			Name: environmentName,
+		}},
+		"customer-kei",
+		azureDestroyOptions{EnvironmentName: environmentName, DeleteEnvironment: true},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Resources) != 1 || plan.Resources[0].Name != environmentName {
+		t.Fatalf("environment resources = %#v", plan.Resources)
+	}
+	for _, retained := range plan.Retained {
+		if strings.Contains(retained, "Container Apps environment") {
+			t.Fatalf("environment should not be retained: %#v", plan.Retained)
+		}
+	}
+}
+
+func TestDestroyCommandRequiresEnvironmentNameForEnvironmentDeletion(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runBotDestroyCommand([]string{
+		"azure", "--installation", "12345678-1234-1234-1234-123456789012", "--delete-environment",
+	}, &stdout, &stderr, strings.NewReader(""), &http.Client{}, &memoryCredentialStore{}, &recordingAzureDestroyRunner{})
+	if code != 2 || !strings.Contains(stderr.String(), "--environment-name") {
+		t.Fatalf("unexpected environment validation: exit=%d stderr=%q", code, stderr.String())
+	}
+}
+
+type tagFilteringFailureRunner struct {
+	resources []azureManagedResource
+}
+
+func (r *tagFilteringFailureRunner) Run(_ context.Context, _ string, _ ...string) error { return nil }
+
+func (r *tagFilteringFailureRunner) Output(_ context.Context, name string, args ...string) ([]byte, error) {
+	if name != "az" {
+		return nil, errors.New("unexpected command")
+	}
+	if len(args) >= 2 && args[0] == "account" && args[1] == "show" {
+		return []byte("subscription-123\n"), nil
+	}
+	if len(args) >= 2 && args[0] == "resource" && args[1] == "list" {
+		for _, arg := range args {
+			if arg == "--tag" {
+				return nil, errors.New("tag filtering is unavailable")
+			}
+		}
+		return json.Marshal(r.resources)
+	}
+	return nil, errors.New("unexpected Azure query")
+}
+
+func TestListAzureInstallationResourcesFallsBackToLocalTagFiltering(t *testing.T) {
+	resources, err := listAzureInstallationResourcesForResourceGroup(context.Background(), &tagFilteringFailureRunner{
+		resources: []azureManagedResource{
+			{ID: "owned", Tags: map[string]string{"keiInstallationId": "installation-1"}},
+			{ID: "other", Tags: map[string]string{"keiInstallationId": "installation-2"}},
+		},
+	}, "customer-kei", "installation-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resources) != 1 || resources[0].ID != "owned" {
+		t.Fatalf("resources = %#v", resources)
 	}
 }

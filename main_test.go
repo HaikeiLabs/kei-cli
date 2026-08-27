@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -111,6 +112,25 @@ func TestInitCreatesPublicInstallationWithoutExposingCredential(t *testing.T) {
 	}
 	if strings.Contains(output.String(), "runtime_token") || strings.Contains(output.String(), "kh_live_") {
 		t.Fatalf("init output exposed a credential: %q", output.String())
+	}
+}
+
+func TestIdempotentInstallationRequestSetsReuseFlag(t *testing.T) {
+	store := &memoryCredentialStore{server: "", token: "cli-session-token"}
+	var received createRuntimeInstallationRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		json.NewEncoder(w).Encode(createRuntimeInstallationResponse{ID: "installation-123", Platform: "teams", DisplayName: "customer-teams"})
+	}))
+	defer server.Close()
+	store.server = server.URL
+	if _, err := createBotInstallationIdempotent(context.Background(), server.URL, "", "teams", "customer-teams", io.Discard, server.Client(), store); err != nil {
+		t.Fatal(err)
+	}
+	if !received.ReuseExisting {
+		t.Fatalf("reuse_existing = false, want true")
 	}
 }
 

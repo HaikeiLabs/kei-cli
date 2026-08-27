@@ -109,8 +109,10 @@ func (r osAzureCommandRunner) Output(ctx context.Context, name string, args ...s
 type azureDeploymentConfig struct {
 	InstallationID               string
 	ResourceGroup                string
+	CreateResourceGroup          bool
 	Location                     string
 	KeyVaultName                 string
+	CreateKeyVault               bool
 	RuntimeSecretName            string
 	TeamsAppPasswordSecretName   string
 	TeamsAppID                   string
@@ -142,8 +144,10 @@ func runBotDeployCommand(args []string, stdout, stderr io.Writer, client *http.C
 	apiURL := flags.String("api-url", keiWebURL(), "Kei web URL")
 	installationID := flags.String("installation", "", "pending Kei installation ID")
 	resourceGroup := flags.String("resource-group", "", "Azure resource group")
+	createResourceGroup := flags.Bool("create-resource-group", false, "create the resource group if needed")
 	location := flags.String("location", "", "Azure region")
 	keyVaultName := flags.String("key-vault", "", "customer-owned Azure Key Vault name")
+	createKeyVault := flags.Bool("create-key-vault", false, "create the Key Vault if needed (with Azure RBAC enabled)")
 	runtimeSecretName := flags.String("runtime-secret-name", "", "Key Vault secret name for the Kei runtime token")
 	teamsAppPasswordSecretName := flags.String("teams-app-password-secret", "", "existing Key Vault secret name for the Teams app password")
 	teamsAppID := flags.String("teams-app-id", "", "Microsoft Entra application (client) ID")
@@ -164,8 +168,10 @@ func runBotDeployCommand(args []string, stdout, stderr io.Writer, client *http.C
 	config, err := newAzureDeploymentConfig(azureDeploymentConfig{
 		InstallationID:               *installationID,
 		ResourceGroup:                *resourceGroup,
+		CreateResourceGroup:          *createResourceGroup,
 		Location:                     *location,
 		KeyVaultName:                 *keyVaultName,
+		CreateKeyVault:               *createKeyVault,
 		RuntimeSecretName:            *runtimeSecretName,
 		TeamsAppPasswordSecretName:   *teamsAppPasswordSecretName,
 		TeamsAppID:                   *teamsAppID,
@@ -197,6 +203,13 @@ func newAzureDeploymentConfig(config azureDeploymentConfig) (azureDeploymentConf
 	if err != nil {
 		return config, errors.New("--installation must be a UUID")
 	}
+	shortID := strings.ReplaceAll(installation.String(), "-", "")[:12]
+	if config.ResourceGroup == "" && config.CreateResourceGroup {
+		config.ResourceGroup = "kei-" + shortID
+	}
+	if config.KeyVaultName == "" && config.CreateKeyVault {
+		config.KeyVaultName = "kei" + shortID + "vault"
+	}
 	if config.ResourceGroup == "" || config.Location == "" || config.KeyVaultName == "" || config.RuntimeControlPlaneURL == "" || config.RuntimeImage == "" {
 		return config, errors.New("--installation, --resource-group, --location, --key-vault, --runtime-control-plane-url, and --image are required")
 	}
@@ -206,7 +219,6 @@ func newAzureDeploymentConfig(config azureDeploymentConfig) (azureDeploymentConf
 	if !azureKeyVaultNamePattern.MatchString(config.KeyVaultName) {
 		return config, errors.New("--key-vault must be a valid Azure Key Vault name")
 	}
-	shortID := strings.ReplaceAll(installation.String(), "-", "")[:12]
 	if config.CreateTeamsApp && config.TeamsAppDisplayName == "" {
 		config.TeamsAppDisplayName = "Kei Bot " + shortID
 	}
@@ -279,6 +291,9 @@ func deployAzure(ctx context.Context, apiURL string, config azureDeploymentConfi
 	if err != nil {
 		return errors.New("not logged in; run kei login first")
 	}
+	if err := ensureAzureInfrastructure(ctx, config, runner); err != nil {
+		return err
+	}
 	if err := requireAzureKeyVaultRBAC(ctx, config, runner); err != nil {
 		return err
 	}
@@ -290,14 +305,11 @@ func deployAzure(ctx context.Context, apiURL string, config azureDeploymentConfi
 	}
 	vaultURL := azureKeyVaultURL(config.KeyVaultName)
 	if config.TeamsAppPassword != "" {
-		exists, err := vault.Exists(ctx, vaultURL, config.TeamsAppPasswordSecretName)
-		if err != nil {
-			return fmt.Errorf("check Teams app password in Azure Key Vault: %w", err)
-		}
-		if !exists {
-			if err := vault.Set(ctx, vaultURL, config.TeamsAppPasswordSecretName, config.TeamsAppPassword); err != nil {
-				return errors.New("could not write the Teams app password to Azure Key Vault")
-			}
+		// App provisioning creates or resets the app credential on every
+		// retry. Always overwrite the Key Vault value so it matches the
+		// currently active Entra credential instead of retaining a stale one.
+		if err := vault.Set(ctx, vaultURL, config.TeamsAppPasswordSecretName, config.TeamsAppPassword); err != nil {
+			return errors.New("could not write the Teams app password to Azure Key Vault")
 		}
 	}
 	exists, err := vault.Exists(ctx, vaultURL, config.RuntimeSecretName)
@@ -340,8 +352,46 @@ func deployAzure(ctx context.Context, apiURL string, config azureDeploymentConfi
 	return nil
 }
 
+// ensureAzureInfrastructure creates only resources explicitly requested by the
+// caller. `bot deploy` preserves the existing-resource contract, while
+// `bot install` sets both flags to provide a one-shot path. Azure create
+// operations are idempotent for an existing resource with the same name.
+func ensureAzureInfrastructure(ctx context.Context, config azureDeploymentConfig, runner azureCommandRunner) error {
+	if config.CreateResourceGroup {
+		if err := runner.Run(ctx, "az", "group", "create", "--name", config.ResourceGroup, "--location", config.Location, "--only-show-errors", "--output", "none"); err != nil {
+			return fmt.Errorf("create Azure resource group %q: %w", config.ResourceGroup, err)
+		}
+	}
+	if config.CreateKeyVault {
+		if err := runner.Run(ctx, "az", "keyvault", "create", "--name", config.KeyVaultName, "--resource-group", config.ResourceGroup, "--location", config.Location, "--enable-rbac-authorization", "true", "--only-show-errors", "--output", "none"); err != nil {
+			// Azure returns an error when the vault already exists, even when it
+			// is the exact vault requested. Confirm the existing resource and
+			// continue only when it belongs to this resource group and uses RBAC.
+			output, showErr := runner.Output(ctx, "az", "keyvault", "show", "--name", config.KeyVaultName, "--only-show-errors", "--query", "{resourceGroup:resourceGroup,enableRbacAuthorization:properties.enableRbacAuthorization}", "--output", "json")
+			if showErr != nil {
+				return fmt.Errorf("create Azure Key Vault %q: %w", config.KeyVaultName, err)
+			}
+			var existing struct {
+				ResourceGroup           string `json:"resourceGroup"`
+				EnableRBACAuthorization bool   `json:"enableRbacAuthorization"`
+			}
+			if unmarshalErr := json.Unmarshal(output, &existing); unmarshalErr != nil {
+				return fmt.Errorf("inspect existing Azure Key Vault %q: %w", config.KeyVaultName, unmarshalErr)
+			}
+			if existing.ResourceGroup != config.ResourceGroup {
+				return fmt.Errorf("Azure Key Vault %q already exists in resource group %q", config.KeyVaultName, existing.ResourceGroup)
+			}
+			if !existing.EnableRBACAuthorization {
+				return fmt.Errorf("Azure Key Vault %q already exists without Azure RBAC authorization", config.KeyVaultName)
+			}
+		}
+	}
+	return nil
+}
+
 type azureAppRegistration struct {
-	AppID string `json:"appId"`
+	AppID       string `json:"appId"`
+	DisplayName string `json:"displayName"`
 }
 
 type azureAppCredential struct {
@@ -353,21 +403,30 @@ type azureAppCredential struct {
 // The generated password is held in memory only long enough to write Key Vault.
 func provisionTeamsApp(ctx context.Context, config *azureDeploymentConfig, runner azureCommandRunner) error {
 	name := config.TeamsAppDisplayName
-	appOutput, err := runner.Output(ctx, "az", "ad", "app", "create", "--display-name", name, "--sign-in-audience", "AzureADMyOrg", "--query", "{appId:appId}", "--output", "json", "--only-show-errors")
+	appID, err := findTeamsApp(ctx, name, runner)
 	if err != nil {
-		return fmt.Errorf("create Microsoft Entra app: %w", err)
+		return err
 	}
-	var app azureAppRegistration
-	if err := json.Unmarshal(appOutput, &app); err != nil || app.AppID == "" {
-		return errors.New("create Microsoft Entra app returned no application ID")
+	if appID == "" {
+		appOutput, createErr := runner.Output(ctx, "az", "ad", "app", "create", "--display-name", name, "--sign-in-audience", "AzureADMyOrg", "--query", "{appId:appId}", "--output", "json", "--only-show-errors")
+		if createErr != nil {
+			return fmt.Errorf("create Microsoft Entra app: %w", createErr)
+		}
+		var app azureAppRegistration
+		if err := json.Unmarshal(appOutput, &app); err != nil || app.AppID == "" {
+			return errors.New("create Microsoft Entra app returned no application ID")
+		}
+		appID = app.AppID
 	}
-	if _, err := uuid.Parse(app.AppID); err != nil {
+	if _, err := uuid.Parse(appID); err != nil {
 		return errors.New("create Microsoft Entra app returned an invalid application ID")
 	}
-	if err := runner.Run(ctx, "az", "ad", "sp", "create", "--id", app.AppID, "--only-show-errors"); err != nil {
-		return fmt.Errorf("create Teams app service principal: %w", err)
+	if _, err := runner.Output(ctx, "az", "ad", "sp", "show", "--id", appID, "--only-show-errors"); err != nil {
+		if err := runner.Run(ctx, "az", "ad", "sp", "create", "--id", appID, "--only-show-errors"); err != nil {
+			return fmt.Errorf("create Teams app service principal: %w", err)
+		}
 	}
-	secretOutput, err := runner.Output(ctx, "az", "ad", "app", "credential", "reset", "--id", app.AppID, "--append", "--display-name", "kei-runtime", "--years", "2", "--query", "{password:password}", "--output", "json", "--only-show-errors")
+	secretOutput, err := runner.Output(ctx, "az", "ad", "app", "credential", "reset", "--id", appID, "--append", "--display-name", "kei-runtime", "--years", "2", "--query", "{password:password}", "--output", "json", "--only-show-errors")
 	if err != nil {
 		return fmt.Errorf("create Teams app client secret: %w", err)
 	}
@@ -383,8 +442,30 @@ func provisionTeamsApp(ctx context.Context, config *azureDeploymentConfig, runne
 	if _, err := uuid.Parse(tenantID); err != nil {
 		return errors.New("Azure account returned an invalid tenant ID")
 	}
-	config.TeamsAppID, config.TeamsTenantID, config.TeamsAppPassword = app.AppID, tenantID, credential.Password
+	config.TeamsAppID, config.TeamsTenantID, config.TeamsAppPassword = appID, tenantID, credential.Password
 	return nil
+}
+
+func findTeamsApp(ctx context.Context, displayName string, runner azureCommandRunner) (string, error) {
+	output, err := runner.Output(ctx, "az", "ad", "app", "list", "--display-name", displayName, "--query", "[].{appId:appId,displayName:displayName}", "--output", "json", "--only-show-errors")
+	if err != nil {
+		return "", fmt.Errorf("find existing Microsoft Entra app: %w", err)
+	}
+	var apps []azureAppRegistration
+	if err := json.Unmarshal(output, &apps); err != nil {
+		return "", fmt.Errorf("decode existing Microsoft Entra apps: %w", err)
+	}
+	var match string
+	for _, app := range apps {
+		if app.DisplayName != displayName {
+			continue
+		}
+		if match != "" && match != app.AppID {
+			return "", fmt.Errorf("multiple Microsoft Entra apps named %q; pass an existing app explicitly", displayName)
+		}
+		match = app.AppID
+	}
+	return match, nil
 }
 
 func writeTeamsManifest(ctx context.Context, config azureDeploymentConfig, runner azureCommandRunner) error {
@@ -570,27 +651,46 @@ func requireAzureKeyVaultRBAC(ctx context.Context, config azureDeploymentConfig,
 }
 
 func requestRuntimeCredential(ctx context.Context, client *http.Client, baseURL, cliToken, installationID string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/cli/runtime-installations/"+url.PathEscape(installationID)+"/credential", nil)
+	token, status, err := requestRuntimeCredentialAction(ctx, client, baseURL, cliToken, installationID, "credential")
 	if err != nil {
-		return "", fmt.Errorf("build runtime credential request: %w", err)
+		return "", err
+	}
+	if status != http.StatusOK && status != http.StatusConflict {
+		return "", fmt.Errorf("runtime credential request returned %d", status)
+	}
+	if status == http.StatusConflict {
+		// The first attempt may have created the hashed credential before a
+		// transient Key Vault or Azure deployment failure. Rotate it to obtain
+		// a fresh one for this retry; the old value is never recoverable.
+		if token, _, err = requestRuntimeCredentialAction(ctx, client, baseURL, cliToken, installationID, "rotate"); err != nil {
+			return "", err
+		}
+	}
+	return token, nil
+}
+
+func requestRuntimeCredentialAction(ctx context.Context, client *http.Client, baseURL, cliToken, installationID, action string) (string, int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/cli/runtime-installations/"+url.PathEscape(installationID)+"/"+action, nil)
+	if err != nil {
+		return "", 0, fmt.Errorf("build runtime credential request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+cliToken)
 	response, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("request runtime credential: %w", err)
+		return "", 0, fmt.Errorf("request runtime credential: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("runtime credential request returned %d", response.StatusCode)
+		return "", response.StatusCode, nil
 	}
 	var credential runtimeCredentialResponse
 	if err := json.NewDecoder(io.LimitReader(response.Body, 8<<10)).Decode(&credential); err != nil {
-		return "", fmt.Errorf("decode runtime credential response: %w", err)
+		return "", response.StatusCode, fmt.Errorf("decode runtime credential response: %w", err)
 	}
 	if credential.RuntimeToken == "" {
-		return "", errors.New("runtime credential response is incomplete")
+		return "", response.StatusCode, errors.New("runtime credential response is incomplete")
 	}
-	return credential.RuntimeToken, nil
+	return credential.RuntimeToken, response.StatusCode, nil
 }
 
 func applyAzureBicep(ctx context.Context, config azureDeploymentConfig, runner azureCommandRunner) error {
