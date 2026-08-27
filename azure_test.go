@@ -165,7 +165,7 @@ func TestDeployAzureWritesRuntimeCredentialOnlyToKeyVault(t *testing.T) {
 	if !bound {
 		t.Fatal("installation was not bound after its heartbeat")
 	}
-	if !strings.Contains(runner.templateContent, "keyVaultUrl") || !strings.Contains(runner.templateContent, "KEI_RUNTIME_TOKEN") {
+	if !strings.Contains(runner.templateContent, "keyVaultUrl") || !strings.Contains(runner.templateContent, "KEI_RUNTIME_TOKEN") || !strings.Contains(runner.templateContent, "KEI_RUNTIME_VERSION") {
 		t.Fatal("Bicep template does not configure the Key Vault runtime-token reference")
 	}
 }

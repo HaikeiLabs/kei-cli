@@ -148,6 +148,10 @@ resource runtimeApp 'Microsoft.App/containerApps@2024-03-01' = {
               value: runtimeControlPlaneUrl
             }
             {
+              name: 'KEI_RUNTIME_VERSION'
+              value: runtimeImage
+            }
+            {
               name: 'MICROSOFT_APP_ID'
               value: teamsAppId
             }
