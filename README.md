@@ -5,22 +5,23 @@ supports Microsoft Teams on Azure. The customer owns the Azure subscription,
 resource group, Key Vault, and deployed runtime; Kei provides the control-plane
 installation and runtime image.
 
-## Build
+## Install
 
-Build the CLI from this repository:
-
-```sh
-go build -o tmp/kei .
-```
-
-For a Go installation directly from GitHub:
+The recommended installation is directly from the public GitHub module:
 
 ```sh
 go install github.com/HaikeiLabs/kei-cli@latest
 ```
 
-This installs the executable as `kei-cli` in Go's binary directory. If you
+This installs the executable as `kei-cli` in Go's binary directory. Ensure
+that directory is on your `PATH`, or invoke it with its full path. If you
 prefer the shorter command name, add `alias kei=kei-cli` to your shell.
+
+To build from source instead:
+
+```sh
+go build -o tmp/kei .
+```
 
 Run `./tmp/kei` below when using a local build.
 
