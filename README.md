@@ -99,6 +99,27 @@ The existing Key Vault must use Azure RBAC. The CLI writes secrets directly to
 Key Vault; it never prints the secret values or stores them in the Kei control
 plane.
 
+Run the read-only Azure preflight before deployment:
+
+```sh
+tmp/kei bot doctor azure \
+  --resource-group RESOURCE_GROUP --location REGION --key-vault KEY_VAULT_NAME \
+  --teams-app-password-secret teams-app-password \
+  --teams-app-id ENTRA_APP_ID --teams-tenant-id TENANT_ID
+```
+
+After publishing a new runtime image, upgrade an existing deployment with:
+
+```sh
+tmp/kei bot upgrade azure --installation INSTALLATION_ID \
+  --image ghcr.io/haikeilabs/kei-teams-runtime:NEW_TAG
+```
+
+`upgrade` reuses the recorded Azure deployment and Key Vault runtime-secret
+reference; it never requests or prints a new runtime credential. Deployments
+created before complete deployment metadata was recorded must be redeployed
+once before they can be upgraded.
+
 Useful inspection commands:
 
 ```sh

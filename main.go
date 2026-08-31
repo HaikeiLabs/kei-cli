@@ -77,7 +77,7 @@ func main() {
 
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Kei deployment CLI")
-	fmt.Fprintln(w, "\nUsage:\n  kei login [--api-url URL]\n  kei bot init --platform teams|discord|slack --name NAME [--agent ID] [--api-url URL]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default] [--api-url URL]\n  kei bot status --installation ID [--api-url URL]\n  kei bot install azure --name NAME [--agent ID] [--resource-group NAME] [--location REGION] [--key-vault NAME] --runtime-control-plane-url URL --image OCI_IMAGE [--teams-manifest PATH]\n  kei bot deploy azure --installation ID --resource-group NAME --location REGION --key-vault NAME --runtime-control-plane-url URL --image OCI_IMAGE [--create-resource-group] [--create-key-vault] [--create-teams-app --teams-app-display-name NAME]\n  kei bot deploy azure --installation ID --resource-group NAME --location REGION --key-vault NAME --teams-app-password-secret NAME --teams-app-id ID --teams-tenant-id ID --runtime-control-plane-url URL --image OCI_IMAGE [--teams-manifest PATH]\n  kei bot destroy azure --installation ID [--resource-group NAME] [--environment-name NAME --delete-environment] [--preserve-installation] [--confirm-destroy ID] [--api-url URL]")
+	fmt.Fprintln(w, "\nUsage:\n  kei login [--api-url URL]\n  kei bot init --platform teams|discord|slack --name NAME [--agent ID] [--api-url URL]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default] [--api-url URL]\n  kei bot status --installation ID [--api-url URL]\n  kei bot doctor azure --resource-group NAME --location REGION --key-vault NAME [--runtime-control-plane-url URL] [--installation ID] [--teams-app-password-secret NAME --teams-app-id ID --teams-tenant-id ID]\n  kei bot install azure --name NAME [--agent ID] [--resource-group NAME] [--location REGION] [--key-vault NAME] --runtime-control-plane-url URL --image OCI_IMAGE [--teams-manifest PATH]\n  kei bot deploy azure --installation ID --resource-group NAME --location REGION --key-vault NAME --runtime-control-plane-url URL --image OCI_IMAGE [--create-resource-group] [--create-key-vault] [--create-teams-app --teams-app-display-name NAME]\n  kei bot deploy azure --installation ID --resource-group NAME --location REGION --key-vault NAME --teams-app-password-secret NAME --teams-app-id ID --teams-tenant-id ID --runtime-control-plane-url URL --image OCI_IMAGE [--teams-manifest PATH]\n  kei bot upgrade azure --installation ID --image OCI_IMAGE [--teams-manifest PATH] [--heartbeat-timeout DURATION] [--api-url URL]\n  kei bot destroy azure --installation ID [--resource-group NAME] [--environment-name NAME --delete-environment] [--preserve-installation] [--confirm-destroy ID] [--api-url URL]")
 }
 
 func runLoginCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
@@ -114,6 +114,10 @@ func runBotCommand(args []string, stdout, stderr io.Writer, client *http.Client,
 		return runBotDeployCommand(args[1:], stdout, stderr, client, store)
 	case "status":
 		return runBotStatusCommand(args[1:], stdout, stderr, client, store)
+	case "doctor":
+		return runBotDoctorCommand(args[1:], stdout, stderr, client, store, osAzureCommandRunner{stdout: stdout, stderr: stderr})
+	case "upgrade":
+		return runBotUpgradeCommand(args[1:], stdout, stderr, client, store, osAzureCommandRunner{stdout: stdout, stderr: stderr})
 	case "destroy":
 		return runBotDestroyCommand(args[1:], stdout, stderr, os.Stdin, client, store, osAzureCommandRunner{stdout: stdout, stderr: stderr})
 	default:

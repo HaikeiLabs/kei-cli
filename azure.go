@@ -550,13 +550,14 @@ func recordAzureDeployment(ctx context.Context, client *http.Client, baseURL, cl
 	metadata := map[string]string{
 		"provider": "azure", "resource_group": config.ResourceGroup, "location": config.Location,
 		"key_vault_name": config.KeyVaultName, "runtime_secret_name": config.RuntimeSecretName,
+		"teams_app_password_secret_name": config.TeamsAppPasswordSecretName,
+		"teams_app_id":                   config.TeamsAppID, "teams_tenant_id": config.TeamsTenantID,
 		"container_app_name": config.ContainerAppName, "container_apps_environment_name": config.ContainerAppsEnvironmentName,
 		"managed_identity_name": config.ManagedIdentityName, "bot_resource_name": config.BotResourceName,
 		"runtime_image": config.RuntimeImage, "runtime_control_plane_url": config.RuntimeControlPlaneURL,
 	}
 	if config.CreateTeamsApp {
 		metadata["teams_app_created_by_kei"] = "true"
-		metadata["teams_app_id"] = config.TeamsAppID
 	}
 	return runtimeInstallationAction(ctx, client, baseURL, cliToken, config.InstallationID, "deployment", map[string]any{"deployment": metadata})
 }
