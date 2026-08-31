@@ -7,14 +7,13 @@ installation and runtime image.
 
 ## Build
 
-The CLI is currently built from this repository:
+Build the CLI from this repository:
 
 ```sh
-cd cmd/kei
 go build -o tmp/kei .
 ```
 
-Run `tmp/kei` below, or install the binary on `PATH` as `kei`.
+Run `./tmp/kei` below, or install the binary on `PATH` as `kei`.
 
 ## Prerequisites
 
@@ -39,7 +38,7 @@ Run `tmp/kei` below, or install the binary on `PATH` as `kei`.
 3. Log in to Kei. The CLI prints a browser URL and one-time verification code:
 
    ```sh
-   tmp/kei login --api-url https://app.haikeilabs.com
+   ./tmp/kei login --api-url https://app.haikeilabs.com
    ```
 
 The CLI login token is short-lived. Re-run `kei login` before a retry if a long
@@ -54,7 +53,7 @@ credential to Key Vault, applies the Bicep template, waits for a runtime
 heartbeat, and binds the installation.
 
 ```sh
-tmp/kei bot install azure \
+./tmp/kei bot install azure \
   --platform teams \
   --name "Customer Teams" \
   --location westus2 \
@@ -80,9 +79,9 @@ Use this flow when Azure details or an existing Teams app are supplied
 separately:
 
 ```sh
-tmp/kei bot init --platform teams --name "Customer Teams"
+./tmp/kei bot init --platform teams --name "Customer Teams"
 
-tmp/kei bot deploy azure \
+./tmp/kei bot deploy azure \
   --installation INSTALLATION_ID \
   --resource-group RESOURCE_GROUP \
   --location REGION \
@@ -102,7 +101,7 @@ plane.
 Run the read-only Azure preflight before deployment:
 
 ```sh
-tmp/kei bot doctor azure \
+./tmp/kei bot doctor azure \
   --resource-group RESOURCE_GROUP --location REGION --key-vault KEY_VAULT_NAME \
   --teams-app-password-secret teams-app-password \
   --teams-app-id ENTRA_APP_ID --teams-tenant-id TENANT_ID
@@ -111,7 +110,7 @@ tmp/kei bot doctor azure \
 After publishing a new runtime image, upgrade an existing deployment with:
 
 ```sh
-tmp/kei bot upgrade azure --installation INSTALLATION_ID \
+./tmp/kei bot upgrade azure --installation INSTALLATION_ID \
   --image ghcr.io/haikeilabs/kei-teams-runtime:NEW_TAG
 ```
 
@@ -123,9 +122,9 @@ once before they can be upgraded.
 Useful inspection commands:
 
 ```sh
-tmp/kei bot status --installation INSTALLATION_ID
-tmp/kei bot agents list --installation INSTALLATION_ID
-tmp/kei bot agents add --installation INSTALLATION_ID --agent AGENT_ID
+./tmp/kei bot status --installation INSTALLATION_ID
+./tmp/kei bot agents list --installation INSTALLATION_ID
+./tmp/kei bot agents add --installation INSTALLATION_ID --agent AGENT_ID
 ```
 
 ## Regional retry and teardown
@@ -135,7 +134,7 @@ temporarily out of capacity. Clean up a failed regional attempt while keeping
 the installation available for redeployment:
 
 ```sh
-tmp/kei bot destroy azure \
+./tmp/kei bot destroy azure \
   --installation INSTALLATION_ID \
   --resource-group RESOURCE_GROUP \
   --environment-name ENVIRONMENT_NAME \
@@ -177,7 +176,7 @@ resource-management permissions.
 ### CLI and login
 
 - **`unknown bot command "install"`**: the binary is stale. Rebuild from
-  `cmd/kei` and run the newly built `tmp/kei`.
+  repository root and run the newly built `./tmp/kei`.
 - **`missing state` or `failed to complete sign-in`**: use the exact
   `/cli/activate?...` URL printed by the CLI and ensure the deployed Kei web
   service contains the CLI login routing fix. Re-run `kei login` afterward.

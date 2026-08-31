@@ -1,4 +1,4 @@
-module github.com/soypete/kei/cli
+module github.com/HaikeiLabs/kei-cli
 
 go 1.26.0
 
