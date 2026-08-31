@@ -62,10 +62,14 @@ func main() {
 	}
 
 	switch os.Args[1] {
+	case "setup":
+		os.Exit(runSetupCommand(os.Args[2:], os.Stdout, os.Stderr, os.Stdin, &http.Client{Timeout: 15 * time.Second}))
 	case "login":
 		os.Exit(runLoginCommand(os.Args[2:], os.Stdout, os.Stderr, &http.Client{Timeout: 15 * time.Second}, osKeychainStore{}))
 	case "bot":
 		os.Exit(runBotCommand(os.Args[2:], os.Stdout, os.Stderr, &http.Client{Timeout: 15 * time.Second}, osKeychainStore{}))
+	case "runtime":
+		os.Exit(runRuntimeCommand(os.Args[2:], os.Stdout, os.Stderr))
 	case "help", "--help", "-h":
 		printUsage(os.Stdout)
 	default:
@@ -77,7 +81,7 @@ func main() {
 
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Kei CLI")
-	fmt.Fprintln(w, "\nUsage:\n  kei login [--api-url URL]\n  kei bot init --platform teams|discord|slack --name NAME [--agent ID] [--api-url URL]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default] [--api-url URL]\n  kei bot status --installation ID [--api-url URL]")
+	fmt.Fprintln(w, "\nUsage:\n  kei setup [--config PATH] [--control-plane-url URL] [--runtime-token TOKEN]\n  kei runtime bootstrap [--config PATH] [--proxy-path PATH]\n  kei login [--api-url URL]\n  kei bot init --platform teams|discord|slack --name NAME [--agent ID] [--api-url URL]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default] [--api-url URL]\n  kei bot status --installation ID [--api-url URL]")
 }
 
 func runLoginCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {

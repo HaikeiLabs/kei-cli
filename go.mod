@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/google/uuid v1.6.0
 	github.com/zalando/go-keyring v0.2.5
+	golang.org/x/term v0.45.0
 )
 
 require (
