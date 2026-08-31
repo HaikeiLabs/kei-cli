@@ -17,6 +17,16 @@ This installs the executable as `kei-cli` in Go's binary directory. Ensure
 that directory is on your `PATH`, or invoke it with its full path. If you
 prefer the shorter command name, add `alias kei=kei-cli` to your shell.
 
+On macOS and Linux, add Go's default binary directory to the current shell
+with:
+
+```sh
+export PATH="$(go env GOPATH)/bin:$PATH"
+```
+
+Add the same line to `~/.zshrc` (or your shell's startup file) to make it
+permanent, then run `kei-cli help` to verify the installation.
+
 To build from source instead:
 
 ```sh
