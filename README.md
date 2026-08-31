@@ -1,12 +1,9 @@
 # Kei CLI
 
-The Kei CLI provisions and manages customer-hosted Kei bot runtimes. The
-current workflow manages Kei installation metadata and bot-agent assignments.
-
-> **Azure deployment is deprecated.** The Azure-specific install, deploy,
-> doctor, upgrade, and destroy commands remain available for compatibility with
-> existing deployments, but are not an active product path and receive no new
-> deployment work for now.
+The Kei CLI manages Kei bot installation metadata. It authenticates operators,
+creates an installation for a bot platform, assigns agents, and reports the
+installation status. Runtime deployment and credentials are managed outside
+this CLI.
 
 ## Install
 
@@ -16,250 +13,67 @@ The recommended installation is directly from the public GitHub module:
 go install github.com/HaikeiLabs/kei-cli@latest
 ```
 
-This installs the executable as `kei-cli` in Go's binary directory. Ensure
-that directory is on your `PATH`, or invoke it with its full path. If you
-prefer the shorter command name, add `alias kei=kei-cli` to your shell.
-
-On macOS and Linux, add Go's default binary directory to the current shell
-with:
+This installs the executable as `kei-cli` in Go's binary directory. Ensure that
+directory is on your `PATH`:
 
 ```sh
 export PATH="$(go env GOPATH)/bin:$PATH"
 ```
 
 Add the same line to `~/.zshrc` (or your shell's startup file) to make it
-permanent, then run `kei-cli help` to verify the installation.
+permanent, then verify the installation:
+
+```sh
+kei-cli help
+```
+
+If you prefer the shorter command name, add `alias kei=kei-cli` to your shell.
 
 To build from source instead:
 
 ```sh
-go build -o tmp/kei .
+go build -o tmp/kei-cli .
+./tmp/kei-cli help
 ```
 
-Run `./tmp/kei` below when using a local build.
+## Login
 
-## Prerequisites
-
-1. Install and sign in to the [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli):
-
-   ```sh
-   az login
-   az account set --subscription SUBSCRIPTION_ID
-   ```
-
-2. Register the resource providers used by the Azure template if the
-   subscription has not used them before:
-
-   ```sh
-   for provider in Microsoft.KeyVault Microsoft.ManagedIdentity \
-     Microsoft.OperationalInsights Microsoft.App Microsoft.BotService
-   do
-     az provider register --namespace "$provider"
-   done
-   ```
-
-3. Log in to Kei. The CLI prints a browser URL and one-time verification code:
-
-   ```sh
-   ./tmp/kei login --api-url https://app.haikeilabs.com
-   ```
-
-The CLI login token is short-lived. Re-run `kei login` before a retry if a long
-Azure deployment ends with a 401 from the Kei API.
-
-## Deprecated: one-shot Azure + Teams installation
-
-For a new customer deployment, use `bot install`. It creates the pending Kei
-installation, creates or reuses the Azure resource group and Key Vault, creates
-or reuses a Microsoft Entra app, writes the Teams password and Kei runtime
-credential to Key Vault, applies the Bicep template, waits for a runtime
-heartbeat, and binds the installation.
+The CLI uses Kei device authorization. It prints a browser URL and one-time
+verification code; complete the flow in your browser:
 
 ```sh
-./tmp/kei bot install azure \
+kei-cli login --api-url https://app.haikeilabs.com
+```
+
+The login token is stored in the operating system credential store. It is not
+printed or written to the repository.
+
+## Manage an installation
+
+Create pending installation metadata for a bot:
+
+```sh
+kei-cli bot init \
   --platform teams \
-  --name "Customer Teams" \
-  --location westus2 \
-  --runtime-control-plane-url https://app.haikeilabs.com \
-  --image ghcr.io/haikeilabs/kei-teams-runtime:IMAGE_TAG \
-  --create-teams-app \
-  --teams-manifest ./kei-teams-manifest.json
+  --name "Customer Teams"
 ```
 
-The published runtime image is public in GHCR. Replace `IMAGE_TAG` with the
-version being tested. The generated Teams manifest is written to the path
-provided by `--teams-manifest`.
-
-After deployment, review and install the generated manifest in Teams using the
-customer tenant's normal app-upload process.
-
-If deployment fails after the installation is created, the CLI prints its ID.
-Resume with `bot deploy azure` instead of creating another installation.
-
-## Deprecated: split Azure install/deploy flow
-
-Use this flow when Azure details or an existing Teams app are supplied
-separately:
+The command prints the installation ID. Use that ID to inspect the installation
+or manage its agent assignments:
 
 ```sh
-./tmp/kei bot init --platform teams --name "Customer Teams"
-
-./tmp/kei bot deploy azure \
-  --installation INSTALLATION_ID \
-  --resource-group RESOURCE_GROUP \
-  --location REGION \
-  --key-vault KEY_VAULT_NAME \
-  --runtime-control-plane-url https://app.haikeilabs.com \
-  --image ghcr.io/haikeilabs/kei-teams-runtime:IMAGE_TAG \
-  --create-teams-app \
-  --teams-manifest ./kei-teams-manifest.json
+kei-cli bot status --installation INSTALLATION_ID
+kei-cli bot agents list --installation INSTALLATION_ID
+kei-cli bot agents add --installation INSTALLATION_ID --agent AGENT_ID
+kei-cli bot agents add --installation INSTALLATION_ID --agent AGENT_ID --default
+kei-cli bot agents remove --installation INSTALLATION_ID --agent AGENT_ID
 ```
 
-For an existing Entra/Teams app, omit `--create-teams-app` and provide
-`--teams-app-password-secret`, `--teams-app-id`, and `--teams-tenant-id`.
-The existing Key Vault must use Azure RBAC. The CLI writes secrets directly to
-Key Vault; it never prints the secret values or stores them in the Kei control
-plane.
+All commands accept `--api-url URL` when using a Kei environment other than
+the default public service.
 
-Run the read-only Azure preflight before deployment:
+## Scope
 
-```sh
-./tmp/kei bot doctor azure \
-  --resource-group RESOURCE_GROUP --location REGION --key-vault KEY_VAULT_NAME \
-  --teams-app-password-secret teams-app-password \
-  --teams-app-id ENTRA_APP_ID --teams-tenant-id TENANT_ID
-```
-
-After publishing a new runtime image, upgrade an existing deployment with:
-
-```sh
-./tmp/kei bot upgrade azure --installation INSTALLATION_ID \
-  --image ghcr.io/haikeilabs/kei-teams-runtime:NEW_TAG
-```
-
-`upgrade` reuses the recorded Azure deployment and Key Vault runtime-secret
-reference; it never requests or prints a new runtime credential. Deployments
-created before complete deployment metadata was recorded must be redeployed
-once before they can be upgraded.
-
-Useful inspection commands:
-
-```sh
-./tmp/kei bot status --installation INSTALLATION_ID
-./tmp/kei bot agents list --installation INSTALLATION_ID
-./tmp/kei bot agents add --installation INSTALLATION_ID --agent AGENT_ID
-```
-
-## Deprecated: regional retry and teardown
-
-Azure can fail to create a managed environment because the selected region is
-temporarily out of capacity. Clean up a failed regional attempt while keeping
-the installation available for redeployment:
-
-```sh
-./tmp/kei bot destroy azure \
-  --installation INSTALLATION_ID \
-  --resource-group RESOURCE_GROUP \
-  --environment-name ENVIRONMENT_NAME \
-  --delete-environment \
-  --preserve-installation
-```
-
-The command prints a plan and requires typing the installation name or ID.
-`--preserve-installation` skips disabling the control-plane installation, so
-the same ID and runtime credential can be used for a different region. The
-resource group and Key Vault remain available; use new environment, app,
-identity, and bot names in the new region.
-
-For final teardown, omit `--preserve-installation`. The installation is then
-disabled. The destroy command intentionally retains the customer Key Vault and
-secrets. Microsoft Entra app registrations are tenant-level objects and are
-also not removed by this command; review them separately.
-
-## Deprecated: Azure resources and permissions
-
-The Bicep deployment creates or configures:
-
-- A Container Apps managed environment and runtime Container App with public
-  HTTPS ingress.
-- A user-assigned managed identity and Log Analytics workspace.
-- An Azure Bot resource used by the Teams channel.
-- Key Vault references for the Kei runtime token and Teams app password.
-- A Microsoft Entra application and service principal when
-  `--create-teams-app` is used.
-
-The operator needs permission to register providers and create/update these
-resources, read/write the selected Key Vault secrets, and create or update the
-Entra application/service principal. The deployed identity receives only the
-Key Vault Secrets User role needed by the runtime; it does not receive Azure
-resource-management permissions.
-
-## Troubleshooting
-
-### CLI and login
-
-- **`unknown bot command "install"`**: the binary is stale. Rebuild from
-  repository root and run the newly built `./tmp/kei`.
-- **`missing state` or `failed to complete sign-in`**: use the exact
-  `/cli/activate?...` URL printed by the CLI and ensure the deployed Kei web
-  service contains the CLI login routing fix. Re-run `kei login` afterward.
-- **Installation or deployment returns 401**: run `kei login` again with the
-  correct `--api-url`. A long Azure operation can outlive the CLI token.
-
-### Azure prerequisites and secrets
-
-- **`MissingSubscriptionRegistration` for `Microsoft.KeyVault` (or another
-  provider)**: register the provider with `az provider register --namespace`
-  and wait for it to reach `Registered`.
-- **Provider registration appears to hang**: omit `--wait` and poll directly:
-
-  ```sh
-  az provider show --namespace Microsoft.KeyVault \
-    --query registrationState --output tsv
-  ```
-
-  Repeat for each provider until the state is `Registered`.
-- **Key Vault `403 ForbiddenByRbac`**: the signed-in operator needs a data
-  plane role such as `Key Vault Secrets Officer` on the vault. The runtime’s
-  managed identity separately needs `Key Vault Secrets User`.
-- **`specified vault already exists`**: use the current CLI; same-resource-group
-  RBAC-enabled vaults are reused. A vault in another resource group or without
-  RBAC must be corrected explicitly.
-
-### Deprecated Azure deployment
-
-- **`ManagedEnvironmentCapacityHeavyUsageError`**: this is a regional Azure
-  capacity constraint, not a Kei image or credential failure. Retry later or
-  select another region with new environment/app names.
-- **Generic ARM `DeploymentFailed`**: inspect the nested operation and the
-  environment’s `deploymentErrors`:
-
-  ```sh
-  az deployment group list -g RESOURCE_GROUP -o table
-  az deployment operation group list -g RESOURCE_GROUP -n DEPLOYMENT_NAME -o jsonc
-  az rest --method get --url \
-    "https://management.azure.com/subscriptions/SUBSCRIPTION_ID/resourceGroups/RESOURCE_GROUP/providers/Microsoft.App/managedEnvironments/ENVIRONMENT_NAME?api-version=2025-07-01" \
-    -o jsonc
-  ```
-
-- **`installation has no Azure resource group metadata`**: the deployment
-  failed before metadata was recorded. Pass `--resource-group` to
-  `bot destroy azure`.
-- **`could not list Azure resources tagged for this installation`**: rebuild
-  the current CLI. It falls back to listing the resource group and filtering
-  the `keiInstallationId` tag locally when Azure rejects server-side tag
-  filtering.
-- **`runtime deployment returned 400`**: the control plane rejected deployment
-  metadata. Deploy the current `abac-engine`; the Teams one-shot flow requires
-  the `teams_app_created_by_kei` and `teams_app_id` metadata fields.
-- **Azure CLI reports an invalid Container Apps API version**: update the
-  `containerapp` extension or use `az rest` with an API version listed as
-  supported by the error response.
-
-## Current scope
-
-The active CLI workflow covers Kei login, installation metadata, agent
-assignment, and installation status. Azure Container Apps + Microsoft Teams
-deployment remains available only as a deprecated compatibility path. Discord,
-Slack, AWS, GCP, deployment buttons, Terraform, and Helm are not currently
-supported deployment paths.
+The CLI currently supports login, installation metadata, agent assignment, and
+installation status for the Teams, Discord, and Slack platform identifiers.
+Runtime deployment workflows are intentionally outside the CLI's scope.

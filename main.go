@@ -77,11 +77,7 @@ func main() {
 
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Kei CLI")
-	fmt.Fprintln(w, "\nUsage:\n  kei login [--api-url URL]\n  kei bot init --platform teams|discord|slack --name NAME [--agent ID] [--api-url URL]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default] [--api-url URL]\n  kei bot status --installation ID [--api-url URL]\n  kei bot doctor azure --resource-group NAME --location REGION --key-vault NAME [--runtime-control-plane-url URL] [--installation ID] [--teams-app-password-secret NAME --teams-app-id ID --teams-tenant-id ID]  (deprecated)\n  kei bot install azure --name NAME [--agent ID] [--resource-group NAME] [--location REGION] [--key-vault NAME] --runtime-control-plane-url URL --image OCI_IMAGE [--teams-manifest PATH]  (deprecated)\n  kei bot deploy azure --installation ID --resource-group NAME --location REGION --key-vault NAME --runtime-control-plane-url URL --image OCI_IMAGE [--create-resource-group] [--create-key-vault] [--create-teams-app --teams-app-display-name NAME]  (deprecated)\n  kei bot deploy azure --installation ID --resource-group NAME --location REGION --key-vault NAME --teams-app-password-secret NAME --teams-app-id ID --teams-tenant-id ID --runtime-control-plane-url URL --image OCI_IMAGE [--teams-manifest PATH]  (deprecated)\n  kei bot upgrade azure --installation ID --image OCI_IMAGE [--teams-manifest PATH] [--heartbeat-timeout DURATION] [--api-url URL]  (deprecated)\n  kei bot destroy azure --installation ID [--resource-group NAME] [--environment-name NAME --delete-environment] [--preserve-installation] [--confirm-destroy ID] [--api-url URL]  (deprecated)\n\nAzure deployment commands are deprecated and retained for compatibility only; no new Azure deployment work is planned.")
-}
-
-func printAzureDeprecationNotice(w io.Writer) {
-	fmt.Fprintln(w, "WARNING: Azure deployment commands are deprecated and retained for compatibility only; no new Azure deployment work is planned.")
+	fmt.Fprintln(w, "\nUsage:\n  kei login [--api-url URL]\n  kei bot init --platform teams|discord|slack --name NAME [--agent ID] [--api-url URL]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default] [--api-url URL]\n  kei bot status --installation ID [--api-url URL]")
 }
 
 func runLoginCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
@@ -108,26 +104,12 @@ func runBotCommand(args []string, stdout, stderr io.Writer, client *http.Client,
 		return 2
 	}
 	switch args[0] {
-	case "install", "deploy", "doctor", "upgrade", "destroy":
-		printAzureDeprecationNotice(stderr)
-	}
-	switch args[0] {
 	case "init":
 		return runBotInitCommand(args[1:], stdout, stderr, client, store)
-	case "install":
-		return runBotInstallCommand(args[1:], stdout, stderr, client, store)
 	case "agents":
 		return runBotAgentsCommand(args[1:], stdout, stderr, client, store)
-	case "deploy":
-		return runBotDeployCommand(args[1:], stdout, stderr, client, store)
 	case "status":
 		return runBotStatusCommand(args[1:], stdout, stderr, client, store)
-	case "doctor":
-		return runBotDoctorCommand(args[1:], stdout, stderr, client, store, osAzureCommandRunner{stdout: stdout, stderr: stderr})
-	case "upgrade":
-		return runBotUpgradeCommand(args[1:], stdout, stderr, client, store, osAzureCommandRunner{stdout: stdout, stderr: stderr})
-	case "destroy":
-		return runBotDestroyCommand(args[1:], stdout, stderr, os.Stdin, client, store, osAzureCommandRunner{stdout: stdout, stderr: stderr})
 	default:
 		fmt.Fprintf(stderr, "unknown bot command %q\n", args[0])
 		return 2
@@ -156,10 +138,9 @@ func runBotInitCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 }
 
 type createRuntimeInstallationRequest struct {
-	AgentID       string `json:"agent_id,omitempty"`
-	Platform      string `json:"platform"`
-	DisplayName   string `json:"display_name"`
-	ReuseExisting bool   `json:"reuse_existing,omitempty"`
+	AgentID     string `json:"agent_id,omitempty"`
+	Platform    string `json:"platform"`
+	DisplayName string `json:"display_name"`
 }
 
 type createRuntimeInstallationResponse struct {
@@ -171,25 +152,17 @@ type createRuntimeInstallationResponse struct {
 }
 
 // initBot creates public installation metadata only. Runtime credentials are
-// intentionally created later by `kei bot deploy` and delivered directly to a
-// customer secret manager, never to terminal output or local CLI config.
+// not handled by this CLI.
 func initBot(ctx context.Context, apiURL, agentID, platform, displayName string, stdout io.Writer, client *http.Client, store credentialStore) error {
 	_, err := createBotInstallation(ctx, apiURL, agentID, platform, displayName, stdout, client, store)
 	return err
 }
 
 func createBotInstallation(ctx context.Context, apiURL, agentID, platform, displayName string, stdout io.Writer, client *http.Client, store credentialStore) (*createRuntimeInstallationResponse, error) {
-	return createBotInstallationWithOptions(ctx, apiURL, agentID, platform, displayName, false, stdout, client, store)
+	return createBotInstallationWithOptions(ctx, apiURL, agentID, platform, displayName, stdout, client, store)
 }
 
-// createBotInstallationIdempotent is used by the one-shot installer. A retry
-// may safely reuse an existing installation with the same org, platform, and
-// display name instead of creating a duplicate.
-func createBotInstallationIdempotent(ctx context.Context, apiURL, agentID, platform, displayName string, stdout io.Writer, client *http.Client, store credentialStore) (*createRuntimeInstallationResponse, error) {
-	return createBotInstallationWithOptions(ctx, apiURL, agentID, platform, displayName, true, stdout, client, store)
-}
-
-func createBotInstallationWithOptions(ctx context.Context, apiURL, agentID, platform, displayName string, reuseExisting bool, stdout io.Writer, client *http.Client, store credentialStore) (*createRuntimeInstallationResponse, error) {
+func createBotInstallationWithOptions(ctx context.Context, apiURL, agentID, platform, displayName string, stdout io.Writer, client *http.Client, store credentialStore) (*createRuntimeInstallationResponse, error) {
 	baseURL, err := normalizedKeiWebURL(apiURL)
 	if err != nil {
 		return nil, err
@@ -198,7 +171,7 @@ func createBotInstallationWithOptions(ctx context.Context, apiURL, agentID, plat
 	if err != nil {
 		return nil, errors.New("not logged in; run kei login first")
 	}
-	body, err := json.Marshal(createRuntimeInstallationRequest{AgentID: agentID, Platform: platform, DisplayName: displayName, ReuseExisting: reuseExisting})
+	body, err := json.Marshal(createRuntimeInstallationRequest{AgentID: agentID, Platform: platform, DisplayName: displayName})
 	if err != nil {
 		return nil, fmt.Errorf("encode installation request: %w", err)
 	}

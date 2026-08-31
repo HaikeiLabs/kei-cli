@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -85,17 +84,6 @@ func TestNormalizedKeiWebURL(t *testing.T) {
 	}
 }
 
-func TestUsageMarksAzureDeploymentAsDeprecated(t *testing.T) {
-	var output bytes.Buffer
-	printUsage(&output)
-	if !strings.Contains(output.String(), "Azure deployment commands are deprecated") {
-		t.Fatalf("usage does not explain Azure deprecation: %s", output.String())
-	}
-	if !strings.Contains(output.String(), "bot install azure") || !strings.Contains(output.String(), "(deprecated)") {
-		t.Fatalf("usage does not mark Azure commands deprecated: %s", output.String())
-	}
-}
-
 func TestInitCreatesPublicInstallationWithoutExposingCredential(t *testing.T) {
 	store := &memoryCredentialStore{token: "cli-session-token"}
 	var received createRuntimeInstallationRequest
@@ -123,25 +111,6 @@ func TestInitCreatesPublicInstallationWithoutExposingCredential(t *testing.T) {
 	}
 	if strings.Contains(output.String(), "runtime_token") || strings.Contains(output.String(), "kh_live_") {
 		t.Fatalf("init output exposed a credential: %q", output.String())
-	}
-}
-
-func TestIdempotentInstallationRequestSetsReuseFlag(t *testing.T) {
-	store := &memoryCredentialStore{server: "", token: "cli-session-token"}
-	var received createRuntimeInstallationRequest
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
-			t.Fatal(err)
-		}
-		json.NewEncoder(w).Encode(createRuntimeInstallationResponse{ID: "installation-123", Platform: "teams", DisplayName: "customer-teams"})
-	}))
-	defer server.Close()
-	store.server = server.URL
-	if _, err := createBotInstallationIdempotent(context.Background(), server.URL, "", "teams", "customer-teams", io.Discard, server.Client(), store); err != nil {
-		t.Fatal(err)
-	}
-	if !received.ReuseExisting {
-		t.Fatalf("reuse_existing = false, want true")
 	}
 }
 
