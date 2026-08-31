@@ -13,7 +13,16 @@ Build the CLI from this repository:
 go build -o tmp/kei .
 ```
 
-Run `./tmp/kei` below, or install the binary on `PATH` as `kei`.
+For a Go installation directly from GitHub:
+
+```sh
+go install github.com/HaikeiLabs/kei-cli@latest
+```
+
+This installs the executable as `kei-cli` in Go's binary directory. If you
+prefer the shorter command name, add `alias kei=kei-cli` to your shell.
+
+Run `./tmp/kei` below when using a local build.
 
 ## Prerequisites
 
