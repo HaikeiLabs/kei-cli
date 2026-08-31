@@ -1,9 +1,12 @@
 # Kei CLI
 
-The Kei CLI provisions and manages customer-hosted Kei bot runtimes. The MVP
-supports Microsoft Teams on Azure. The customer owns the Azure subscription,
-resource group, Key Vault, and deployed runtime; Kei provides the control-plane
-installation and runtime image.
+The Kei CLI provisions and manages customer-hosted Kei bot runtimes. The
+current workflow manages Kei installation metadata and bot-agent assignments.
+
+> **Azure deployment is deprecated.** The Azure-specific install, deploy,
+> doctor, upgrade, and destroy commands remain available for compatibility with
+> existing deployments, but are not an active product path and receive no new
+> deployment work for now.
 
 ## Install
 
@@ -64,7 +67,7 @@ Run `./tmp/kei` below when using a local build.
 The CLI login token is short-lived. Re-run `kei login` before a retry if a long
 Azure deployment ends with a 401 from the Kei API.
 
-## One-shot Azure + Teams installation
+## Deprecated: one-shot Azure + Teams installation
 
 For a new customer deployment, use `bot install`. It creates the pending Kei
 installation, creates or reuses the Azure resource group and Key Vault, creates
@@ -93,7 +96,7 @@ customer tenant's normal app-upload process.
 If deployment fails after the installation is created, the CLI prints its ID.
 Resume with `bot deploy azure` instead of creating another installation.
 
-## Split install/deploy flow
+## Deprecated: split Azure install/deploy flow
 
 Use this flow when Azure details or an existing Teams app are supplied
 separately:
@@ -147,7 +150,7 @@ Useful inspection commands:
 ./tmp/kei bot agents add --installation INSTALLATION_ID --agent AGENT_ID
 ```
 
-## Regional retry and teardown
+## Deprecated: regional retry and teardown
 
 Azure can fail to create a managed environment because the selected region is
 temporarily out of capacity. Clean up a failed regional attempt while keeping
@@ -173,7 +176,7 @@ disabled. The destroy command intentionally retains the customer Key Vault and
 secrets. Microsoft Entra app registrations are tenant-level objects and are
 also not removed by this command; review them separately.
 
-## Azure resources and permissions
+## Deprecated: Azure resources and permissions
 
 The Bicep deployment creates or configures:
 
@@ -223,7 +226,7 @@ resource-management permissions.
   RBAC-enabled vaults are reused. A vault in another resource group or without
   RBAC must be corrected explicitly.
 
-### Azure deployment
+### Deprecated Azure deployment
 
 - **`ManagedEnvironmentCapacityHeavyUsageError`**: this is a regional Azure
   capacity constraint, not a Kei image or credential failure. Retry later or
@@ -255,7 +258,8 @@ resource-management permissions.
 
 ## Current scope
 
-The MVP supports Azure Container Apps + Microsoft Teams, public runtime
-ingress, Azure Key Vault, and customer-owned Azure subscriptions. Discord,
-Slack, AWS, GCP, Azure/AWS deployment buttons, Terraform, and Helm remain
-future deployment options.
+The active CLI workflow covers Kei login, installation metadata, agent
+assignment, and installation status. Azure Container Apps + Microsoft Teams
+deployment remains available only as a deprecated compatibility path. Discord,
+Slack, AWS, GCP, deployment buttons, Terraform, and Helm are not currently
+supported deployment paths.

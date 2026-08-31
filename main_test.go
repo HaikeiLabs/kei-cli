@@ -85,6 +85,17 @@ func TestNormalizedKeiWebURL(t *testing.T) {
 	}
 }
 
+func TestUsageMarksAzureDeploymentAsDeprecated(t *testing.T) {
+	var output bytes.Buffer
+	printUsage(&output)
+	if !strings.Contains(output.String(), "Azure deployment commands are deprecated") {
+		t.Fatalf("usage does not explain Azure deprecation: %s", output.String())
+	}
+	if !strings.Contains(output.String(), "bot install azure") || !strings.Contains(output.String(), "(deprecated)") {
+		t.Fatalf("usage does not mark Azure commands deprecated: %s", output.String())
+	}
+}
+
 func TestInitCreatesPublicInstallationWithoutExposingCredential(t *testing.T) {
 	store := &memoryCredentialStore{token: "cli-session-token"}
 	var received createRuntimeInstallationRequest
