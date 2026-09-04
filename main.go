@@ -134,10 +134,27 @@ func runBotInitCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 		fmt.Fprintln(stderr, "bot init requires --platform teams|discord|slack and --name NAME")
 		return 2
 	}
-	if _, err := createBotInstallation(context.Background(), *apiURL, *agentID, *platform, *displayName, stdout, client, store); err != nil {
+	installation, err := createBotInstallation(context.Background(), *apiURL, *agentID, *platform, *displayName, io.Discard, client, store)
+	if err != nil {
 		fmt.Fprintf(stderr, "bot init failed: %v\n", err)
 		return 1
 	}
+	baseURL, err := normalizedKeiWebURL(*apiURL)
+	if err != nil {
+		fmt.Fprintf(stderr, "bot init failed: %v\n", err)
+		return 1
+	}
+	cliToken, err := store.Load(baseURL)
+	if err != nil {
+		fmt.Fprintln(stderr, "bot init: not logged in; run kei login first")
+		return 1
+	}
+	runtimeToken, err := requestRuntimeCredential(context.Background(), client, baseURL, cliToken, installation.ID)
+	if err != nil {
+		fmt.Fprintf(stderr, "bot init: create runtime credential: %v\n", err)
+		return 1
+	}
+	_ = json.NewEncoder(stdout).Encode(map[string]string{"installation_id": installation.ID, "runtime_token": runtimeToken})
 	return 0
 }
 
