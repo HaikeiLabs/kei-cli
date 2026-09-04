@@ -114,10 +114,40 @@ func runBotCommand(args []string, stdout, stderr io.Writer, client *http.Client,
 		return runBotAgentsCommand(args[1:], stdout, stderr, client, store)
 	case "status":
 		return runBotStatusCommand(args[1:], stdout, stderr, client, store)
+	case "credential":
+		return runBotCredentialCommand(args[1:], stdout, stderr, client, store)
 	default:
 		fmt.Fprintf(stderr, "unknown bot command %q\n", args[0])
 		return 2
 	}
+}
+
+func runBotCredentialCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
+	flags := flag.NewFlagSet("bot credential", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	apiURL := flags.String("api-url", keiWebURL(), "Kei web URL")
+	installationID := flags.String("installation", "", "installation ID")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || *installationID == "" {
+		fmt.Fprintln(stderr, "bot credential requires --installation ID")
+		return 2
+	}
+	baseURL, err := normalizedKeiWebURL(*apiURL)
+	if err != nil {
+		fmt.Fprintf(stderr, "bot credential: %v\n", err)
+		return 2
+	}
+	cliToken, err := store.Load(baseURL)
+	if err != nil {
+		fmt.Fprintln(stderr, "bot credential: not logged in; run kei login first")
+		return 1
+	}
+	runtimeToken, err := requestRuntimeCredential(context.Background(), client, baseURL, cliToken, *installationID)
+	if err != nil {
+		fmt.Fprintf(stderr, "bot credential failed: %v\n", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, runtimeToken)
+	return 0
 }
 
 func runBotInitCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
