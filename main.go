@@ -116,6 +116,8 @@ func runBotCommand(args []string, stdout, stderr io.Writer, client *http.Client,
 		return runBotStatusCommand(args[1:], stdout, stderr, client, store)
 	case "credential":
 		return runBotCredentialCommand(args[1:], stdout, stderr, client, store)
+	case "bind":
+		return runBotBindCommand(args[1:], stdout, stderr, client, store)
 	default:
 		fmt.Fprintf(stderr, "unknown bot command %q\n", args[0])
 		return 2
