@@ -36,6 +36,39 @@ go build -o tmp/kei-cli .
 ./tmp/kei-cli help
 ```
 
+## Configure a local runtime
+
+To run a local headless harness against an existing Kei runtime installation,
+run setup once:
+
+```sh
+kei-cli setup
+```
+
+Setup prompts for the production control-plane URL, runtime installation token,
+local harness URL, `kei-proxy` path, and optional model settings. It verifies the
+token with Kei before saving the configuration to `~/.config/kei.yaml`. The file
+is created with `0600` permissions and the token is never printed. For scripted
+or non-interactive setup, pass the token explicitly (be aware it may be saved
+in shell history):
+
+```sh
+kei-cli setup \
+  --control-plane-url https://app.haikeilabs.com \
+  --runtime-token RUNTIME_INSTALLATION_TOKEN
+```
+
+Verify the saved runtime installation and send its heartbeat through the local
+`kei-proxy` binary:
+
+```sh
+kei-cli runtime bootstrap
+```
+
+Use `--config PATH` if you need a separate configuration file. The runtime
+token is used only by the local proxy; it is not sent to the model or written
+to the repository.
+
 ## Login
 
 The CLI uses Kei device authorization. It prints a browser URL and one-time

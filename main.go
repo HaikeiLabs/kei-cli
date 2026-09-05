@@ -62,10 +62,14 @@ func main() {
 	}
 
 	switch os.Args[1] {
+	case "setup":
+		os.Exit(runSetupCommand(os.Args[2:], os.Stdout, os.Stderr, os.Stdin, &http.Client{Timeout: 15 * time.Second}))
 	case "login":
 		os.Exit(runLoginCommand(os.Args[2:], os.Stdout, os.Stderr, &http.Client{Timeout: 15 * time.Second}, osKeychainStore{}))
 	case "bot":
 		os.Exit(runBotCommand(os.Args[2:], os.Stdout, os.Stderr, &http.Client{Timeout: 15 * time.Second}, osKeychainStore{}))
+	case "runtime":
+		os.Exit(runRuntimeCommand(os.Args[2:], os.Stdout, os.Stderr))
 	case "help", "--help", "-h":
 		printUsage(os.Stdout)
 	default:
@@ -77,7 +81,7 @@ func main() {
 
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Kei CLI")
-	fmt.Fprintln(w, "\nUsage:\n  kei login [--api-url URL]\n  kei bot init --platform teams|discord|slack --name NAME [--agent ID] [--api-url URL]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default] [--api-url URL]\n  kei bot status --installation ID [--api-url URL]")
+	fmt.Fprintln(w, "\nUsage:\n  kei setup [--config PATH] [--control-plane-url URL] [--runtime-token TOKEN]\n  kei runtime bootstrap [--config PATH] [--proxy-path PATH]\n  kei login [--api-url URL]\n  kei bot init --platform teams|discord|slack --name NAME [--agent ID] [--api-url URL]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default] [--api-url URL]\n  kei bot status --installation ID [--api-url URL]")
 }
 
 func runLoginCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
@@ -110,10 +114,40 @@ func runBotCommand(args []string, stdout, stderr io.Writer, client *http.Client,
 		return runBotAgentsCommand(args[1:], stdout, stderr, client, store)
 	case "status":
 		return runBotStatusCommand(args[1:], stdout, stderr, client, store)
+	case "credential":
+		return runBotCredentialCommand(args[1:], stdout, stderr, client, store)
 	default:
 		fmt.Fprintf(stderr, "unknown bot command %q\n", args[0])
 		return 2
 	}
+}
+
+func runBotCredentialCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
+	flags := flag.NewFlagSet("bot credential", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	apiURL := flags.String("api-url", keiWebURL(), "Kei web URL")
+	installationID := flags.String("installation", "", "installation ID")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || *installationID == "" {
+		fmt.Fprintln(stderr, "bot credential requires --installation ID")
+		return 2
+	}
+	baseURL, err := normalizedKeiWebURL(*apiURL)
+	if err != nil {
+		fmt.Fprintf(stderr, "bot credential: %v\n", err)
+		return 2
+	}
+	cliToken, err := store.Load(baseURL)
+	if err != nil {
+		fmt.Fprintln(stderr, "bot credential: not logged in; run kei login first")
+		return 1
+	}
+	runtimeToken, err := requestRuntimeCredential(context.Background(), client, baseURL, cliToken, *installationID)
+	if err != nil {
+		fmt.Fprintf(stderr, "bot credential failed: %v\n", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, runtimeToken)
+	return 0
 }
 
 func runBotInitCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
@@ -130,10 +164,27 @@ func runBotInitCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 		fmt.Fprintln(stderr, "bot init requires --platform teams|discord|slack and --name NAME")
 		return 2
 	}
-	if _, err := createBotInstallation(context.Background(), *apiURL, *agentID, *platform, *displayName, stdout, client, store); err != nil {
+	installation, err := createBotInstallation(context.Background(), *apiURL, *agentID, *platform, *displayName, io.Discard, client, store)
+	if err != nil {
 		fmt.Fprintf(stderr, "bot init failed: %v\n", err)
 		return 1
 	}
+	baseURL, err := normalizedKeiWebURL(*apiURL)
+	if err != nil {
+		fmt.Fprintf(stderr, "bot init failed: %v\n", err)
+		return 1
+	}
+	cliToken, err := store.Load(baseURL)
+	if err != nil {
+		fmt.Fprintln(stderr, "bot init: not logged in; run kei login first")
+		return 1
+	}
+	runtimeToken, err := requestRuntimeCredential(context.Background(), client, baseURL, cliToken, installation.ID)
+	if err != nil {
+		fmt.Fprintf(stderr, "bot init: create runtime credential: %v\n", err)
+		return 1
+	}
+	_ = json.NewEncoder(stdout).Encode(map[string]string{"installation_id": installation.ID, "runtime_token": runtimeToken})
 	return 0
 }
 
