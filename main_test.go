@@ -198,6 +198,40 @@ func TestBotStatusPrintsSafeInstallationMetadata(t *testing.T) {
 	}
 }
 
+func TestBotDeleteRequiresExplicitConfirmation(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	store := &memoryCredentialStore{token: "cli-session-token"}
+	if code := runBotDeleteCommand([]string{"--installation", "12345678-1234-1234-1234-123456789012"}, &stdout, &stderr, http.DefaultClient, store); code != 2 {
+		t.Fatalf("delete command exit = %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "--yes") {
+		t.Fatalf("delete warning = %q", stderr.String())
+	}
+}
+
+func TestBotDeleteRevokesInstallation(t *testing.T) {
+	installationID := "12345678-1234-1234-1234-123456789012"
+	store := &memoryCredentialStore{token: "cli-session-token"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/cli/runtime-installations/"+installationID || r.Method != http.MethodDelete {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer cli-session-token" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	store.server = server.URL
+	var stdout, stderr bytes.Buffer
+	if code := runBotDeleteCommand([]string{"--api-url", server.URL, "--installation", installationID, "--yes"}, &stdout, &stderr, server.Client(), store); code != 0 {
+		t.Fatalf("delete command exit = %d, stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "revoked its credential") {
+		t.Fatalf("delete output = %q", stdout.String())
+	}
+}
+
 func TestBotAgentsAddUsesCLIOrganizationScopedEndpoint(t *testing.T) {
 	installationID := "12345678-1234-1234-1234-123456789012"
 	agentID := "22345678-1234-1234-1234-123456789012"
