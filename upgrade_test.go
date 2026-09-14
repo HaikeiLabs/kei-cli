@@ -41,7 +41,7 @@ func TestUpgradeReplacesCurrentBinary(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("upgrade exit = %d, stderr=%s", code, stderr.String())
 	}
-	if len(runner.args) != 3 || runner.args[0] != "go" || runner.args[1] != "install" || runner.args[2] != defaultUpgradeModule+"@latest" {
+	if len(runner.args) != 3 || runner.args[0] != "go" || runner.args[1] != "install" || runner.args[2] != upgradeModule+"@latest" {
 		t.Fatalf("go install args = %v", runner.args)
 	}
 	data, err := os.ReadFile(current)
@@ -82,7 +82,7 @@ func TestUpgradePinsRequestedVersion(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("upgrade exit = %d, stderr=%s", code, stderr.String())
 	}
-	if len(runner.args) != 3 || runner.args[2] != defaultUpgradeModule+"@v0.2.0" {
+	if len(runner.args) != 3 || runner.args[2] != upgradeModule+"@v0.2.0" {
 		t.Fatalf("go install args = %v", runner.args)
 	}
 }

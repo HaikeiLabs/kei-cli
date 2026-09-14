@@ -12,7 +12,8 @@ import (
 	"strings"
 )
 
-const defaultUpgradeModule = "github.com/HaikeiLabs/kei-cli"
+// upgradeModule is this CLI's own Go module; upgrades always install it.
+const upgradeModule = "github.com/HaikeiLabs/kei-cli"
 
 type upgradeRunner interface {
 	Run(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error
@@ -44,7 +45,6 @@ func gopathBinDir() (string, error) {
 func runUpgradeCommand(args []string, stdout, stderr io.Writer, runner upgradeRunner, executable func() (string, error), binDir func() (string, error)) int {
 	flags := flag.NewFlagSet("upgrade", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	module := flags.String("module", defaultUpgradeModule, "Go module that provides the kei binary")
 	upgradeVersion := flags.String("version", "latest", "module version to install")
 	if err := flags.Parse(args); err != nil {
 		return 2
@@ -53,8 +53,8 @@ func runUpgradeCommand(args []string, stdout, stderr io.Writer, runner upgradeRu
 		fmt.Fprintln(stderr, "upgrade accepts no positional arguments")
 		return 2
 	}
-	fmt.Fprintf(stdout, "Installing %s@%s...\n", *module, *upgradeVersion)
-	if err := runner.Run(context.Background(), stdout, stderr, "go", "install", *module+"@"+*upgradeVersion); err != nil {
+	fmt.Fprintf(stdout, "Installing %s@%s...\n", upgradeModule, *upgradeVersion)
+	if err := runner.Run(context.Background(), stdout, stderr, "go", "install", upgradeModule+"@"+*upgradeVersion); err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
 			fmt.Fprintln(stderr, "upgrade failed: the go command was not found; install Go and ensure it is on PATH")
 			return 1
