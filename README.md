@@ -97,6 +97,7 @@ The command prints the installation ID. Use that ID to inspect the installation
 or manage its agent assignments:
 
 ```sh
+kei bot list
 kei bot status --installation INSTALLATION_ID
 kei bot delete --installation INSTALLATION_ID --yes
 kei bot agents list --installation INSTALLATION_ID

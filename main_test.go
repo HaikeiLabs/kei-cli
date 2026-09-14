@@ -30,6 +30,15 @@ func (s *memoryCredentialStore) Load(serverURL string) (string, error) {
 	return s.token, nil
 }
 
+func (s *memoryCredentialStore) Delete(serverURL string) (bool, error) {
+	if s.server != serverURL || s.token == "" {
+		return false, nil
+	}
+	s.server = ""
+	s.token = ""
+	return true, nil
+}
+
 func TestLoginStoresTokenWithoutPrintingIt(t *testing.T) {
 	polls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -216,8 +225,8 @@ func TestBotDeleteRevokesInstallation(t *testing.T) {
 		if r.URL.Path != "/api/cli/runtime-installations/"+installationID || r.Method != http.MethodDelete {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		if got := r.Header.Get("Authorization"); got != "Bearer cli-session-token" {
-			t.Fatalf("Authorization = %q", got)
+		if r.Header.Get("Authorization") != "Bearer cli-session-token" {
+			t.Fatalf("missing CLI authorization")
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -229,6 +238,28 @@ func TestBotDeleteRevokesInstallation(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "revoked its credential") {
 		t.Fatalf("delete output = %q", stdout.String())
+	}
+}
+
+func TestBotListPrintsInstallationMetadata(t *testing.T) {
+	store := &memoryCredentialStore{token: "cli-session-token"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/cli/runtime-installations" || r.Method != http.MethodGet {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer cli-session-token" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		_, _ = w.Write([]byte(`[{"id":"12345678-1234-1234-1234-123456789012","platform":"teams","display_name":"Customer Teams","status":"active","binding_status":"verified"}]`))
+	}))
+	defer server.Close()
+	store.server = server.URL
+	var stdout, stderr bytes.Buffer
+	if code := runBotListCommand([]string{"--api-url", server.URL}, &stdout, &stderr, server.Client(), store); code != 0 {
+		t.Fatalf("list command exit = %d, stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "12345678-1234-1234-1234-123456789012") || strings.Contains(stdout.String(), "runtime_token") {
+		t.Fatalf("unsafe or incomplete list output: %s", stdout.String())
 	}
 }
 
