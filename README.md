@@ -26,7 +26,19 @@ permanent, then verify the installation:
 
 ```sh
 kei help
+kei --version
 ```
+
+To install a newer release later, run:
+
+```sh
+kei upgrade
+```
+
+Upgrade runs `go install github.com/HaikeiLabs/kei-cli@latest` and replaces
+the currently running binary in place. Use `--version VERSION` to pin a
+specific release. If the binary's location is not writable, the new binary is
+left in Go's binary directory and the CLI prints the path to copy it from.
 
 To build from source instead:
 
@@ -82,6 +94,18 @@ environment.
 
 The login token is stored in the operating system credential store. It is not
 printed or written to the repository.
+
+## Logout
+
+Remove the stored CLI token for a Kei environment:
+
+```sh
+kei logout --api-url https://app.haikeilabs.com
+```
+
+Logout only removes the local credential from the OS keychain; it does not
+revoke the token server-side. It is idempotent: running it while not logged
+in succeeds and reports that no session was stored.
 
 ## Manage an installation
 
@@ -164,6 +188,7 @@ script's second argument (it is the default).
 
 ## Scope
 
-The CLI currently supports login, installation metadata, agent assignment, and
-installation status for the Teams, Discord, and Slack platform identifiers.
-Runtime deployment workflows are intentionally outside the CLI's scope.
+The CLI currently supports login and logout, installation metadata, agent
+assignment, installation status, and self-upgrade for the Teams, Discord, and
+Slack platform identifiers. Runtime deployment workflows are intentionally
+outside the CLI's scope.

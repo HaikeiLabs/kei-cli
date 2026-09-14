@@ -30,6 +30,15 @@ func (s *memoryCredentialStore) Load(serverURL string) (string, error) {
 	return s.token, nil
 }
 
+func (s *memoryCredentialStore) Delete(serverURL string) (bool, error) {
+	if s.server != serverURL || s.token == "" {
+		return false, nil
+	}
+	s.server = ""
+	s.token = ""
+	return true, nil
+}
+
 func TestLoginStoresTokenWithoutPrintingIt(t *testing.T) {
 	polls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

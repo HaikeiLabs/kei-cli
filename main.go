@@ -21,6 +21,9 @@ import (
 
 const defaultKeiWebURL = "https://app.haikeilabs.com"
 
+// version is set at build time with -ldflags "-X main.version=...".
+var version = "dev"
+
 const (
 	keychainService       = "kei"
 	legacyKeychainService = "kei-cli"
@@ -29,6 +32,7 @@ const (
 type credentialStore interface {
 	Save(serverURL, token string) error
 	Load(serverURL string) (string, error)
+	Delete(serverURL string) (bool, error)
 }
 
 type osKeychainStore struct{}
@@ -45,6 +49,22 @@ func (osKeychainStore) Load(serverURL string) (string, error) {
 	// Existing installations used kei-cli. A successful login writes the
 	// token under the canonical service above.
 	return keyring.Get(legacyKeychainService, keychainAccount(serverURL))
+}
+
+func (osKeychainStore) Delete(serverURL string) (bool, error) {
+	account := keychainAccount(serverURL)
+	removed := false
+	for _, service := range []string{keychainService, legacyKeychainService} {
+		err := keyring.Delete(service, account)
+		if err == nil {
+			removed = true
+			continue
+		}
+		if !errors.Is(err, keyring.ErrNotFound) {
+			return removed, fmt.Errorf("delete %s keychain entry: %w", service, err)
+		}
+	}
+	return removed, nil
 }
 
 type deviceAuthorizationStartRequest struct {
@@ -79,10 +99,16 @@ func main() {
 		os.Exit(runSetupCommand(os.Args[2:], os.Stdout, os.Stderr, os.Stdin, &http.Client{Timeout: 15 * time.Second}))
 	case "login":
 		os.Exit(runLoginCommand(os.Args[2:], os.Stdout, os.Stderr, &http.Client{Timeout: 15 * time.Second}, osKeychainStore{}))
+	case "logout":
+		os.Exit(runLogoutCommand(os.Args[2:], os.Stdout, os.Stderr, osKeychainStore{}))
 	case "bot":
 		os.Exit(runBotCommand(os.Args[2:], os.Stdout, os.Stderr, &http.Client{Timeout: 15 * time.Second}, osKeychainStore{}))
 	case "runtime":
 		os.Exit(runRuntimeCommand(os.Args[2:], os.Stdout, os.Stderr))
+	case "upgrade":
+		os.Exit(runUpgradeCommand(os.Args[2:], os.Stdout, os.Stderr, osExecRunner{}, os.Executable, gopathBinDir))
+	case "version", "--version", "-v":
+		printVersion(os.Stdout)
 	case "help", "--help", "-h":
 		printUsage(os.Stdout)
 	default:
@@ -94,7 +120,11 @@ func main() {
 
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Kei CLI")
-	fmt.Fprintln(w, "\nUsage:\n  kei setup [--config PATH] [--control-plane-url URL] [--runtime-token TOKEN]\n  kei runtime bootstrap [--config PATH] [--proxy-path PATH]\n  kei login [--api-url URL] [--no-browser]\n  kei bot init --platform teams|discord|slack --name NAME [--agent ID] [--api-url URL]\n  kei bot credential --installation ID [--rotate] [--api-url URL]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default] [--api-url URL]\n  kei bot status --installation ID [--api-url URL]\n  kei bot delete --installation ID --yes [--api-url URL]")
+	fmt.Fprintln(w, "\nUsage:\n  kei setup [--config PATH] [--control-plane-url URL] [--runtime-token TOKEN]\n  kei runtime bootstrap [--config PATH] [--proxy-path PATH]\n  kei login [--api-url URL] [--no-browser]\n  kei logout [--api-url URL]\n  kei upgrade [--module MODULE] [--version VERSION]\n  kei bot init --platform teams|discord|slack --name NAME [--agent ID] [--api-url URL]\n  kei bot credential --installation ID [--rotate] [--api-url URL]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default] [--api-url URL]\n  kei bot status --installation ID [--api-url URL]\n  kei bot delete --installation ID --yes [--api-url URL]\n  kei --version")
+}
+
+func printVersion(w io.Writer) {
+	fmt.Fprintf(w, "kei %s\n", version)
 }
 
 func runLoginCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
