@@ -116,6 +116,51 @@ kei bot credential --installation INSTALLATION_ID --rotate | secret-manager impo
 All commands accept `--api-url URL` when using a Kei environment other than
 the default public service.
 
+## Rotating a runtime credential into AWS Secrets Manager
+
+When a runtime's Kubernetes secret is owned by an ExternalSecret that syncs
+from AWS Secrets Manager, the authoritative store is AWS. Rotate the credential
+and update the AWS secret in one pipeline:
+
+```sh
+kei bot credential --installation INSTALLATION_ID --rotate \
+  | ./scripts/update-aws-secret.sh kei-discord kei_runtime_token
+```
+
+`scripts/update-aws-secret.sh` reads the token **only from stdin**, updates
+exactly one JSON property (default `kei_runtime_token`) of the secret's
+`SecretString` with `jq --rawfile`, and calls `aws secretsmanager
+put-secret-value` using `file://` input. The token is never placed in argv,
+stdout, stderr, a temp filename, or shell history, and all other JSON fields are
+preserved. The second argument is the property name; omit it to use the default
+`kei_runtime_token`.
+
+**Preflight first — before you rotate.** The rotation happens in the CLI *before*
+the script runs, so a failed destination check cannot prevent the rotation. If
+the write fails, the one-time token is consumed and you must rotate again. Verify
+the destination is healthy first:
+
+```sh
+# 1. Confirm the AWS secret exists and is a JSON object (do this BEFORE rotating).
+aws secretsmanager get-secret-value --secret-id kei-discord \
+  --query SecretString --output text | jq -e 'type == "object"'
+# 2. Confirm you can write to it.
+aws secretsmanager describe-secret --secret-id kei-discord
+```
+
+The script prints only `Updated property 'kei_runtime_token' on secret
+'kei-discord'.` on success. After the AWS secret is updated, the ExternalSecret
+syncs it to the cluster; restart the runtime pod if it does not pick up the new
+value automatically.
+
+### Key naming
+
+The runtime reads the `KEI_RUNTIME_TOKEN` environment variable. In the
+Discord/AWS deployment the token is stored in the AWS secret's lowercase
+`kei_runtime_token` JSON property, which the ExternalSecret maps onto the
+Kubernetes secret key the deployment consumes. Pass that property name as the
+script's second argument (it is the default).
+
 ## Scope
 
 The CLI currently supports login, installation metadata, agent assignment, and
