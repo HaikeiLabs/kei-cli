@@ -57,7 +57,11 @@ func TestLoginStoresTokenWithoutPrintingIt(t *testing.T) {
 	var output bytes.Buffer
 	store := &memoryCredentialStore{}
 	sleeps := 0
-	err := login(context.Background(), server.URL, "kei-cli@test", &output, server.Client(), store, func(time.Duration) { sleeps++ })
+	openedURL := ""
+	err := login(context.Background(), server.URL, "kei@test", &output, server.Client(), store, func(time.Duration) { sleeps++ }, func(url string) error {
+		openedURL = url
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,8 +71,43 @@ func TestLoginStoresTokenWithoutPrintingIt(t *testing.T) {
 	if strings.Contains(output.String(), "never-print-this-token") || strings.Contains(output.String(), "device-secret") {
 		t.Fatalf("login output exposed a secret: %q", output.String())
 	}
+	if !strings.Contains(openedURL, "/cli/activate?user_code=ABCDE-23456") {
+		t.Fatalf("browser URL = %q", openedURL)
+	}
 	if sleeps != 2 {
 		t.Fatalf("sleep count = %d, want 2", sleeps)
+	}
+}
+
+func TestLoginReportsBrowserOpenFailureAndKeepsURLVisible(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/cli/device/authorize":
+			json.NewEncoder(w).Encode(deviceAuthorizationStartResponse{
+				DeviceCode: "device-code", UserCode: "ABCDE-23456",
+				ExpiresAt: time.Now().Add(time.Minute), IntervalSeconds: 1,
+			})
+		case "/api/cli/device/token":
+			json.NewEncoder(w).Encode(deviceAuthorizationPollResponse{Status: "approved", AccessToken: "token", OrgID: "org-123"})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	var output bytes.Buffer
+	store := &memoryCredentialStore{}
+	err := login(context.Background(), server.URL, "kei@test", &output, server.Client(), store, func(time.Duration) {}, func(string) error {
+		return errors.New("no graphical session")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), server.URL+"/cli/activate?user_code=ABCDE-23456") {
+		t.Fatalf("login output omitted fallback URL: %q", output.String())
+	}
+	if !strings.Contains(output.String(), "Could not open a browser automatically") {
+		t.Fatalf("login output omitted browser fallback: %q", output.String())
 	}
 }
 
@@ -81,6 +120,28 @@ func TestNormalizedKeiWebURL(t *testing.T) {
 	}
 	if got, err := normalizedKeiWebURL("https://kei.example.test/"); err != nil || got != "https://kei.example.test" {
 		t.Fatalf("normalized URL = %q, %v", got, err)
+	}
+}
+
+func TestBotCredentialWritesOnlyTokenToNonTerminalOutput(t *testing.T) {
+	installationID := "12345678-1234-1234-1234-123456789012"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/cli/runtime-installations/"+installationID+"/credential" || r.Method != http.MethodPost {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer cli-session-token" {
+			t.Fatalf("missing CLI authorization")
+		}
+		json.NewEncoder(w).Encode(runtimeCredentialResponse{RuntimeToken: "kh_live_test_token"})
+	}))
+	defer server.Close()
+	store := &memoryCredentialStore{server: server.URL, token: "cli-session-token"}
+	var stdout, stderr bytes.Buffer
+	if code := runBotCredentialCommand([]string{"--api-url", server.URL, "--installation", installationID}, &stdout, &stderr, server.Client(), store); code != 0 {
+		t.Fatalf("credential command exit = %d, stderr = %s", code, stderr.String())
+	}
+	if stdout.String() != "kh_live_test_token\n" {
+		t.Fatalf("credential output = %q", stdout.String())
 	}
 }
 

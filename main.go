@@ -14,10 +14,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/pkg/browser"
 	"github.com/zalando/go-keyring"
 )
 
 const defaultKeiWebURL = "https://app.haikeilabs.com"
+
+const (
+	keychainService       = "kei"
+	legacyKeychainService = "kei-cli"
+)
 
 type credentialStore interface {
 	Save(serverURL, token string) error
@@ -27,11 +34,17 @@ type credentialStore interface {
 type osKeychainStore struct{}
 
 func (osKeychainStore) Save(serverURL, token string) error {
-	return keyring.Set("kei-cli", keychainAccount(serverURL), token)
+	return keyring.Set(keychainService, keychainAccount(serverURL), token)
 }
 
 func (osKeychainStore) Load(serverURL string) (string, error) {
-	return keyring.Get("kei-cli", keychainAccount(serverURL))
+	token, err := keyring.Get(keychainService, keychainAccount(serverURL))
+	if err == nil {
+		return token, nil
+	}
+	// Existing installations used kei-cli. A successful login writes the
+	// token under the canonical service above.
+	return keyring.Get(legacyKeychainService, keychainAccount(serverURL))
 }
 
 type deviceAuthorizationStartRequest struct {
@@ -81,13 +94,14 @@ func main() {
 
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Kei CLI")
-	fmt.Fprintln(w, "\nUsage:\n  kei setup [--config PATH] [--control-plane-url URL] [--runtime-token TOKEN]\n  kei runtime bootstrap [--config PATH] [--proxy-path PATH]\n  kei login [--api-url URL]\n  kei bot init --platform teams|discord|slack --name NAME [--agent ID] [--api-url URL]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default] [--api-url URL]\n  kei bot status --installation ID [--api-url URL]")
+	fmt.Fprintln(w, "\nUsage:\n  kei setup [--config PATH] [--control-plane-url URL] [--runtime-token TOKEN]\n  kei runtime bootstrap [--config PATH] [--proxy-path PATH]\n  kei login [--api-url URL] [--no-browser]\n  kei bot init --platform teams|discord|slack --name NAME [--agent ID] [--api-url URL]\n  kei bot credential --installation ID [--rotate] [--api-url URL]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default] [--api-url URL]\n  kei bot status --installation ID [--api-url URL]")
 }
 
 func runLoginCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("login", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	apiURL := flags.String("api-url", keiWebURL(), "Kei web URL")
+	noBrowser := flags.Bool("no-browser", false, "print the approval URL without opening a browser")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -95,7 +109,11 @@ func runLoginCommand(args []string, stdout, stderr io.Writer, client *http.Clien
 		fmt.Fprintln(stderr, "login accepts no positional arguments")
 		return 2
 	}
-	if err := login(context.Background(), *apiURL, hostname(), stdout, client, store, time.Sleep); err != nil {
+	openBrowser := browser.OpenURL
+	if *noBrowser {
+		openBrowser = func(string) error { return nil }
+	}
+	if err := login(context.Background(), *apiURL, hostname(), stdout, client, store, time.Sleep, openBrowser); err != nil {
 		fmt.Fprintf(stderr, "login failed: %v\n", err)
 		return 1
 	}
@@ -129,8 +147,17 @@ func runBotCredentialCommand(args []string, stdout, stderr io.Writer, client *ht
 	flags.SetOutput(stderr)
 	apiURL := flags.String("api-url", keiWebURL(), "Kei web URL")
 	installationID := flags.String("installation", "", "installation ID")
+	rotate := flags.Bool("rotate", false, "rotate an existing runtime credential")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || *installationID == "" {
 		fmt.Fprintln(stderr, "bot credential requires --installation ID")
+		return 2
+	}
+	if _, err := uuid.Parse(*installationID); err != nil {
+		fmt.Fprintln(stderr, "bot credential: --installation must be a UUID")
+		return 2
+	}
+	if writerIsTerminal(stdout) {
+		fmt.Fprintln(stderr, "refusing to write a runtime credential to an interactive terminal; pipe stdout to another command")
 		return 2
 	}
 	baseURL, err := normalizedKeiWebURL(*apiURL)
@@ -143,13 +170,34 @@ func runBotCredentialCommand(args []string, stdout, stderr io.Writer, client *ht
 		fmt.Fprintln(stderr, "bot credential: not logged in; run kei login first")
 		return 1
 	}
-	runtimeToken, err := requestRuntimeCredential(context.Background(), client, baseURL, cliToken, *installationID)
+	action := "credential"
+	if *rotate {
+		action = "rotate"
+	}
+	runtimeToken, status, err := requestRuntimeCredentialAction(context.Background(), client, baseURL, cliToken, *installationID, action)
 	if err != nil {
 		fmt.Fprintf(stderr, "bot credential failed: %v\n", err)
 		return 1
 	}
+	if status == http.StatusConflict {
+		fmt.Fprintln(stderr, "bot credential already exists; use --rotate to replace it")
+		return 1
+	}
+	if status != http.StatusOK {
+		fmt.Fprintf(stderr, "bot credential returned %d\n", status)
+		return 1
+	}
 	fmt.Fprintln(stdout, runtimeToken)
 	return 0
+}
+
+func writerIsTerminal(w io.Writer) bool {
+	file, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := file.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 func runBotInitCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
@@ -171,22 +219,7 @@ func runBotInitCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 		fmt.Fprintf(stderr, "bot init failed: %v\n", err)
 		return 1
 	}
-	baseURL, err := normalizedKeiWebURL(*apiURL)
-	if err != nil {
-		fmt.Fprintf(stderr, "bot init failed: %v\n", err)
-		return 1
-	}
-	cliToken, err := store.Load(baseURL)
-	if err != nil {
-		fmt.Fprintln(stderr, "bot init: not logged in; run kei login first")
-		return 1
-	}
-	runtimeToken, err := requestRuntimeCredential(context.Background(), client, baseURL, cliToken, installation.ID)
-	if err != nil {
-		fmt.Fprintf(stderr, "bot init: create runtime credential: %v\n", err)
-		return 1
-	}
-	_ = json.NewEncoder(stdout).Encode(map[string]string{"installation_id": installation.ID, "runtime_token": runtimeToken})
+	_ = json.NewEncoder(stdout).Encode(map[string]string{"installation_id": installation.ID})
 	return 0
 }
 
@@ -253,7 +286,7 @@ func createBotInstallationWithOptions(ctx context.Context, apiURL, agentID, plat
 	return &installation, nil
 }
 
-func login(ctx context.Context, apiURL, clientName string, stdout io.Writer, client *http.Client, store credentialStore, sleep func(time.Duration)) error {
+func login(ctx context.Context, apiURL, clientName string, stdout io.Writer, client *http.Client, store credentialStore, sleep func(time.Duration), openBrowser func(string) error) error {
 	baseURL, err := normalizedKeiWebURL(apiURL)
 	if err != nil {
 		return err
@@ -283,6 +316,9 @@ func login(ctx context.Context, apiURL, clientName string, stdout io.Writer, cli
 	fmt.Fprintln(stdout, "Open this URL in a browser and approve the CLI:")
 	fmt.Fprintln(stdout, verificationURL)
 	fmt.Fprintf(stdout, "Verification code: %s\n", start.UserCode)
+	if err := openBrowser(verificationURL); err != nil {
+		fmt.Fprintf(stdout, "Could not open a browser automatically; use the URL above. (%v)\n", err)
+	}
 
 	interval := time.Duration(start.IntervalSeconds) * time.Second
 	if interval < time.Second {
@@ -371,7 +407,7 @@ func keychainAccount(serverURL string) string {
 func hostname() string {
 	host, err := os.Hostname()
 	if err != nil || host == "" {
-		return "kei-cli"
+		return "kei"
 	}
-	return "kei-cli@" + host
+	return "kei@" + host
 }

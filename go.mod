@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/google/uuid v1.6.0
+	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/zalando/go-keyring v0.2.5
 	golang.org/x/term v0.45.0
 )
