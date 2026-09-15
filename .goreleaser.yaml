@@ -73,10 +73,14 @@ blobs:
     #   AWS_S3_RELEASES_BUCKET  — S3 bucket name (e.g. "kei-releases")
     #   AWS_S3_RELEASES_REGION  — AWS region (e.g. "us-east-1")
     #
-    # AWS credentials are resolved via the standard SDK chain:
+    # AWS credentials are resolved via the standard SDK chain.
+    # In CI (GitHub Actions), credentials come from OIDC federation:
+    #   - aws-actions/configure-aws-credentials with role-to-assume
+    #   - No static AWS credentials are stored in the repository.
+    #
+    # For local testing, use the standard credential chain:
     #   - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN
     #   - ~/.aws/credentials
-    #   - IAM instance profile / ECS task role / IRSA
     #
     # Artifacts are uploaded to:
     #   s3://<bucket>/kei-cli/<version>/kei-cli_<version>_<os>_<arch>.tar.gz

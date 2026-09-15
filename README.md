@@ -207,6 +207,104 @@ Discord/AWS deployment the token is stored in the AWS secret's lowercase
 Kubernetes secret key the deployment consumes. Pass that property name as the
 script's second argument (it is the default).
 
+## Release process
+
+### CI/CD workflow
+
+Releases are built and published by a GitHub Actions workflow
+(`.github/workflows/release.yaml`) triggered by pushing a semver tag
+(`vX.Y.Z`). The workflow:
+
+1. **Validates the tag** — rejects non-semver tags and determines the release
+   channel (stable vs. prerelease).
+2. **Assumes an AWS IAM role** via GitHub OIDC federation — no static AWS
+   credentials are stored in the repository.
+3. **Imports the GPG signing key** from the `GORELEASER_SIGNING_KEY` secret.
+4. **Configures AWS credentials** using `aws-actions/configure-aws-credentials`
+   with `role-to-assume` from the `AWS_ROLE_TO_ASSUME` variable.
+5. **Runs Goreleaser** — builds signed binaries, archives, and SHA-256
+   checksums, then uploads them to the S3 releases bucket.
+6. **Verifies no credentials leaked** into artifacts.
+7. **Publishes `latest.txt`** for stable releases (used by the install script
+   to resolve the latest version).
+
+### Required GitHub configuration
+
+| Name | Type | Description |
+|---|---|---|
+| `AWS_ROLE_TO_ASSUME` | Variable | ARN of the IAM role for OIDC federation |
+| `AWS_REGION` | Variable | AWS region of the releases bucket |
+| `AWS_S3_RELEASES_BUCKET` | Variable | S3 bucket name for release artifacts |
+| `GORELEASER_SIGNING_KEY` | Secret | GPG private key for checksum signing |
+
+### Required AWS IAM trust policy
+
+The OIDC role assumed by the release workflow must have a trust policy
+similar to:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": {
+      "Federated": "arn:aws:iam::ACCOUNT:oidc-provider/token.actions.githubusercontent.com"
+    },
+    "Action": "sts:AssumeRoleWithWebIdentity",
+    "Condition": {
+      "StringLike": {
+        "token.actions.githubusercontent.com:sub": "repo:HaikeiLabs/kei-cli:ref:refs/tags/v*"
+      },
+      "StringEquals": {
+        "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+      }
+    }
+  }]
+}
+```
+
+The role must also have `s3:PutObject` and `s3:ListBucket` permissions on
+`arn:aws:s3:::BUCKET/kei-cli/*`.
+
+### Manual release
+
+To trigger a release from a local workstation (not CI), first create and push
+a tag:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Then push the tag — the CI workflow handles the rest.
+
+For a local test build (no upload, no signing):
+
+```sh
+make snapshot
+```
+
+### S3 bucket architecture
+
+Release artifacts are served from an S3 bucket with the following structure:
+
+```
+s3://BUCKET/kei-cli/
+  latest.txt                  — contains the latest stable version string
+  install.sh                  — curl-friendly install script
+  v0.1.0/
+    kei-cli_v0.1.0_macOS_arm64.tar.gz
+    kei-cli_v0.1.0_macOS_x86_64.tar.gz
+    kei-cli_v0.1.0_Linux_arm64.tar.gz
+    kei-cli_v0.1.0_Linux_x86_64.tar.gz
+    kei-cli_v0.1.0_checksums.txt
+    kei-cli_v0.1.0_source.tar.gz
+```
+
+The bucket must be publicly readable for object GETs (or fronted by a CDN).
+The `install.sh` script constructs download URLs from
+`AWS_S3_RELEASES_URL_BASE`.
+
 ## Scope
 
 The CLI currently supports login and logout, installation metadata, agent
