@@ -108,15 +108,10 @@ jobs:
 
       - name: Check tag does not already exist
         run: |
-          git fetch --tags origin
-          # This is the tag we are building — skip the check; what we are
-          # guarding against is re-publishing a Goreleaser release for a tag
-          # that already has artifacts. Goreleaser itself skips existing
-          # releases, but we fail early here for clarity.
-          #
-          # The S3 check is done by the release job via Goreleaser's
-          # --skip-upload flag if needed. For now, just warn if the tag
-          # looks like a re-tag.
+          # actions/checkout already checked out the triggering tag. Do not
+          # fetch tags here: checkout creates a local lightweight tag, and
+          # fetching an annotated remote tag with the same name can fail with
+          # "would clobber existing tag" before the release job starts.
           echo "Tag ${{ github.ref_name }} validated."
 
   release:
@@ -250,7 +245,6 @@ jobs:
           echo -n "$VERSION" | aws s3 cp - "s3://${BUCKET}/kei-cli/latest.txt" \
             --region "${{ env.AWS_REGION }}" \
             --content-type "text/plain" \
-            --cache-control "no-cache" \
-            --acl public-read
+            --cache-control "no-cache"
 
           echo "Published latest.txt: $VERSION"
