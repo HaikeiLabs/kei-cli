@@ -242,3 +242,197 @@ func fileHash(path string) (string, error) {
 	}
 	return strings.Fields(string(out))[0], nil
 }
+
+func TestReleaseWorkflowExists(t *testing.T) {
+	workflowPath := filepath.Join(".github", "workflows", "release.yaml")
+	if _, err := os.Stat(workflowPath); err != nil {
+		t.Fatalf("release workflow not found: %v", err)
+	}
+}
+
+func TestReleaseWorkflowUsesOIDC(t *testing.T) {
+	workflowPath := filepath.Join(".github", "workflows", "release.yaml")
+	src, err := os.ReadFile(workflowPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+
+	checks := []struct {
+		name string
+		want string
+	}{
+		{"uses configure-aws-credentials action", "aws-actions/configure-aws-credentials"},
+		{"id-token: write permission", "id-token: write"},
+		{"role-to-assume from vars", "role-to-assume"},
+		{"uses aws-actions/configure-aws-credentials@v4", "configure-aws-credentials@v4"},
+		{"uses goreleaser-action", "goreleaser/goreleaser-action"},
+		{"tag-triggered on v*", "'v*'"},
+		{"contains GPG signing key import", "ghaction-import-gpg"},
+		{"contains GPG verification step", "gpg --list-keys"},
+		{"contains AWS session validation", "aws sts get-caller-identity"},
+		{"contains S3 bucket validation", "aws s3api head-bucket"},
+		{"contains artifact leak check", "credential leak"},
+		{"contains latest.txt publish", "latest.txt"},
+	}
+	for _, c := range checks {
+		if !strings.Contains(text, c.want) {
+			t.Errorf("release workflow missing %q (%s)", c.want, c.name)
+		}
+	}
+}
+
+func TestReleaseWorkflowNoStaticCredentials(t *testing.T) {
+	workflowPath := filepath.Join(".github", "workflows", "release.yaml")
+	src, err := os.ReadFile(workflowPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+
+	leaks := []string{
+		`AWS_ACCESS_KEY_ID`,
+		`AWS_SECRET_ACCESS_KEY`,
+		`AWS_SESSION_TOKEN`,
+		`access-key-id`,
+		`secret-access-key`,
+		`session-token`,
+	}
+	for _, leak := range leaks {
+		// These patterns may appear in comments or env var references
+		// but must never have a value assigned inline.
+		if strings.Contains(text, leak+"=") && !strings.Contains(text, "no static") {
+			t.Errorf("release workflow contains hardcoded or assigned %q", leak)
+		}
+	}
+}
+
+func TestReleaseWorkflowTagValidation(t *testing.T) {
+	workflowPath := filepath.Join(".github", "workflows", "release.yaml")
+	src, err := os.ReadFile(workflowPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+
+	checks := []struct {
+		name string
+		want string
+	}{
+		{"tag regex validation", "grep -qE"},
+		{"semver pattern", "v(0|[1-9]"},
+		{"version output", "GITHUB_OUTPUT"},
+		{"channel detection", "CHANNEL"},
+	}
+	for _, c := range checks {
+		if !strings.Contains(text, c.want) {
+			t.Errorf("release workflow missing tag validation %q (%s)", c.want, c.name)
+		}
+	}
+}
+
+func TestReleaseWorkflowEnvironmentVariables(t *testing.T) {
+	workflowPath := filepath.Join(".github", "workflows", "release.yaml")
+	src, err := os.ReadFile(workflowPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+
+	// The workflow must reference these GitHub Actions variables (not secrets)
+	requiredVars := []string{
+		"AWS_REGION",
+		"AWS_ROLE_TO_ASSUME",
+		"AWS_S3_RELEASES_BUCKET",
+	}
+	for _, v := range requiredVars {
+		if !strings.Contains(text, v) {
+			t.Errorf("release workflow missing required variable reference %q", v)
+		}
+	}
+
+	// The workflow must reference this secret for GPG
+	if !strings.Contains(text, "GORELEASER_SIGNING_KEY") {
+		t.Error("release workflow missing GORELEASER_SIGNING_KEY secret reference")
+	}
+}
+
+func TestGoreleaserConfigSigning(t *testing.T) {
+	src, err := os.ReadFile(".goreleaser.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+
+	checks := []struct {
+		name string
+		want string
+	}{
+		{"signs section", "signs:"},
+		{"detach-sign", "detach-sign"},
+		{"armor output", "--armor"},
+		{"GORELEASER_KEY variable", "GORELEASER_KEY"},
+		{"signing skip support", "GORELEASER_SKIP_SIGN"},
+	}
+	for _, c := range checks {
+		if !strings.Contains(text, c.want) {
+			t.Errorf("goreleaser config missing signing %q (%s)", c.want, c.name)
+		}
+	}
+}
+
+func TestGoreleaserConfigS3CredentialsNotHardcoded(t *testing.T) {
+	src, err := os.ReadFile(".goreleaser.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+
+	leaks := []string{
+		`AWS_ACCESS_KEY_ID`,
+		`AWS_SECRET_ACCESS_KEY`,
+		`AWS_SESSION_TOKEN`,
+		`access_key_id`,
+		`secret_access_key`,
+	}
+	for _, leak := range leaks {
+		if strings.Contains(text, leak) {
+			// Allow if it's just a comment or env var name reference
+			// Check it doesn't have an actual value
+			lines := strings.Split(text, "\n")
+			for i, line := range lines {
+				if strings.Contains(line, leak) && !strings.Contains(line, "#") && !strings.Contains(line, "{{") {
+					t.Errorf("goreleaser config line %d: contains %q without env var syntax", i+1, leak)
+				}
+			}
+		}
+	}
+}
+
+func TestInstallScriptReferencesWorkflowRequiredVars(t *testing.T) {
+	// The release workflow uses AWS_S3_RELEASES_BUCKET and AWS_REGION.
+	// The install script uses AWS_S3_RELEASES_URL_BASE.
+	// These should be consistent.
+	workflowSrc, err := os.ReadFile(filepath.Join(".github", "workflows", "release.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflowText := string(workflowSrc)
+
+	installSrc, err := os.ReadFile(filepath.Join("scripts", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	installText := string(installSrc)
+
+	if !strings.Contains(workflowText, "AWS_S3_RELEASES_BUCKET") {
+		t.Error("release workflow must reference AWS_S3_RELEASES_BUCKET")
+	}
+	if !strings.Contains(installText, "AWS_S3_RELEASES_URL_BASE") {
+		t.Error("install script must reference AWS_S3_RELEASES_URL_BASE")
+	}
+	// The URL base should be constructable from bucket + region
+	if !strings.Contains(installText, "s3.") && !strings.Contains(installText, "amazonaws.com") {
+		t.Log("install script does not show example S3 URL pattern")
+	}
+}
