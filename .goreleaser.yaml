@@ -34,7 +34,7 @@ builds:
       - netgo
 
 archives:
-  - format: tar.gz
+  - formats: [tar.gz]
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_
       {{- if eq .Os "darwin" }}macOS
@@ -68,7 +68,7 @@ blobs:
   - provider: s3
     bucket: "{{ .Env.AWS_S3_RELEASES_BUCKET }}"
     region: "{{ .Env.AWS_S3_RELEASES_REGION }}"
-    folder: "kei-cli/{{ .Version }}/"
+    directory: "kei-cli/{{ .Version }}"
     # Required environment variables for S3 upload:
     #   AWS_S3_RELEASES_BUCKET  — S3 bucket name (e.g. "kei-releases")
     #   AWS_S3_RELEASES_REGION  — AWS region (e.g. "us-east-1")
@@ -92,7 +92,7 @@ release:
   disable: true
 
 snapshot:
-  name_template: "{{ .Tag }}-next"
+  version_template: "{{ .Tag }}-next"
 
 changelog:
   use: github-native

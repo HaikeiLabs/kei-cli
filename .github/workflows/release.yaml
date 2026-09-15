@@ -251,6 +251,7 @@ jobs:
           echo -n "$VERSION" | aws s3 cp - "s3://${BUCKET}/kei-cli/latest.txt" \
             --region "${{ env.AWS_REGION }}" \
             --content-type "text/plain" \
-            --cache-control "no-cache"
+            --cache-control "no-cache" \
+            --acl public-read
 
           echo "Published latest.txt: $VERSION"
