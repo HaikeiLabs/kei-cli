@@ -466,8 +466,10 @@ func TestWorkflowUploadsInstallScriptToCustomerURL(t *testing.T) {
 		{"uploads install.sh", "scripts/install.sh"},
 		{"to the fixed kei-cli path", "kei-cli/install.sh"},
 		{"with s3 cp command", "aws s3 cp"},
-		{"with public-read ACL", "--acl public-read"},
 		{"with shellscript content type", "text/x-shellscript"},
+	}
+	if strings.Contains(text, "--acl public-read") {
+		t.Error("release workflow must rely on the bucket policy instead of a public object ACL")
 	}
 	for _, c := range checks {
 		if !strings.Contains(text, c.want) {
