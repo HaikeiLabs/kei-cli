@@ -60,7 +60,7 @@ signs:
     cmd: sh
     args:
       - '-c'
-      - 'test -n "$GORELEASER_SKIP_SIGN" || gpg --batch --detach-sign --armor $artifact'
+      - 'test -n "$GORELEASER_SKIP_SIGN" || gpg --batch --local-user "$GORELEASER_KEY" --detach-sign --armor "$artifact"'
     artifacts: checksum
     signature: "${artifact}.sig"
 
