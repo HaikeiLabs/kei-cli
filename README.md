@@ -7,40 +7,61 @@ this CLI.
 
 ## Install
 
-The recommended installation is directly from the public GitHub module:
+Binary releases of kei-cli are available for macOS and Linux (arm64 and amd64).
+Choose one of the following methods.
+
+### Option 1: curl install from S3 (recommended)
+
+Requires a configured AWS S3 release endpoint. The install script detects your
+OS and architecture, downloads the matching archive, verifies its SHA-256
+checksum, and places the `kei` binary in `/usr/local/bin`:
 
 ```sh
-go install github.com/HaikeiLabs/kei-cli@latest
-mv "$(go env GOPATH)/bin/kei-cli" "$(go env GOPATH)/bin/kei"
+# Set the release URL base before running (required):
+export AWS_S3_RELEASES_URL_BASE="https://kei-releases.s3.us-east-1.amazonaws.com"
+
+# Install the latest version:
+curl -fsSL "$AWS_S3_RELEASES_URL_BASE/kei-cli/install.sh" | bash
+
+# Install a specific version:
+curl -fsSL "$AWS_S3_RELEASES_URL_BASE/kei-cli/install.sh" | bash -s -- -v v0.1.0
+
+# Install to a custom directory:
+curl -fsSL "$AWS_S3_RELEASES_URL_BASE/kei-cli/install.sh" | bash -s -- -d ~/.local/bin
 ```
 
-This installs the executable as `kei` in Go's binary directory. Ensure that
-directory is on your `PATH`:
-
-```sh
-export PATH="$(go env GOPATH)/bin:$PATH"
-```
-
-Add the same line to `~/.zshrc` (or your shell's startup file) to make it
-permanent, then verify the installation:
+After installing, verify:
 
 ```sh
 kei help
 kei --version
 ```
 
-To install a newer release later, run:
+### Option 2: go install
+
+Requires Go 1.26+:
+
+```sh
+go install github.com/HaikeiLabs/kei-cli@latest
+mv "$(go env GOPATH)/bin/kei-cli" "$(go env GOPATH)/bin/kei"
+export PATH="$(go env GOPATH)/bin:$PATH"
+```
+
+Add the export line to `~/.zshrc` (or your shell's startup file) to make it
+permanent.
+
+### Upgrading
+
+After installing, the built-in upgrade command fetches the latest published
+module:
 
 ```sh
 kei upgrade
 ```
 
-Upgrade runs `go install github.com/HaikeiLabs/kei-cli@latest` and replaces
-the currently running binary in place. Use `--version VERSION` to pin a
-specific release. If the binary's location is not writable, the new binary is
-left in Go's binary directory and the CLI prints the path to copy it from.
+Use `--version VERSION` to pin a specific release.
 
-To build from source instead:
+### Building from source
 
 ```sh
 go build -o tmp/kei .
