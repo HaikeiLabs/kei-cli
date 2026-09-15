@@ -202,8 +202,7 @@ jobs:
           aws s3 cp "scripts/install.sh" "s3://${BUCKET}/kei-cli/install.sh" \
             --region "${{ env.AWS_REGION }}" \
             --content-type "text/x-shellscript" \
-            --cache-control "no-cache" \
-            --acl public-read
+            --cache-control "no-cache"
 
           echo "Published install.sh to s3://${BUCKET}/kei-cli/install.sh"
 
