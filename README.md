@@ -286,12 +286,13 @@ make snapshot
 
 ### S3 bucket architecture
 
-Release artifacts are served from an S3 bucket with the following structure:
+Release artifacts are served from an S3 bucket with the following structure.
+All objects are published by the release workflow on tag push:
 
 ```
 s3://BUCKET/kei-cli/
-  latest.txt                  — contains the latest stable version string
-  install.sh                  — curl-friendly install script
+  install.sh                  — curl installer (fixed path, overwritten each release)
+  latest.txt                  — latest stable version (stable releases only)
   v0.1.0/
     kei-cli_v0.1.0_macOS_arm64.tar.gz
     kei-cli_v0.1.0_macOS_x86_64.tar.gz
@@ -300,6 +301,11 @@ s3://BUCKET/kei-cli/
     kei-cli_v0.1.0_checksums.txt
     kei-cli_v0.1.0_source.tar.gz
 ```
+
+The `install.sh` script is uploaded to the fixed path `kei-cli/install.sh`
+by the release workflow (not by Goreleaser, which only uploads versioned
+artifacts). It is overwritten on every release with `--cache-control no-cache`
+and `--acl public-read`.
 
 The bucket must be publicly readable for object GETs (or fronted by a CDN).
 The `install.sh` script constructs download URLs from

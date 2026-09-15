@@ -5,6 +5,17 @@
 # binaries and archives via Goreleaser, and uploads them to the S3 releases
 # bucket.
 #
+# Published artifacts (all under s3://BUCKET/kei-cli/):
+#   install.sh                  — curl installer (fixed path, overwritten each release)
+#   latest.txt                  — latest stable version (stable releases only)
+#   <version>/                  — goreleaser artifacts per version
+#     kei-cli_<v>_<os>_<arch>.tar.gz
+#     kei-cli_<v>_checksums.txt
+#     kei-cli_<v>_source.tar.gz
+#
+# Customer install URL:
+#   curl -fsSL "$AWS_S3_RELEASES_URL_BASE/kei-cli/install.sh" | bash
+#
 # Required GitHub configuration:
 #
 #   1. AWS IAM role (see infra kei repo for Terraform module):
@@ -182,6 +193,28 @@ jobs:
           AWS_S3_RELEASES_REGION: ${{ env.AWS_REGION }}
           GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
 
+      - name: Upload install.sh to public release endpoint
+        run: |
+          BUCKET="${{ vars.AWS_S3_RELEASES_BUCKET }}"
+
+          # The customer curl flow is:
+          #   curl -fsSL "$AWS_S3_RELEASES_URL_BASE/kei-cli/install.sh" | bash
+          # This requires install.sh at the fixed, non-versioned path:
+          #   s3://BUCKET/kei-cli/install.sh
+          #
+          # The script is version-independent (it reads the version from
+          # latest.txt or the -v flag), so it is overwritten on every release.
+          #
+          # Upload with cache-control: no-cache so CDN/proxies always serve
+          # the latest revision.
+          aws s3 cp "scripts/install.sh" "s3://${BUCKET}/kei-cli/install.sh" \
+            --region "${{ env.AWS_REGION }}" \
+            --content-type "text/x-shellscript" \
+            --cache-control "no-cache" \
+            --acl public-read
+
+          echo "Published install.sh to s3://${BUCKET}/kei-cli/install.sh"
+
       - name: Verify no credentials leaked in artifacts
         run: |
           # Check that none of the uploaded artifacts contain AWS credentials
@@ -192,7 +225,6 @@ jobs:
 
           DIST="${RUNNER_TEMP}/goreleaser-dist"
           mkdir -p "$DIST"
-          # Download the checksums file we just uploaded
           BUCKET="${{ vars.AWS_S3_RELEASES_BUCKET }}"
           VERSION="${{ needs.validate-tag.outputs.version }}"
           CHECKSUMS_FILE="kei-cli_${VERSION}_checksums.txt"
@@ -206,6 +238,13 @@ jobs:
           if grep -qiE '(AWS[A-Z_]*KEY|AWS_SECRET|BEGIN RSA|BEGIN PGP PRIVATE)' "${DIST}/checksums.txt"; then
             echo "ERROR: Potential credential leak detected in checksums file."
             grep -nE '(AWS[A-Z_]*KEY|AWS_SECRET|BEGIN RSA|BEGIN PGP PRIVATE)' "${DIST}/checksums.txt"
+            exit 1
+          fi
+
+          # Also verify the uploaded install.sh has no credentials
+          aws s3 cp "s3://${BUCKET}/kei-cli/install.sh" "${DIST}/install.sh" --region "${{ env.AWS_REGION }}"
+          if grep -qiE '(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|BEGIN RSA|BEGIN PGP PRIVATE)' "${DIST}/install.sh"; then
+            echo "ERROR: Potential credential leak detected in uploaded install.sh."
             exit 1
           fi
 
