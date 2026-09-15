@@ -162,6 +162,14 @@ jobs:
           fi
           aws s3api head-bucket --bucket "$BUCKET" --region "${{ env.AWS_REGION }}"
 
+      - name: Publish installer
+        run: |
+          aws s3 cp scripts/install.sh \
+            "s3://${{ vars.AWS_S3_RELEASES_BUCKET }}/kei-cli/install.sh" \
+            --region "${{ env.AWS_REGION }}" \
+            --content-type "text/x-shellscript" \
+            --cache-control "max-age=300"
+
       - name: Run Goreleaser
         uses: goreleaser/goreleaser-action@v6
         with:
