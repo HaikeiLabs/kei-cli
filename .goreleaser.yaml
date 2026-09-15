@@ -1,0 +1,94 @@
+version: 2
+
+project_name: kei-cli
+
+env:
+  - GO111MODULE=on
+  - CGO_ENABLED=0
+
+before:
+  hooks:
+    - go mod tidy
+    - go mod verify
+
+builds:
+  - main: .
+    binary: kei
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+    tags:
+      - netgo
+
+archives:
+  - format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_
+      {{- if eq .Os "darwin" }}macOS
+      {{- else if eq .Os "linux" }}Linux
+      {{- end }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "arm64" }}arm64
+      {{- end }}
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+  algorithm: sha256
+
+source:
+  enabled: true
+  name_template: "{{ .ProjectName }}_{{ .Version }}_source"
+
+signs:
+  - id: checksum
+    cmd: sh
+    args:
+      - '-c'
+      - 'test -n "$GORELEASER_SKIP_SIGN" || gpg --batch --local-user "$GORELEASER_KEY" --detach-sign --armor "$artifact"'
+    artifacts: checksum
+    signature: "${artifact}.sig"
+
+blobs:
+  - provider: s3
+    bucket: "{{ .Env.AWS_S3_RELEASES_BUCKET }}"
+    region: "{{ .Env.AWS_S3_RELEASES_REGION }}"
+    folder: "kei-cli/{{ .Version }}/"
+    # Required environment variables for S3 upload:
+    #   AWS_S3_RELEASES_BUCKET  — S3 bucket name (e.g. "kei-releases")
+    #   AWS_S3_RELEASES_REGION  — AWS region (e.g. "us-east-1")
+    #
+    # AWS credentials are resolved via the standard SDK chain:
+    #   - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN
+    #   - ~/.aws/credentials
+    #   - IAM instance profile / ECS task role / IRSA
+    #
+    # Artifacts are uploaded to:
+    #   s3://<bucket>/kei-cli/<version>/kei-cli_<version>_<os>_<arch>.tar.gz
+    #   s3://<bucket>/kei-cli/<version>/kei-cli_<version>_checksums.txt
+    #   s3://<bucket>/kei-cli/<version>/kei-cli_<version>_source.tar.gz
+
+release:
+  # GitHub Releases are disabled; distribution is via AWS S3 only.
+  disable: true
+
+snapshot:
+  name_template: "{{ .Tag }}-next"
+
+changelog:
+  use: github-native
