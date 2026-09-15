@@ -371,13 +371,23 @@ func TestGoreleaserConfigSigning(t *testing.T) {
 		{"signs section", "signs:"},
 		{"detach-sign", "detach-sign"},
 		{"armor output", "--armor"},
-		{"GORELEASER_KEY variable", "GORELEASER_KEY"},
 		{"signing skip support", "GORELEASER_SKIP_SIGN"},
+		{"signature output", "signature:"},
 	}
 	for _, c := range checks {
 		if !strings.Contains(text, c.want) {
 			t.Errorf("goreleaser config missing signing %q (%s)", c.want, c.name)
 		}
+	}
+
+	// GORELEASER_KEY is set in the workflow env, not in the YAML.
+	// Verify the workflow sets it.
+	workflowSrc, err := os.ReadFile(filepath.Join(".github", "workflows", "release.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(workflowSrc), "GORELEASER_KEY") {
+		t.Error("release workflow does not set GORELEASER_KEY env var")
 	}
 }
 
@@ -434,5 +444,77 @@ func TestInstallScriptReferencesWorkflowRequiredVars(t *testing.T) {
 	// The URL base should be constructable from bucket + region
 	if !strings.Contains(installText, "s3.") && !strings.Contains(installText, "amazonaws.com") {
 		t.Log("install script does not show example S3 URL pattern")
+	}
+}
+
+func TestWorkflowUploadsInstallScriptToCustomerURL(t *testing.T) {
+	// The customer curl flow is:
+	//   curl -fsSL "$AWS_S3_RELEASES_URL_BASE/kei-cli/install.sh" | bash
+	// This requires the workflow to upload scripts/install.sh to
+	// s3://BUCKET/kei-cli/install.sh. Verify the workflow contains
+	// an explicit upload step for this path.
+	workflowSrc, err := os.ReadFile(filepath.Join(".github", "workflows", "release.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(workflowSrc)
+
+	checks := []struct {
+		name string
+		want string
+	}{
+		{"uploads install.sh", "scripts/install.sh"},
+		{"to the fixed kei-cli path", "kei-cli/install.sh"},
+		{"with s3 cp command", "aws s3 cp"},
+		{"with public-read ACL", "--acl public-read"},
+		{"with shellscript content type", "text/x-shellscript"},
+	}
+	for _, c := range checks {
+		if !strings.Contains(text, c.want) {
+			t.Errorf("release workflow does not upload install.sh to customer URL: missing %q (%s)", c.want, c.name)
+		}
+	}
+
+	// Verify the install script's documented URL matches the upload path.
+	installSrc, err := os.ReadFile(filepath.Join("scripts", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	installText := string(installSrc)
+
+	// The install script must reference the same path pattern:
+	// $AWS_S3_RELEASES_URL_BASE/kei-cli/install.sh
+	if !strings.Contains(installText, "kei-cli/install.sh") &&
+		!strings.Contains(installText, "AWS_S3_RELEASES_URL_BASE") {
+		t.Error("install script does not reference the kei-cli/install.sh URL path")
+	}
+}
+
+func TestWorkflowLatestResolutionIsBackedByArtifact(t *testing.T) {
+	// The install script resolves "latest" by fetching latest.txt from:
+	//   $AWS_S3_RELEASES_URL_BASE/kei-cli/latest.txt
+	// Verify the workflow publishes this file for stable releases.
+	workflowSrc, err := os.ReadFile(filepath.Join(".github", "workflows", "release.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(workflowSrc)
+
+	if !strings.Contains(text, "latest.txt") {
+		t.Error("release workflow does not publish latest.txt")
+	}
+	if !strings.Contains(text, "kei-cli/latest.txt") {
+		t.Error("release workflow does not publish latest.txt to kei-cli/ prefix")
+	}
+
+	// The install script must reference the same path
+	installSrc, err := os.ReadFile(filepath.Join("scripts", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	installText := string(installSrc)
+
+	if !strings.Contains(installText, "latest.txt") {
+		t.Error("install script does not reference latest.txt for version resolution")
 	}
 }
