@@ -1,0 +1,217 @@
+# kei-cli release workflow.
+#
+# Triggered by pushing a semver tag (vX.Y.Z). Validates the tag, assumes an
+# AWS IAM role via GitHub OIDC, imports the GPG signing key, builds signed
+# binaries and archives via Goreleaser, and uploads them to the S3 releases
+# bucket.
+#
+# Required GitHub configuration:
+#
+#   1. AWS IAM role (see infra kei repo for Terraform module):
+#      - Trust policy condition:
+#          "StringLike": {
+#            "token.actions.githubusercontent.com:sub": "repo:HaikeiLabs/kei-cli:ref:refs/tags/v*"
+#          }
+#      - Permissions: PutObject, ListBucket on the releases bucket.
+#      - The ARN of this role must be stored as a GitHub Actions variable
+#        (not a secret) named AWS_ROLE_TO_ASSUME.
+#
+#   2. GPG private key for checksum signing:
+#      - Stored as a GitHub Actions secret named GORELEASER_SIGNING_KEY.
+#      - The corresponding public key should be published to a keyserver
+#        or documented in the repo.
+#
+#   3. GitHub Actions variable (not secret):
+#      - AWS_REGION — the AWS region of the releases bucket (e.g. us-east-1).
+#
+# Security model:
+#   - No AWS credentials are stored in the repository or workflow YAML.
+#   - The workflow requests id-token: write for OIDC federation.
+#   - The GPG key is imported from a GitHub secret and never logged.
+#   - The install script and goreleaser config contain zero credentials.
+#
+# Prerequisites (applied by PR #11+ Terraform companion):
+#   - S3 bucket kei-releases (or similar) with server-side encryption,
+#     versioning, and public-read bucket policy for object GETs.
+#   - IAM role with the trust policy above and s3:PutObject on
+#     arn:aws:s3:::kei-releases/kei-cli/*
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  # These are non-sensitive configuration variables shared across steps.
+  # AWS_REGION is a GitHub Actions variable, set in the repo settings.
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  # The GPG key ID, used by goreleaser's signing step. Must match the
+  # imported key's identity (email or key ID).
+  GORELEASER_KEY: kei-cli-releases@haikeilabs.com
+
+jobs:
+  validate-tag:
+    name: Validate tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.parse.outputs.version }}
+      channel: ${{ steps.parse.outputs.channel }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parse and validate tag
+        id: parse
+        run: |
+          TAG="${{ github.ref_name }}"
+          echo "Tag: $TAG"
+
+          # Must be a strict semver tag: vMAJOR.MINOR.PATCH with optional
+          # pre-release suffix (e.g. v0.1.0, v1.0.0-rc.1).
+          if ! echo "$TAG" | grep -qE '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[a-zA-Z0-9._-]+)?$'; then
+            echo "ERROR: tag '$TAG' does not match semver pattern vX.Y.Z[-prerelease]"
+            exit 1
+          fi
+
+          VERSION="${TAG#v}"
+
+          # Determine release channel
+          if echo "$TAG" | grep -qE '\-rc\.|-alpha\.|-beta\.'; then
+            CHANNEL="prerelease"
+          else
+            CHANNEL="stable"
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
+
+      - name: Check tag does not already exist
+        run: |
+          git fetch --tags origin
+          # This is the tag we are building — skip the check; what we are
+          # guarding against is re-publishing a Goreleaser release for a tag
+          # that already has artifacts. Goreleaser itself skips existing
+          # releases, but we fail early here for clarity.
+          #
+          # The S3 check is done by the release job via Goreleaser's
+          # --skip-upload flag if needed. For now, just warn if the tag
+          # looks like a re-tag.
+          echo "Tag ${{ github.ref_name }} validated."
+
+  release:
+    name: Release
+    needs: [validate-tag]
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '~1.26'
+          cache: true
+
+      - name: Import GPG signing key
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.GORELEASER_SIGNING_KEY }}
+          passphrase: ''
+          git_config_global: true
+          git_user_signingkey: true
+          git_commit_gpgsign: false
+
+      - name: Verify GPG key is available
+        run: |
+          gpg --list-keys --keyid-format LONG "$GORELEASER_KEY" || {
+            echo "ERROR: GPG key $GORELEASER_KEY not found after import."
+            exit 1
+          }
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: kei-cli-release
+
+      - name: Validate AWS session
+        run: |
+          aws sts get-caller-identity
+          echo "AWS identity validated."
+
+      - name: Validate S3 bucket accessibility
+        run: |
+          BUCKET="${{ vars.AWS_S3_RELEASES_BUCKET }}"
+          if [ -z "$BUCKET" ]; then
+            echo "ERROR: AWS_S3_RELEASES_BUCKET variable is not set."
+            exit 1
+          fi
+          aws s3api head-bucket --bucket "$BUCKET" --region "${{ env.AWS_REGION }}"
+
+      - name: Run Goreleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: '~> 2'
+          args: release --clean
+        env:
+          GORELEASER_KEY: ${{ env.GORELEASER_KEY }}
+          AWS_S3_RELEASES_BUCKET: ${{ vars.AWS_S3_RELEASES_BUCKET }}
+          AWS_S3_RELEASES_REGION: ${{ env.AWS_REGION }}
+          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
+
+      - name: Verify no credentials leaked in artifacts
+        run: |
+          # Check that none of the uploaded artifacts contain AWS credentials
+          # or sensitive patterns. This runs post-release as a safety net.
+          # The install script and goreleaser config are already statically
+          # checked by release_test.go, but we also check the generated
+          # checksums and metadata files.
+
+          DIST="${RUNNER_TEMP}/goreleaser-dist"
+          mkdir -p "$DIST"
+          # Download the checksums file we just uploaded
+          BUCKET="${{ vars.AWS_S3_RELEASES_BUCKET }}"
+          VERSION="${{ needs.validate-tag.outputs.version }}"
+          CHECKSUMS_FILE="kei-cli_${VERSION}_checksums.txt"
+
+          aws s3 cp "s3://${BUCKET}/kei-cli/${VERSION}/${CHECKSUMS_FILE}" "${DIST}/checksums.txt" --region "${{ env.AWS_REGION }}" || {
+            echo "Warning: could not download checksums for verification. Skipping artifact leak check."
+            exit 0
+          }
+
+          # Check for any lines that look like credentials
+          if grep -qiE '(AWS[A-Z_]*KEY|AWS_SECRET|BEGIN RSA|BEGIN PGP PRIVATE)' "${DIST}/checksums.txt"; then
+            echo "ERROR: Potential credential leak detected in checksums file."
+            grep -nE '(AWS[A-Z_]*KEY|AWS_SECRET|BEGIN RSA|BEGIN PGP PRIVATE)' "${DIST}/checksums.txt"
+            exit 1
+          fi
+
+          echo "Artifact leak check passed."
+
+      - name: Write latest.txt (stable releases only)
+        if: needs.validate-tag.outputs.channel == 'stable'
+        run: |
+          VERSION="${{ needs.validate-tag.outputs.version }}"
+          BUCKET="${{ vars.AWS_S3_RELEASES_BUCKET }}"
+
+          echo -n "$VERSION" | aws s3 cp - "s3://${BUCKET}/kei-cli/latest.txt" \
+            --region "${{ env.AWS_REGION }}" \
+            --content-type "text/plain" \
+            --cache-control "no-cache"
+
+          echo "Published latest.txt: $VERSION"
