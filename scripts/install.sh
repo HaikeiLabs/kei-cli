@@ -4,8 +4,10 @@ set -euo pipefail
 # install.sh — Download and install the kei CLI from AWS S3.
 #
 # The script detects the OS and architecture, downloads the matching
-# release archive from S3, verifies its SHA-256 checksum and GPG
-# signature, and installs the kei binary to the target directory.
+# release archive from S3, verifies its SHA-256 checksum and optional GPG
+# signature, and installs the kei binary to the target directory. Release
+# archives may also contain the optional kei-proxy binary; standalone kei-cli
+# archives remain supported.
 #
 # Usage:
 #   export AWS_S3_RELEASES_URL_BASE=https://kei-cli-releases.s3.us-east-1.amazonaws.com
@@ -195,6 +197,12 @@ fi
 
 mkdir -p "$INSTALL_DIR"
 install -m 0755 "$BINARY" "$INSTALL_DIR/kei"
+
+PROXY_BINARY="$TMP_DIR/kei-proxy"
+if [ -f "$PROXY_BINARY" ]; then
+  install -m 0755 "$PROXY_BINARY" "$INSTALL_DIR/kei-proxy"
+  echo "Installed kei-proxy $VERSION to $INSTALL_DIR/kei-proxy" >&2
+fi
 
 echo "Installed kei $VERSION to $INSTALL_DIR/kei" >&2
 echo "Ensure $INSTALL_DIR is on your PATH." >&2

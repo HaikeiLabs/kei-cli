@@ -305,6 +305,34 @@ The bucket must be publicly readable for object GETs (or fronted by a CDN).
 The `install.sh` script constructs download URLs from
 `AWS_S3_RELEASES_URL_BASE`.
 
+### Bundled kei-proxy release input
+
+Release archives bundle a pinned, platform-matched `kei-proxy` binary. The
+pin is configured by the `KEI_PROXY_VERSION` GitHub Actions variable (the
+workflow currently defaults it to `v0.1.0`); change that variable before a
+CLI release when the proxy is upgraded. A leading `v` is allowed for readable
+pinning, but release paths and filenames use the normalized unprefixed version.
+The release runner fetches the proxy
+from the shared bucket using its existing AWS identity, so no new credentials
+or AWS role configuration are needed.
+
+The CLI-side release flow assumes the proxy publisher provides these inputs:
+
+```
+s3://BUCKET/kei-proxy/<version>/kei-proxy_<version>_<GOOS>_<GOARCH>.tar.gz
+```
+
+For a standalone proxy installation, use the proxy publisher's standard
+`kei-proxy/install.sh` endpoint. The CLI release flow fetches versioned proxy
+archives directly so it can bundle the target-matched binary.
+
+Each archive must contain an executable named `kei-proxy`. If the proxy
+publisher uses another filename, set `KEI_PROXY_ARTIFACT_TEMPLATE` in the
+release environment with `{version}`, `{os}`, and `{arch}` placeholders. The
+CLI installer installs `kei` from every valid CLI archive and installs
+`kei-proxy` when the optional bundled binary is present, so older or manually
+built standalone kei-cli archives continue to work.
+
 ## Scope
 
 The CLI currently supports login and logout, installation metadata, agent

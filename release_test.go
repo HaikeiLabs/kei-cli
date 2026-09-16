@@ -48,6 +48,8 @@ func TestInstallScriptStaticChecks(t *testing.T) {
 		{"defaults release endpoint", "kei-cli-releases.s3.us-east-1.amazonaws.com"},
 		{"handles GPG signature", "gpg --verify"},
 		{"detects checksum tool availability", "SHA_CMD"},
+		{"installs optional kei-proxy", "PROXY_BINARY=\"$TMP_DIR/kei-proxy\""},
+		{"preserves standalone CLI install", "if [ -f \"$PROXY_BINARY\" ]"},
 	}
 	for _, c := range checks {
 		if !strings.Contains(text, c.want) {
@@ -64,6 +66,38 @@ func TestInstallScriptStaticChecks(t *testing.T) {
 		if strings.Contains(text, leak) {
 			t.Errorf("install script should not contain hardcoded %q", leak)
 		}
+	}
+}
+
+func TestProxyBundleFetchScriptContract(t *testing.T) {
+	scriptPath := filepath.Join("scripts", "fetch-proxy.sh")
+	src, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+
+	checks := []struct {
+		name string
+		want string
+	}{
+		{"pinned version", "KEI_PROXY_VERSION"},
+		{"normalizes leading v", "VERSION=\"${PIN#v}\""},
+		{"shared proxy prefix", "${PROJECT}/${VERSION}/${artifact}"},
+		{"AWS SDK download", "aws s3 cp"},
+		{"public URL fallback", "AWS_S3_RELEASES_URL_BASE"},
+		{"all supported operating systems", "for os in darwin linux"},
+		{"all supported architectures", "for arch in amd64 arm64"},
+		{"proxy binary validation", "does not contain a kei-proxy binary"},
+	}
+	for _, c := range checks {
+		if !strings.Contains(text, c.want) {
+			t.Errorf("proxy fetch script missing %q (%s)", c.want, c.name)
+		}
+	}
+
+	if out, err := exec.Command("bash", "-n", scriptPath).CombinedOutput(); err != nil {
+		t.Fatalf("proxy fetch script bash -n failed: %v\n%s", err, out)
 	}
 }
 
@@ -113,10 +147,37 @@ func TestGoreleaserConfigHasRequiredSections(t *testing.T) {
 		{"SHA-256 checksums", "sha256"},
 		{"blob S3 upload", "s3"},
 		{"GitHub Releases disabled", "disable: true"},
+		{"proxy fetch hook", "./scripts/fetch-proxy.sh"},
+		{"proxy archive source", "tmp/kei-proxy/{{ .Os }}/{{ .Arch }}/kei-proxy"},
+		{"proxy archive destination", "dst: kei-proxy"},
+		{"proxy artifact prefix documentation", "kei-proxy/<version>/"},
 	}
 	for _, c := range checks {
 		if !strings.Contains(text, c.want) {
 			t.Errorf("goreleaser config missing %q (%s)", c.want, c.name)
+		}
+	}
+}
+
+func TestReleaseWorkflowPinsAndValidatesProxy(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join(".github", "workflows", "release.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+
+	checks := []string{
+		"KEI_PROXY_VERSION",
+		"vars.KEI_PROXY_VERSION || 'v0.1.0'",
+		"KEI_PROXY_ARTIFACT_TEMPLATE",
+		"Validate pinned kei-proxy artifact prefix",
+		"PROXY_VERSION=\"${KEI_PROXY_VERSION#v}\"",
+		"--key \"kei-proxy/$PROXY_VERSION/$ARTIFACT\"",
+		"KEI_PROXY_VERSION: ${{ env.KEI_PROXY_VERSION }}",
+	}
+	for _, want := range checks {
+		if !strings.Contains(text, want) {
+			t.Errorf("release workflow missing proxy bundle contract %q", want)
 		}
 	}
 }
