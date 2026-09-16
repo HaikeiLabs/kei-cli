@@ -93,7 +93,7 @@ jobs:
               username: context.actor,
             });
 
-            if (permission.data.user.permission !== 'admin') {
+            if (permission.data.permission !== 'admin') {
               core.setFailed(`@${context.actor} must be a repository or organization owner to run a manual release`);
             }
 
