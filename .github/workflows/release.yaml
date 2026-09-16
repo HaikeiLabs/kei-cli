@@ -73,7 +73,7 @@ env:
 jobs:
   validate-tag:
     name: Validate tag
-    runs-on: kei-eks-deploy
+    runs-on: kei-cli-release
     outputs:
       version: ${{ steps.parse.outputs.version }}
       channel: ${{ steps.parse.outputs.channel }}
@@ -117,7 +117,7 @@ jobs:
   release:
     name: Release
     needs: [validate-tag]
-    runs-on: kei-eks-deploy
+    runs-on: kei-cli-release
     environment: release
     steps:
       - name: Checkout
