@@ -31,6 +31,7 @@ After installing, verify:
 
 ```sh
 kei help
+kei --version
 ```
 
 ### Option 2: go install
@@ -46,8 +47,14 @@ export PATH="$(go env GOPATH)/bin:$PATH"
 Add the export line to `~/.zshrc` (or your shell's startup file) to make it
 permanent.
 
-To upgrade, rerun the installer command. Pass `-v VERSION` when a pinned
-release is required.
+To upgrade from the release endpoint, rerun the installer command. Pass
+`-v VERSION` when a pinned release is required. The built-in Go-module upgrade
+path is also available when Go is installed:
+
+```sh
+kei upgrade
+kei upgrade --version VERSION
+```
 
 ### Building from source
 
