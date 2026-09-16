@@ -5,7 +5,9 @@ set -euo pipefail
 #
 # The shared release contract is currently assumed to publish one archive per
 # platform at:
-#   kei-proxy/<version>/kei-proxy_<version>_<GOOS>_<GOARCH>.tar.gz
+#   kei-proxy/<version>/kei-proxy_<version>_<OS>_<ARCH>.tar.gz
+# where OS is macOS/Linux and ARCH is x86_64/arm64, matching the CLI archive
+# naming convention.
 # KEI_PROXY_VERSION may be written with a leading v (for example, v0.1.0)
 # for readability; S3 paths and filenames use the unprefixed version.
 # Each archive must contain an executable named kei-proxy. Set
@@ -27,10 +29,19 @@ mkdir -p "$OUTPUT_DIR"
 
 for os in darwin linux; do
   for arch in amd64 arm64; do
+    case "$os" in
+      darwin) archive_os="macOS" ;;
+      linux) archive_os="Linux" ;;
+    esac
+    case "$arch" in
+      amd64) archive_arch="x86_64" ;;
+      arm64) archive_arch="arm64" ;;
+    esac
+
     artifact="$TEMPLATE"
     artifact="${artifact//\{version\}/$VERSION}"
-    artifact="${artifact//\{os\}/$os}"
-    artifact="${artifact//\{arch\}/$arch}"
+    artifact="${artifact//\{os\}/$archive_os}"
+    artifact="${artifact//\{arch\}/$archive_arch}"
     destination="$OUTPUT_DIR/$os/$arch"
     archive="$destination/$artifact"
     mkdir -p "$destination"
