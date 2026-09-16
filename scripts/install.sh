@@ -8,31 +8,29 @@ set -euo pipefail
 # the kei binary to the target directory.
 #
 # Usage:
-#   curl -fsSL https://releases.haikeilabs.com/kei-cli/install.sh | bash
-#   curl -fsSL https://releases.haikeilabs.com/kei-cli/install.sh | bash -s -- -d ~/.local/bin
-#   curl -fsSL https://releases.haikeilabs.com/kei-cli/install.sh | bash -s -- -v v0.1.0
+#   export AWS_S3_RELEASES_URL_BASE=https://kei-cli-releases.s3.us-east-1.amazonaws.com
+#   curl -fsSL "$AWS_S3_RELEASES_URL_BASE/kei-cli/install.sh" | bash
+#   curl -fsSL "$AWS_S3_RELEASES_URL_BASE/kei-cli/install.sh" | bash -s -- -d ~/.local/bin
+#   curl -fsSL "$AWS_S3_RELEASES_URL_BASE/kei-cli/install.sh" | bash -s -- -v 0.2.0
 #
 # Flags:
 #   -v VERSION   Version tag to install (default: latest)
 #   -d DIR       Install directory (default: /usr/local/bin)
 #   -t TMPDIR    Temporary directory (default: mktemp -d)
 #
-# Required configuration (set as environment variables before running):
+# Optional configuration:
 #
-#   AWS_S3_RELEASES_BUCKET   — S3 bucket name (e.g. "kei-releases")
-#   AWS_S3_RELEASES_REGION   — AWS region (e.g. "us-east-1")
 #   AWS_S3_RELEASES_URL_BASE — Public S3 endpoint for curl downloads.
 #                              Format:
 #                                https://<bucket>.s3.<region>.amazonaws.com
 #                              or a CloudFront distribution URL.
+#                              Defaults to the public kei-cli release endpoint.
 #
 # The install URL is constructed as:
 #   $AWS_S3_RELEASES_URL_BASE/kei-cli/<version>/<artifact>
 #
-# If the S3 bucket is private (not publicly readable), the download will
-# fail. In that case, either make the bucket public for GETs, or place a
-# CloudFront/CDN distribution in front of it and set
-# AWS_S3_RELEASES_URL_BASE to the distribution URL.
+# The default endpoint is public. If a CloudFront/CDN distribution is used,
+# override AWS_S3_RELEASES_URL_BASE with its URL.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -57,13 +55,8 @@ while getopts ":v:d:t:h" opt; do
   esac
 done
 
-# ---- Required configuration ------------------------------------------------
-if [ -z "${AWS_S3_RELEASES_URL_BASE:-}" ]; then
-  echo "Error: AWS_S3_RELEASES_URL_BASE is not set." >&2
-  echo "Set it to the public S3 endpoint or CloudFront URL for kei releases." >&2
-  echo "Example: export AWS_S3_RELEASES_URL_BASE='https://kei-releases.s3.us-east-1.amazonaws.com'" >&2
-  exit 1
-fi
+# ---- Release endpoint ------------------------------------------------------
+AWS_S3_RELEASES_URL_BASE="${AWS_S3_RELEASES_URL_BASE:-https://kei-cli-releases.s3.us-east-1.amazonaws.com}"
 
 # ---- Detect platform -------------------------------------------------------
 OS=""

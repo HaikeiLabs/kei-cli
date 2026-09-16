@@ -8,26 +8,22 @@ this CLI.
 ## Install
 
 Binary releases of kei-cli are available for macOS and Linux (arm64 and amd64).
-Choose one of the following methods.
+The installer downloads the matching archive and verifies its SHA-256 checksum.
 
 ### Option 1: curl install from S3 (recommended)
 
-Requires a configured AWS S3 release endpoint. The install script detects your
-OS and architecture, downloads the matching archive, verifies its SHA-256
-checksum, and places the `kei` binary in `/usr/local/bin`:
+The public release endpoint is an S3 website endpoint. The install script
+detects your OS and architecture and defaults to `/usr/local/bin`:
 
 ```sh
-# Set the release URL base before running (required):
-export AWS_S3_RELEASES_URL_BASE="https://kei-releases.s3.us-east-1.amazonaws.com"
-
-# Install the latest version:
-curl -fsSL "$AWS_S3_RELEASES_URL_BASE/kei-cli/install.sh" | bash
+# Install the latest version to a user-writable directory:
+export PATH="$HOME/.local/bin:$PATH"
+curl -fsSL "https://kei-cli-releases.s3.us-east-1.amazonaws.com/kei-cli/install.sh" \
+  | bash -s -- -d "$HOME/.local/bin"
 
 # Install a specific version:
-curl -fsSL "$AWS_S3_RELEASES_URL_BASE/kei-cli/install.sh" | bash -s -- -v v0.1.0
-
-# Install to a custom directory:
-curl -fsSL "$AWS_S3_RELEASES_URL_BASE/kei-cli/install.sh" | bash -s -- -d ~/.local/bin
+curl -fsSL "https://kei-cli-releases.s3.us-east-1.amazonaws.com/kei-cli/install.sh" \
+  | bash -s -- -v 0.2.0 -d "$HOME/.local/bin"
 ```
 
 After installing, verify:
@@ -50,16 +46,14 @@ export PATH="$(go env GOPATH)/bin:$PATH"
 Add the export line to `~/.zshrc` (or your shell's startup file) to make it
 permanent.
 
-### Upgrading
-
-After installing, the built-in upgrade command fetches the latest published
-module:
+To upgrade from the release endpoint, rerun the installer command. Pass
+`-v VERSION` when a pinned release is required. The built-in Go-module upgrade
+path is also available when Go is installed:
 
 ```sh
 kei upgrade
+kei upgrade --version VERSION
 ```
-
-Use `--version VERSION` to pin a specific release.
 
 ### Building from source
 
