@@ -16,15 +16,16 @@ The public release endpoint is an S3 website endpoint. The install script
 detects your OS and architecture and defaults to `/usr/local/bin`:
 
 ```sh
-# Set the public release URL base:
-export AWS_S3_RELEASES_URL_BASE="https://kei-cli-releases.s3.us-east-1.amazonaws.com"
+# Install the latest version to a user-writable directory:
 export PATH="$HOME/.local/bin:$PATH"
-
-# Install the latest version:
-curl -fsSL "$AWS_S3_RELEASES_URL_BASE/kei-cli/install.sh" | bash -s -- -d "$HOME/.local/bin"
+curl -fsSL "https://kei-cli-releases.s3.us-east-1.amazonaws.com/kei-cli/install.sh" \
+  | AWS_S3_RELEASES_URL_BASE="https://kei-cli-releases.s3.us-east-1.amazonaws.com" \
+    bash -s -- -d "$HOME/.local/bin"
 
 # Install a specific version:
-curl -fsSL "$AWS_S3_RELEASES_URL_BASE/kei-cli/install.sh" | bash -s -- -v 0.2.0 -d "$HOME/.local/bin"
+curl -fsSL "https://kei-cli-releases.s3.us-east-1.amazonaws.com/kei-cli/install.sh" \
+  | AWS_S3_RELEASES_URL_BASE="https://kei-cli-releases.s3.us-east-1.amazonaws.com" \
+    bash -s -- -v 0.2.0 -d "$HOME/.local/bin"
 ```
 
 After installing, verify:
