@@ -170,6 +170,8 @@ jobs:
     name: Release
     needs: [validate-tag]
     runs-on: kei-cli-release
+    permissions:
+      contents: write
     environment: release
     steps:
       - name: Checkout
@@ -230,6 +232,7 @@ jobs:
           version: '~> 2'
           args: release --clean
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_KEY: ${{ env.GORELEASER_KEY }}
           AWS_S3_RELEASES_BUCKET: ${{ env.AWS_S3_RELEASES_BUCKET }}
           AWS_S3_RELEASES_REGION: ${{ env.AWS_REGION }}
