@@ -32,9 +32,6 @@ set -euo pipefail
 # The default endpoint is public. If a CloudFront/CDN distribution is used,
 # override AWS_S3_RELEASES_URL_BASE with its URL.
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-
 # ---- Parse flags -----------------------------------------------------------
 VERSION="latest"
 INSTALL_DIR="/usr/local/bin"
