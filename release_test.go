@@ -254,7 +254,7 @@ func TestReleaseWorkflowExists(t *testing.T) {
 	}
 }
 
-func TestReleaseWorkflowUsesOIDC(t *testing.T) {
+func TestReleaseWorkflowUsesRunnerIdentity(t *testing.T) {
 	workflowPath := filepath.Join(".github", "workflows", "release.yaml")
 	src, err := os.ReadFile(workflowPath)
 	if err != nil {
@@ -266,16 +266,14 @@ func TestReleaseWorkflowUsesOIDC(t *testing.T) {
 		name string
 		want string
 	}{
-		{"uses configure-aws-credentials action", "aws-actions/configure-aws-credentials"},
-		{"id-token: write permission", "id-token: write"},
-		{"role-to-assume from vars", "role-to-assume"},
-		{"uses aws-actions/configure-aws-credentials@v4", "configure-aws-credentials@v4"},
+		{"runs on dedicated release runner", "runs-on: kei-cli-release"},
+		{"documents IRSA identity", "IRSA"},
 		{"uses goreleaser-action", "goreleaser/goreleaser-action"},
 		{"tag-triggered on v*", "'v*'"},
 		{"contains GPG signing key import", "ghaction-import-gpg"},
 		{"contains GPG verification step", "gpg --list-keys"},
 		{"contains AWS session validation", "aws sts get-caller-identity"},
-		{"contains S3 bucket validation", "aws s3api head-bucket"},
+		{"contains S3 bucket validation", "aws s3api list-objects-v2"},
 		{"contains artifact leak check", "credential leak"},
 		{"contains latest.txt publish", "latest.txt"},
 	}
@@ -343,10 +341,11 @@ func TestReleaseWorkflowEnvironmentVariables(t *testing.T) {
 	}
 	text := string(src)
 
-	// The workflow must reference these GitHub Actions variables (not secrets)
+	// The workflow must reference these GitHub Actions variables (not secrets).
+	// AWS access comes from the release runner Pod's IRSA role, so no
+	// role-to-assume variable is needed.
 	requiredVars := []string{
 		"AWS_REGION",
-		"AWS_ROLE_TO_ASSUME",
 		"AWS_S3_RELEASES_BUCKET",
 	}
 	for _, v := range requiredVars {
