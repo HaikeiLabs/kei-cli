@@ -8,9 +8,10 @@ set -euo pipefail
 # the kei binary to the target directory.
 #
 # Usage:
-#   curl -fsSL https://releases.haikeilabs.com/kei-cli/install.sh | bash
-#   curl -fsSL https://releases.haikeilabs.com/kei-cli/install.sh | bash -s -- -d ~/.local/bin
-#   curl -fsSL https://releases.haikeilabs.com/kei-cli/install.sh | bash -s -- -v v0.1.0
+#   export AWS_S3_RELEASES_URL_BASE=https://kei-cli-releases.s3.us-east-1.amazonaws.com
+#   curl -fsSL "$AWS_S3_RELEASES_URL_BASE/kei-cli/install.sh" | bash
+#   curl -fsSL "$AWS_S3_RELEASES_URL_BASE/kei-cli/install.sh" | bash -s -- -d ~/.local/bin
+#   curl -fsSL "$AWS_S3_RELEASES_URL_BASE/kei-cli/install.sh" | bash -s -- -v 0.2.0
 #
 # Flags:
 #   -v VERSION   Version tag to install (default: latest)
