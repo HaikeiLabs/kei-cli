@@ -51,9 +51,9 @@ on:
   workflow_dispatch:
     inputs:
       bump:
-        description: Version increment to publish (defaults to minor)
+        description: Version increment to publish (defaults to patch)
         required: false
-        default: minor
+        default: patch
         type: choice
         options:
           - patch
