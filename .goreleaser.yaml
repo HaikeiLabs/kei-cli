@@ -10,6 +10,9 @@ before:
   hooks:
     - go mod tidy
     - go mod verify
+    # KEI_PROXY_VERSION is a release-time pin. The fetch script uses the
+    # shared kei-proxy/<version>/ S3 prefix and stages one binary per target.
+    - ./scripts/fetch-proxy.sh
 
 builds:
   - main: .
@@ -46,6 +49,9 @@ archives:
     files:
       - LICENSE
       - README.md
+      # GoReleaser evaluates .Os/.Arch per archive target.
+      - src: tmp/kei-proxy/{{ .Os }}/{{ .Arch }}/kei-proxy
+        dst: kei-proxy
 
 checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
@@ -86,6 +92,18 @@ blobs:
     #   s3://<bucket>/kei-cli/<version>/kei-cli_<version>_<os>_<arch>.tar.gz
     #   s3://<bucket>/kei-cli/<version>/kei-cli_<version>_checksums.txt
     #   s3://<bucket>/kei-cli/<version>/kei-cli_<version>_source.tar.gz
+
+# Release configuration:
+#   KEI_PROXY_VERSION            — pinned proxy version, required for release
+#   KEI_PROXY_ARTIFACT_TEMPLATE  — optional filename template using
+#                                  {version}, {os}, and {arch}
+#   AWS_S3_RELEASES_BUCKET       — shared bucket used by the runner's AWS role
+#
+# The proxy release is expected at kei-proxy/<version>/... and to provide
+# kei-proxy_<version>_<GOOS>_<GOARCH>.tar.gz by default, where <version> is
+# unprefixed even when KEI_PROXY_VERSION is written as vX.Y.Z. This is
+# intentionally an archive input, not a Go module dependency, so kei-cli
+# remains standalone.
 
 release:
   # GitHub Releases are disabled; distribution is via AWS S3 only.

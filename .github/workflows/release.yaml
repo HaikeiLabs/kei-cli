@@ -12,6 +12,7 @@
 #     kei-cli_<v>_<os>_<arch>.tar.gz
 #     kei-cli_<v>_checksums.txt
 #     kei-cli_<v>_source.tar.gz
+#   The archive also bundles the pinned kei-proxy binary for its target.
 #
 # Customer install URL:
 #   curl -fsSL "$AWS_S3_RELEASES_URL_BASE/kei-cli/install.sh" | bash
@@ -72,6 +73,10 @@ env:
   # AWS_REGION is optional for the current us-east-1 release bucket.
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
   AWS_S3_RELEASES_BUCKET: ${{ vars.AWS_S3_RELEASES_BUCKET || 'kei-cli-releases' }}
+  # Pin the proxy independently from the CLI version. The proxy release must
+  # already exist under kei-proxy/<version>/ in this same bucket.
+  KEI_PROXY_VERSION: ${{ vars.KEI_PROXY_VERSION || 'v0.1.0' }}
+  KEI_PROXY_ARTIFACT_TEMPLATE: ${{ vars.KEI_PROXY_ARTIFACT_TEMPLATE || 'kei-proxy_{version}_{os}_{arch}.tar.gz' }}
   # The GPG key ID, used by goreleaser's signing step. Must match the
   # imported key's identity (email or key ID).
   GORELEASER_KEY: kei-cli-releases@haikeilabs.com
@@ -225,6 +230,17 @@ jobs:
             --max-items 1 \
             --region "${{ env.AWS_REGION }}"
 
+      - name: Validate pinned kei-proxy artifact prefix
+        run: |
+          PROXY_VERSION="${KEI_PROXY_VERSION#v}"
+          ARTIFACT="${KEI_PROXY_ARTIFACT_TEMPLATE//\{version\}/$PROXY_VERSION}"
+          ARTIFACT="${ARTIFACT//\{os\}/linux}"
+          ARTIFACT="${ARTIFACT//\{arch\}/amd64}"
+          aws s3api head-object \
+            --bucket "${{ env.AWS_S3_RELEASES_BUCKET }}" \
+            --key "kei-proxy/$PROXY_VERSION/$ARTIFACT" \
+            --region "${{ env.AWS_REGION }}"
+
       - name: Run Goreleaser
         uses: goreleaser/goreleaser-action@v6
         with:
@@ -236,6 +252,8 @@ jobs:
           GORELEASER_KEY: ${{ env.GORELEASER_KEY }}
           AWS_S3_RELEASES_BUCKET: ${{ env.AWS_S3_RELEASES_BUCKET }}
           AWS_S3_RELEASES_REGION: ${{ env.AWS_REGION }}
+          KEI_PROXY_VERSION: ${{ env.KEI_PROXY_VERSION }}
+          KEI_PROXY_ARTIFACT_TEMPLATE: ${{ env.KEI_PROXY_ARTIFACT_TEMPLATE }}
           GORELEASER_CURRENT_TAG: ${{ needs.validate-tag.outputs.tag }}
 
       - name: Upload install.sh to public release endpoint
