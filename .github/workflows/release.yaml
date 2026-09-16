@@ -18,8 +18,8 @@
 #
 # Required GitHub configuration:
 #
-#   1. The self-hosted runner's AWS identity must have PutObject, ListBucket,
-#      and HeadBucket access to the releases bucket.
+#   1. The self-hosted release runner Pod must receive an AWS identity via IRSA
+#      with PutObject, ListBucket, and HeadBucket access to the releases bucket.
 #
 #   2. GPG private key for checksum signing:
 #      - Stored as a GitHub Actions secret named GORELEASER_SIGNING_KEY.
@@ -31,14 +31,14 @@
 #
 # Security model:
 #   - No AWS credentials are stored in the repository or workflow YAML.
-#   - AWS access comes from the self-hosted runner's node role.
+#   - AWS access comes from the release Pod's dedicated IRSA role.
 #   - The GPG key is imported from a GitHub secret and never logged.
 #   - The install script and goreleaser config contain zero credentials.
 #
 # Prerequisites (applied by PR #11+ Terraform companion):
 #   - S3 bucket kei-releases (or similar) with server-side encryption,
 #     versioning, and public-read bucket policy for object GETs.
-#   - The runner's AWS identity has s3:PutObject on
+#   - The release runner's IRSA role has s3:PutObject on
 #     arn:aws:s3:::kei-releases/kei-cli/*
 
 name: Release
