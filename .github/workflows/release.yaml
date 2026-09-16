@@ -215,7 +215,13 @@ jobs:
             echo "ERROR: AWS_S3_RELEASES_BUCKET variable is not set."
             exit 1
           fi
-          aws s3api head-bucket --bucket "$BUCKET" --region "${{ env.AWS_REGION }}"
+          # List only the release prefix; the runner role intentionally grants
+          # ListBucket access with this prefix condition, not to the whole bucket.
+          aws s3api list-objects-v2 \
+            --bucket "$BUCKET" \
+            --prefix "kei-cli/" \
+            --max-items 1 \
+            --region "${{ env.AWS_REGION }}"
 
       - name: Run Goreleaser
         uses: goreleaser/goreleaser-action@v6
