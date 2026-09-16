@@ -19,13 +19,11 @@ detects your OS and architecture and defaults to `/usr/local/bin`:
 # Install the latest version to a user-writable directory:
 export PATH="$HOME/.local/bin:$PATH"
 curl -fsSL "https://kei-cli-releases.s3.us-east-1.amazonaws.com/kei-cli/install.sh" \
-  | AWS_S3_RELEASES_URL_BASE="https://kei-cli-releases.s3.us-east-1.amazonaws.com" \
-    bash -s -- -d "$HOME/.local/bin"
+  | bash -s -- -d "$HOME/.local/bin"
 
 # Install a specific version:
 curl -fsSL "https://kei-cli-releases.s3.us-east-1.amazonaws.com/kei-cli/install.sh" \
-  | AWS_S3_RELEASES_URL_BASE="https://kei-cli-releases.s3.us-east-1.amazonaws.com" \
-    bash -s -- -v 0.2.0 -d "$HOME/.local/bin"
+  | bash -s -- -v 0.2.0 -d "$HOME/.local/bin"
 ```
 
 After installing, verify:
