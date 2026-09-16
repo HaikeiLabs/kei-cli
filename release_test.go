@@ -39,11 +39,15 @@ func TestInstallScriptStaticChecks(t *testing.T) {
 		{"detects Linux", "Linux"},
 		{"detects amd64", "x86_64"},
 		{"detects arm64", "arm64"},
-		{"uses shasum verification", "shasum -a 256"},
+		{"uses shasum or sha256sum verification", "shasum -a 256"},
+		{"uses sha256sum fallback", "sha256sum"},
 		{"uses curl", "curl -fsSL"},
 		{"supports -v flag", "-v VERSION"},
 		{"supports -d flag", "-d DIR"},
 		{"references AWS_S3_RELEASES_URL_BASE", "AWS_S3_RELEASES_URL_BASE"},
+		{"defaults release endpoint", "kei-cli-releases.s3.us-east-1.amazonaws.com"},
+		{"handles GPG signature", "gpg --verify"},
+		{"detects checksum tool availability", "SHA_CMD"},
 	}
 	for _, c := range checks {
 		if !strings.Contains(text, c.want) {
@@ -250,7 +254,7 @@ func TestReleaseWorkflowExists(t *testing.T) {
 	}
 }
 
-func TestReleaseWorkflowUsesOIDC(t *testing.T) {
+func TestReleaseWorkflowUsesRunnerIdentity(t *testing.T) {
 	workflowPath := filepath.Join(".github", "workflows", "release.yaml")
 	src, err := os.ReadFile(workflowPath)
 	if err != nil {
@@ -262,16 +266,14 @@ func TestReleaseWorkflowUsesOIDC(t *testing.T) {
 		name string
 		want string
 	}{
-		{"uses configure-aws-credentials action", "aws-actions/configure-aws-credentials"},
-		{"id-token: write permission", "id-token: write"},
-		{"role-to-assume from vars", "role-to-assume"},
-		{"uses aws-actions/configure-aws-credentials@v4", "configure-aws-credentials@v4"},
+		{"runs on dedicated release runner", "runs-on: kei-cli-release"},
+		{"documents IRSA identity", "IRSA"},
 		{"uses goreleaser-action", "goreleaser/goreleaser-action"},
 		{"tag-triggered on v*", "'v*'"},
 		{"contains GPG signing key import", "ghaction-import-gpg"},
 		{"contains GPG verification step", "gpg --list-keys"},
 		{"contains AWS session validation", "aws sts get-caller-identity"},
-		{"contains S3 bucket validation", "aws s3api head-bucket"},
+		{"contains S3 bucket validation", "aws s3api list-objects-v2"},
 		{"contains artifact leak check", "credential leak"},
 		{"contains latest.txt publish", "latest.txt"},
 	}
@@ -339,10 +341,11 @@ func TestReleaseWorkflowEnvironmentVariables(t *testing.T) {
 	}
 	text := string(src)
 
-	// The workflow must reference these GitHub Actions variables (not secrets)
+	// The workflow must reference these GitHub Actions variables (not secrets).
+	// AWS access comes from the release runner Pod's IRSA role, so no
+	// role-to-assume variable is needed.
 	requiredVars := []string{
 		"AWS_REGION",
-		"AWS_ROLE_TO_ASSUME",
 		"AWS_S3_RELEASES_BUCKET",
 	}
 	for _, v := range requiredVars {
@@ -475,6 +478,17 @@ func TestWorkflowUploadsInstallScriptToCustomerURL(t *testing.T) {
 		if !strings.Contains(text, c.want) {
 			t.Errorf("release workflow does not upload install.sh to customer URL: missing %q (%s)", c.want, c.name)
 		}
+	}
+
+	// The workflow must NOT set --acl public-read because the bucket
+	// has block_public_acls = true. Public access is granted by bucket
+	// policy instead.
+	if strings.Contains(text, "--acl public-read") {
+		t.Error("release workflow sets --acl public-read but the bucket has block_public_acls = true; remove the ACL flag")
+	}
+	// It should reference the reason via a comment
+	if !strings.Contains(text, "block_public_acls") {
+		t.Log("install.sh upload step does not comment about block_public_acls")
 	}
 
 	// Verify the install script's documented URL matches the upload path.

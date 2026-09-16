@@ -252,6 +252,8 @@ jobs:
           #
           # Upload with cache-control: no-cache so CDN/proxies always serve
           # the latest revision.
+          # NOTE: ACL is not set here because the bucket blocks public ACLs.
+          # Public read is granted by the bucket policy (see infra/modules/release-bucket).
           aws s3 cp "scripts/install.sh" "s3://${BUCKET}/kei-cli/install.sh" \
             --region "${{ env.AWS_REGION }}" \
             --content-type "text/x-shellscript" \
@@ -300,6 +302,8 @@ jobs:
           VERSION="${{ needs.validate-tag.outputs.version }}"
           BUCKET="${{ env.AWS_S3_RELEASES_BUCKET }}"
 
+          # NOTE: ACL is not set here because the bucket blocks public ACLs.
+          # Public read is granted by the bucket policy (see infra/modules/release-bucket).
           echo -n "$VERSION" | aws s3 cp - "s3://${BUCKET}/kei-cli/latest.txt" \
             --region "${{ env.AWS_REGION }}" \
             --content-type "text/plain" \

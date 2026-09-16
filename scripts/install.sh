@@ -4,8 +4,8 @@ set -euo pipefail
 # install.sh — Download and install the kei CLI from AWS S3.
 #
 # The script detects the OS and architecture, downloads the matching
-# release archive from S3, verifies its SHA-256 checksum, and installs
-# the kei binary to the target directory.
+# release archive from S3, verifies its SHA-256 checksum and GPG
+# signature, and installs the kei binary to the target directory.
 #
 # Usage:
 #   export AWS_S3_RELEASES_URL_BASE=https://kei-cli-releases.s3.us-east-1.amazonaws.com
@@ -31,9 +31,6 @@ set -euo pipefail
 #
 # The default endpoint is public. If a CloudFront/CDN distribution is used,
 # override AWS_S3_RELEASES_URL_BASE with its URL.
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ---- Parse flags -----------------------------------------------------------
 VERSION="latest"
@@ -82,6 +79,18 @@ esac
 
 PROJECT="kei-cli"
 
+# ---- Detect checksum tool --------------------------------------------------
+SHA_CMD=""
+if command -v shasum &>/dev/null; then
+  SHA_CMD="shasum -a 256"
+elif command -v sha256sum &>/dev/null; then
+  SHA_CMD="sha256sum"
+else
+  echo "Error: no SHA-256 checksum tool found (tried shasum, sha256sum)." >&2
+  echo "Install one of: coreutils (macOS), sha256sum (Linux)." >&2
+  exit 1
+fi
+
 # ---- Resolve latest version ------------------------------------------------
 if [ "$VERSION" = "latest" ]; then
   # Fetch the latest version from the S3 bucket listing. This assumes the
@@ -102,8 +111,10 @@ fi
 # ---- Build artifact names --------------------------------------------------
 ARCHIVE_NAME="${PROJECT}_${VERSION}_${OS}_${ARCH}.tar.gz"
 CHECKSUM_NAME="${PROJECT}_${VERSION}_checksums.txt"
+SIGNATURE_NAME="${CHECKSUM_NAME}.sig"
 ARCHIVE_URL="$AWS_S3_RELEASES_URL_BASE/$PROJECT/$VERSION/$ARCHIVE_NAME"
 CHECKSUM_URL="$AWS_S3_RELEASES_URL_BASE/$PROJECT/$VERSION/$CHECKSUM_NAME"
+SIGNATURE_URL="$AWS_S3_RELEASES_URL_BASE/$PROJECT/$VERSION/$SIGNATURE_NAME"
 
 # ---- Temporary directory ---------------------------------------------------
 if [ -z "${TMP_DIR:-}" ]; then
@@ -113,29 +124,64 @@ else
   mkdir -p "$TMP_DIR"
 fi
 
-# ---- Download and verify ---------------------------------------------------
+# ---- Download artifacts ----------------------------------------------------
 echo "Downloading $ARCHIVE_NAME..." >&2
 curl -fsSL --connect-timeout 15 --retry 3 "$ARCHIVE_URL" -o "$TMP_DIR/$ARCHIVE_NAME"
 
 echo "Downloading checksums..." >&2
 curl -fsSL --connect-timeout 15 --retry 3 "$CHECKSUM_URL" -o "$TMP_DIR/$CHECKSUM_NAME"
 
+# ---- Verify GPG signature (optional) ---------------------------------------
+# The checksums file is signed with the kei-cli-releases@haikeilabs.com GPG key.
+# If the signature and GPG are available, verify; otherwise warn and skip.
+if command -v gpg &>/dev/null; then
+  if curl -fsSL --connect-timeout 10 "$SIGNATURE_URL" -o "$TMP_DIR/$SIGNATURE_NAME" 2>/dev/null; then
+    echo "Verifying GPG signature..." >&2
+    if gpg --verify "$TMP_DIR/$SIGNATURE_NAME" "$TMP_DIR/$CHECKSUM_NAME" 2>/dev/null; then
+      echo "GPG signature verified." >&2
+    else
+      echo "Warning: GPG signature verification failed." >&2
+      echo "The checksums file may be tampered with or the signing key is unknown." >&2
+      echo "Import the kei release key: gpg --recv-keys <KEYID>" >&2
+      echo "Proceeding with checksum verification only." >&2
+    fi
+  else
+    echo "GPG signature not available for this release; skipping verification." >&2
+  fi
+else
+  echo "GPG not found; skipping signature verification." >&2
+fi
+
+# ---- Verify checksum -------------------------------------------------------
 echo "Verifying checksum..." >&2
-(cd "$TMP_DIR" && shasum -a 256 -c "$CHECKSUM_NAME" --ignore-missing 2>/dev/null) || {
-  # Fallback: manual verification
+# Try batch verification first (shasum -c / sha256sum -c), then fall back to
+# manual comparison for portability.
+if [ "$SHA_CMD" = "shasum -a 256" ]; then
+  (cd "$TMP_DIR" && shasum -a 256 -c "$CHECKSUM_NAME" --ignore-missing 2>/dev/null) || {
+    MANUAL_VERIFY=1
+  }
+elif [ "$SHA_CMD" = "sha256sum" ]; then
+  (cd "$TMP_DIR" && sha256sum -c "$CHECKSUM_NAME" --ignore-missing 2>/dev/null) || {
+    MANUAL_VERIFY=1
+  }
+else
+  MANUAL_VERIFY=1
+fi
+
+if [ "${MANUAL_VERIFY:-0}" = "1" ]; then
   EXPECTED="$(grep "$ARCHIVE_NAME" "$TMP_DIR/$CHECKSUM_NAME" | awk '{print $1}')"
   if [ -z "$EXPECTED" ]; then
     echo "Error: $ARCHIVE_NAME not found in checksums file." >&2
     exit 1
   fi
-  GOT="$(shasum -a 256 "$TMP_DIR/$ARCHIVE_NAME" | awk '{print $1}')"
+  GOT="$($SHA_CMD "$TMP_DIR/$ARCHIVE_NAME" | awk '{print $1}')"
   if [ "$EXPECTED" != "$GOT" ]; then
     echo "Error: checksum mismatch for $ARCHIVE_NAME" >&2
     echo "  Expected: $EXPECTED" >&2
     echo "  Got:      $GOT" >&2
     exit 1
   fi
-}
+fi
 
 # ---- Extract and install ---------------------------------------------------
 echo "Extracting..." >&2
