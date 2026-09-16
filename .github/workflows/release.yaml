@@ -26,8 +26,9 @@
 #      - The corresponding public key should be published to a keyserver
 #        or documented in the repo.
 #
-#   3. GitHub Actions variable (not secret):
-#      - AWS_REGION — the AWS region of the releases bucket (e.g. us-east-1).
+#   3. Optional GitHub Actions variable (not secret):
+#      - AWS_REGION — the region of the releases bucket; defaults to us-east-1.
+#      - AWS_S3_RELEASES_BUCKET — the release bucket; defaults to kei-cli-releases.
 #
 # Security model:
 #   - No AWS credentials are stored in the repository or workflow YAML.
@@ -68,8 +69,9 @@ concurrency:
 
 env:
   # These are non-sensitive configuration variables shared across steps.
-  # AWS_REGION is a GitHub Actions variable, set in the repo settings.
-  AWS_REGION: ${{ vars.AWS_REGION }}
+  # AWS_REGION is optional for the current us-east-1 release bucket.
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  AWS_S3_RELEASES_BUCKET: ${{ vars.AWS_S3_RELEASES_BUCKET || 'kei-cli-releases' }}
   # The GPG key ID, used by goreleaser's signing step. Must match the
   # imported key's identity (email or key ID).
   GORELEASER_KEY: kei-cli-releases@haikeilabs.com
@@ -208,7 +210,7 @@ jobs:
 
       - name: Validate S3 bucket accessibility
         run: |
-          BUCKET="${{ vars.AWS_S3_RELEASES_BUCKET }}"
+          BUCKET="${{ env.AWS_S3_RELEASES_BUCKET }}"
           if [ -z "$BUCKET" ]; then
             echo "ERROR: AWS_S3_RELEASES_BUCKET variable is not set."
             exit 1
@@ -223,13 +225,13 @@ jobs:
           args: release --clean
         env:
           GORELEASER_KEY: ${{ env.GORELEASER_KEY }}
-          AWS_S3_RELEASES_BUCKET: ${{ vars.AWS_S3_RELEASES_BUCKET }}
+          AWS_S3_RELEASES_BUCKET: ${{ env.AWS_S3_RELEASES_BUCKET }}
           AWS_S3_RELEASES_REGION: ${{ env.AWS_REGION }}
           GORELEASER_CURRENT_TAG: ${{ needs.validate-tag.outputs.tag }}
 
       - name: Upload install.sh to public release endpoint
         run: |
-          BUCKET="${{ vars.AWS_S3_RELEASES_BUCKET }}"
+          BUCKET="${{ env.AWS_S3_RELEASES_BUCKET }}"
 
           # The customer curl flow is:
           #   curl -fsSL "$AWS_S3_RELEASES_URL_BASE/kei-cli/install.sh" | bash
@@ -258,7 +260,7 @@ jobs:
 
           DIST="${RUNNER_TEMP}/goreleaser-dist"
           mkdir -p "$DIST"
-          BUCKET="${{ vars.AWS_S3_RELEASES_BUCKET }}"
+          BUCKET="${{ env.AWS_S3_RELEASES_BUCKET }}"
           VERSION="${{ needs.validate-tag.outputs.version }}"
           CHECKSUMS_FILE="kei-cli_${VERSION}_checksums.txt"
 
@@ -287,7 +289,7 @@ jobs:
         if: needs.validate-tag.outputs.channel == 'stable'
         run: |
           VERSION="${{ needs.validate-tag.outputs.version }}"
-          BUCKET="${{ vars.AWS_S3_RELEASES_BUCKET }}"
+          BUCKET="${{ env.AWS_S3_RELEASES_BUCKET }}"
 
           echo -n "$VERSION" | aws s3 cp - "s3://${BUCKET}/kei-cli/latest.txt" \
             --region "${{ env.AWS_REGION }}" \
