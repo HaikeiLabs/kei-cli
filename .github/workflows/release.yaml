@@ -1,7 +1,7 @@
 # kei-cli release workflow.
 #
-# Triggered by pushing a semver tag (vX.Y.Z). Validates the tag, assumes an
-# AWS IAM role via GitHub OIDC, imports the GPG signing key, builds signed
+# Triggered by pushing a semver tag (vX.Y.Z), or manually with a version bump.
+# Validates the tag, imports the GPG signing key, builds signed
 # binaries and archives via Goreleaser, and uploads them to the S3 releases
 # bucket.
 #
@@ -18,14 +18,8 @@
 #
 # Required GitHub configuration:
 #
-#   1. AWS IAM role (see infra kei repo for Terraform module):
-#      - Trust policy condition:
-#          "StringLike": {
-#            "token.actions.githubusercontent.com:sub": "repo:HaikeiLabs/kei-cli:ref:refs/tags/v*"
-#          }
-#      - Permissions: PutObject, ListBucket on the releases bucket.
-#      - The ARN of this role must be stored as a GitHub Actions variable
-#        (not a secret) named AWS_ROLE_TO_ASSUME.
+#   1. The self-hosted release runner Pod must receive an AWS identity via IRSA
+#      with PutObject, ListBucket, and HeadBucket access to the releases bucket.
 #
 #   2. GPG private key for checksum signing:
 #      - Stored as a GitHub Actions secret named GORELEASER_SIGNING_KEY.
@@ -37,14 +31,14 @@
 #
 # Security model:
 #   - No AWS credentials are stored in the repository or workflow YAML.
-#   - The workflow requests id-token: write for OIDC federation.
+#   - AWS access comes from the release Pod's dedicated IRSA role.
 #   - The GPG key is imported from a GitHub secret and never logged.
 #   - The install script and goreleaser config contain zero credentials.
 #
 # Prerequisites (applied by PR #11+ Terraform companion):
 #   - S3 bucket kei-releases (or similar) with server-side encryption,
 #     versioning, and public-read bucket policy for object GETs.
-#   - IAM role with the trust policy above and s3:PutObject on
+#   - The release runner's IRSA role has s3:PutObject on
 #     arn:aws:s3:::kei-releases/kei-cli/*
 
 name: Release
@@ -55,14 +49,18 @@ on:
       - 'v*'
   workflow_dispatch:
     inputs:
-      version:
-        description: Release version, without the leading v (for example 0.1.3)
-        required: true
-        type: string
+      bump:
+        description: Version increment to publish (defaults to minor)
+        required: false
+        default: minor
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: release-${{ github.ref_name }}
@@ -109,15 +107,30 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Parse and validate tag
         id: parse
         env:
-          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_BUMP: ${{ inputs.bump }}
         run: |
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            TAG="${INPUT_VERSION#v}"
-            TAG="v${TAG}"
+            git fetch --tags --force origin
+            LATEST_TAG="$(git tag --list 'v*' | grep -E '^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$' | sort -V | tail -1)"
+            if [ -z "$LATEST_TAG" ]; then
+              echo "ERROR: no stable semver tag exists to increment"
+              exit 1
+            fi
+
+            IFS=. read -r MAJOR MINOR PATCH <<< "${LATEST_TAG#v}"
+            case "${INPUT_BUMP:-minor}" in
+              patch) PATCH=$((PATCH + 1)) ;;
+              minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+              major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+              *) echo "ERROR: bump must be patch, minor, or major"; exit 1 ;;
+            esac
+            TAG="v${MAJOR}.${MINOR}.${PATCH}"
           else
             TAG="${GITHUB_REF_NAME}"
           fi
@@ -145,6 +158,10 @@ jobs:
 
       - name: Check tag does not already exist
         run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && git ls-remote --exit-code --tags origin "refs/tags/${{ steps.parse.outputs.tag }}" >/dev/null 2>&1; then
+            echo "ERROR: tag '${{ steps.parse.outputs.tag }}' already exists"
+            exit 1
+          fi
           echo "Release tag ${{ steps.parse.outputs.tag }} validated."
 
   release:
@@ -184,17 +201,10 @@ jobs:
             exit 1
           }
 
-      - name: Configure AWS credentials via OIDC
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ env.AWS_REGION }}
-          role-session-name: kei-cli-release
-
-      - name: Validate AWS session
+      - name: Validate runner AWS identity
         run: |
           aws sts get-caller-identity
-          echo "AWS identity validated."
+          echo "Runner AWS identity validated."
 
       - name: Validate S3 bucket accessibility
         run: |
