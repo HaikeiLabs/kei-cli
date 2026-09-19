@@ -132,6 +132,19 @@ func TestNormalizedKeiWebURL(t *testing.T) {
 	}
 }
 
+func TestValidRuntimePlatform(t *testing.T) {
+	for _, platform := range []string{"cli", "teams", "discord", "slack"} {
+		if !validRuntimePlatform(platform) {
+			t.Errorf("validRuntimePlatform(%q) = false", platform)
+		}
+	}
+	for _, platform := range []string{"", "openwebui", "unknown"} {
+		if validRuntimePlatform(platform) {
+			t.Errorf("validRuntimePlatform(%q) = true", platform)
+		}
+	}
+}
+
 func TestBotCredentialWritesOnlyTokenToNonTerminalOutput(t *testing.T) {
 	installationID := "12345678-1234-1234-1234-123456789012"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
