@@ -120,7 +120,7 @@ func main() {
 
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Kei CLI")
-	fmt.Fprintln(w, "\nUsage:\n  kei setup [--config PATH] [--control-plane-url URL] [--runtime-token TOKEN]\n  kei runtime bootstrap [--config PATH] [--proxy-path PATH]\n  kei login [--api-url URL] [--no-browser]\n  kei logout [--api-url URL]\n  kei upgrade [--version VERSION]\n  kei bot init --platform teams|discord|slack --name NAME [--agent ID] [--api-url URL]\n  kei bot credential --installation ID [--rotate] [--api-url URL]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default] [--api-url URL]\n  kei bot status --installation ID [--api-url URL]\n  kei bot delete --installation ID --yes [--api-url URL]\n  kei --version")
+	fmt.Fprintln(w, "\nUsage:\n  kei setup [--config PATH] [--control-plane-url URL] [--runtime-token TOKEN]\n  kei runtime bootstrap [--config PATH] [--proxy-path PATH]\n  kei login [--api-url URL] [--no-browser]\n  kei logout [--api-url URL]\n  kei upgrade [--version VERSION]\n  kei bot init --platform cli|teams|discord|slack --name NAME [--agent ID] [--api-url URL]\n  kei bot credential --installation ID [--rotate] [--api-url URL]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default] [--api-url URL]\n  kei bot status --installation ID [--api-url URL]\n  kei bot delete --installation ID --yes [--api-url URL]\n  kei --version")
 }
 
 func printVersion(w io.Writer) {
@@ -236,14 +236,14 @@ func runBotInitCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 	flags := flag.NewFlagSet("bot init", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	apiURL := flags.String("api-url", keiWebURL(), "Kei web URL")
-	platform := flags.String("platform", "", "bot platform")
+	platform := flags.String("platform", "", "runtime platform (cli, teams, discord, or slack)")
 	agentID := flags.String("agent", "", "Kei agent ID")
 	displayName := flags.String("name", "", "installation name")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
-	if flags.NArg() != 0 || *displayName == "" || (*platform != "teams" && *platform != "discord" && *platform != "slack") {
-		fmt.Fprintln(stderr, "bot init requires --platform teams|discord|slack and --name NAME")
+	if flags.NArg() != 0 || *displayName == "" || !validRuntimePlatform(*platform) {
+		fmt.Fprintln(stderr, "bot init requires --platform cli|teams|discord|slack and --name NAME")
 		return 2
 	}
 	installation, err := createBotInstallation(context.Background(), *apiURL, *agentID, *platform, *displayName, io.Discard, client, store)
@@ -253,6 +253,10 @@ func runBotInitCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 	}
 	_ = json.NewEncoder(stdout).Encode(map[string]string{"installation_id": installation.ID})
 	return 0
+}
+
+func validRuntimePlatform(platform string) bool {
+	return platform == "cli" || platform == "teams" || platform == "discord" || platform == "slack"
 }
 
 type createRuntimeInstallationRequest struct {

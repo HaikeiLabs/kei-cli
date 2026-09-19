@@ -128,9 +128,13 @@ Create pending installation metadata for a bot:
 
 ```sh
 kei bot init \
-  --platform teams \
-  --name "Customer Teams"
+  --platform cli \
+  --name "Local OpenWebUI"
 ```
+
+Use `--platform cli` for a platform-neutral local runtime such as
+`kei-connector-runtime` behind OpenWebUI. The existing `teams`, `discord`, and
+`slack` values remain for chat-platform installations.
 
 The command prints the installation ID. Use that ID to inspect the installation
 or manage its agent assignments:
