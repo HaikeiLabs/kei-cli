@@ -183,9 +183,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create local tag for manual release
+      - name: Create and push release tag for manual release
         if: github.event_name == 'workflow_dispatch'
-        run: git tag "${{ needs.validate-tag.outputs.tag }}" "$GITHUB_SHA"
+        env:
+          RELEASE_TAG: ${{ needs.validate-tag.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$RELEASE_TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$RELEASE_TAG"
 
       - name: Set up Go
         uses: actions/setup-go@v5
