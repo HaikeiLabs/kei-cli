@@ -172,6 +172,8 @@ func TestReleaseWorkflowPinsAndValidatesProxy(t *testing.T) {
 		"KEI_PROXY_ARTIFACT_TEMPLATE",
 		"Validate pinned kei-proxy artifact prefix",
 		"PROXY_VERSION=\"${KEI_PROXY_VERSION#v}\"",
+		"ARTIFACT=\"${ARTIFACT//\\{os\\}/Linux}\"",
+		"ARTIFACT=\"${ARTIFACT//\\{arch\\}/x86_64}\"",
 		"--key \"kei-proxy/$PROXY_VERSION/$ARTIFACT\"",
 		"KEI_PROXY_VERSION: ${{ env.KEI_PROXY_VERSION }}",
 	}

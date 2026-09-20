@@ -234,8 +234,11 @@ jobs:
         run: |
           PROXY_VERSION="${KEI_PROXY_VERSION#v}"
           ARTIFACT="${KEI_PROXY_ARTIFACT_TEMPLATE//\{version\}/$PROXY_VERSION}"
-          ARTIFACT="${ARTIFACT//\{os\}/linux}"
-          ARTIFACT="${ARTIFACT//\{arch\}/amd64}"
+          # Match the platform labels emitted by kei-proxy's GoReleaser
+          # config. S3 returns 403 for this private bucket when the key is
+          # absent, so using the wrong aliases obscures a filename mismatch.
+          ARTIFACT="${ARTIFACT//\{os\}/Linux}"
+          ARTIFACT="${ARTIFACT//\{arch\}/x86_64}"
           aws s3api head-object \
             --bucket "${{ env.AWS_S3_RELEASES_BUCKET }}" \
             --key "kei-proxy/$PROXY_VERSION/$ARTIFACT" \
