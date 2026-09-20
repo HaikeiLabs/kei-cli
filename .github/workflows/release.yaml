@@ -76,7 +76,6 @@ env:
   # Pin the proxy independently from the CLI version. The proxy release must
   # already exist under kei-proxy/<version>/ in this same bucket.
   KEI_PROXY_VERSION: ${{ vars.KEI_PROXY_VERSION || 'v0.1.0' }}
-  KEI_PROXY_ARTIFACT_TEMPLATE: ${{ vars.KEI_PROXY_ARTIFACT_TEMPLATE || 'kei-proxy_{version}_{os}_{arch}.tar.gz' }}
   # The GPG key ID, used by goreleaser's signing step. Must match the
   # imported key's identity (email or key ID).
   GORELEASER_KEY: kei-cli-releases@haikeilabs.com
@@ -233,12 +232,11 @@ jobs:
       - name: Validate pinned kei-proxy artifact prefix
         run: |
           PROXY_VERSION="${KEI_PROXY_VERSION#v}"
-          ARTIFACT="${KEI_PROXY_ARTIFACT_TEMPLATE//\{version\}/$PROXY_VERSION}"
           # Match the platform labels emitted by kei-proxy's GoReleaser
           # config. S3 returns 403 for this private bucket when the key is
-          # absent, so using the wrong aliases obscures a filename mismatch.
-          ARTIFACT="${ARTIFACT//\{os\}/Linux}"
-          ARTIFACT="${ARTIFACT//\{arch\}/x86_64}"
+          # absent, so construct the canonical key directly instead of
+          # expanding a mutable template.
+          ARTIFACT="kei-proxy_${PROXY_VERSION}_Linux_x86_64.tar.gz"
           aws s3api head-object \
             --bucket "${{ env.AWS_S3_RELEASES_BUCKET }}" \
             --key "kei-proxy/$PROXY_VERSION/$ARTIFACT" \
@@ -256,7 +254,6 @@ jobs:
           AWS_S3_RELEASES_BUCKET: ${{ env.AWS_S3_RELEASES_BUCKET }}
           AWS_S3_RELEASES_REGION: ${{ env.AWS_REGION }}
           KEI_PROXY_VERSION: ${{ env.KEI_PROXY_VERSION }}
-          KEI_PROXY_ARTIFACT_TEMPLATE: ${{ env.KEI_PROXY_ARTIFACT_TEMPLATE }}
           GORELEASER_CURRENT_TAG: ${{ needs.validate-tag.outputs.tag }}
 
       - name: Upload install.sh to public release endpoint
