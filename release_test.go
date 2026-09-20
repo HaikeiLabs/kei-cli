@@ -84,6 +84,7 @@ func TestProxyBundleFetchScriptContract(t *testing.T) {
 		{"pinned version", "KEI_PROXY_VERSION"},
 		{"normalizes leading v", "VERSION=\"${PIN#v}\""},
 		{"shared proxy prefix", "${PROJECT}/${VERSION}/${artifact}"},
+		{"canonical artifact filename", "artifact=\"kei-proxy_${VERSION}_${archive_os}_${archive_arch}.tar.gz\""},
 		{"AWS SDK download", "aws s3 cp"},
 		{"public URL fallback", "AWS_S3_RELEASES_URL_BASE"},
 		{"all supported operating systems", "for os in darwin linux"},
@@ -98,6 +99,9 @@ func TestProxyBundleFetchScriptContract(t *testing.T) {
 
 	if out, err := exec.Command("bash", "-n", scriptPath).CombinedOutput(); err != nil {
 		t.Fatalf("proxy fetch script bash -n failed: %v\n%s", err, out)
+	}
+	if strings.Contains(text, "KEI_PROXY_ARTIFACT_TEMPLATE") {
+		t.Errorf("proxy fetch script must not accept a mutable artifact template")
 	}
 }
 
@@ -169,11 +173,9 @@ func TestReleaseWorkflowPinsAndValidatesProxy(t *testing.T) {
 	checks := []string{
 		"KEI_PROXY_VERSION",
 		"vars.KEI_PROXY_VERSION || 'v0.1.0'",
-		"KEI_PROXY_ARTIFACT_TEMPLATE",
 		"Validate pinned kei-proxy artifact prefix",
 		"PROXY_VERSION=\"${KEI_PROXY_VERSION#v}\"",
-		"ARTIFACT=\"${ARTIFACT//\\{os\\}/Linux}\"",
-		"ARTIFACT=\"${ARTIFACT//\\{arch\\}/x86_64}\"",
+		"ARTIFACT=\"kei-proxy_${PROXY_VERSION}_Linux_x86_64.tar.gz\"",
 		"--key \"kei-proxy/$PROXY_VERSION/$ARTIFACT\"",
 		"KEI_PROXY_VERSION: ${{ env.KEI_PROXY_VERSION }}",
 	}
@@ -181,6 +183,9 @@ func TestReleaseWorkflowPinsAndValidatesProxy(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("release workflow missing proxy bundle contract %q", want)
 		}
+	}
+	if strings.Contains(text, "KEI_PROXY_ARTIFACT_TEMPLATE") {
+		t.Errorf("release workflow must not pass a mutable proxy artifact template")
 	}
 }
 

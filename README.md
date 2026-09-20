@@ -330,10 +330,8 @@ For a standalone proxy installation, use the proxy publisher's standard
 `kei-proxy/install.sh` endpoint. The CLI release flow fetches versioned proxy
 archives directly so it can bundle the target-matched binary.
 
-Each archive must contain an executable named `kei-proxy`. If the proxy
-publisher uses another filename, set `KEI_PROXY_ARTIFACT_TEMPLATE` in the
-release environment with `{version}`, `{os}`, and `{arch}` placeholders. The
-CLI installer installs `kei` from every valid CLI archive and installs
+Each archive must contain an executable named `kei-proxy` and use the canonical
+filename shown above. The CLI installer installs `kei` from every valid CLI archive and installs
 `kei-proxy` when the optional bundled binary is present, so older or manually
 built standalone kei-cli archives continue to work.
 
