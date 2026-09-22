@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"bytes"
@@ -44,8 +44,8 @@ func TestLogoutRejectsInvalidURLAndPositionalArgs(t *testing.T) {
 
 func TestPrintVersion(t *testing.T) {
 	var out bytes.Buffer
-	printVersion(&out)
-	if !strings.HasPrefix(out.String(), "kei ") || !strings.HasSuffix(out.String(), "\n") {
-		t.Fatalf("version output = %q", out.String())
+	printVersion(&out, "test-version")
+	if got := out.String(); got != "kei test-version\n" {
+		t.Fatalf("version output = %q", got)
 	}
 }
