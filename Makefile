@@ -28,13 +28,13 @@ LDFLAGS  ?= -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.da
 default: build
 
 build:
-	$(GO) build -o tmp/$(BINARY) -ldflags='$(LDFLAGS)' -trimpath .
+	$(GO) build -o tmp/$(BINARY) -ldflags='$(LDFLAGS)' -trimpath ./cmd/kei/
 
 build-all:
-	GOOS=darwin GOARCH=amd64 $(GO) build -o tmp/kei-darwin-amd64 -ldflags='$(LDFLAGS)' -trimpath .
-	GOOS=darwin GOARCH=arm64 $(GO) build -o tmp/kei-darwin-arm64 -ldflags='$(LDFLAGS)' -trimpath .
-	GOOS=linux GOARCH=amd64 $(GO) build -o tmp/kei-linux-amd64 -ldflags='$(LDFLAGS)' -trimpath .
-	GOOS=linux GOARCH=arm64 $(GO) build -o tmp/kei-linux-arm64 -ldflags='$(LDFLAGS)' -trimpath .
+	GOOS=darwin GOARCH=amd64 $(GO) build -o tmp/kei-darwin-amd64 -ldflags='$(LDFLAGS)' -trimpath ./cmd/kei/
+	GOOS=darwin GOARCH=arm64 $(GO) build -o tmp/kei-darwin-arm64 -ldflags='$(LDFLAGS)' -trimpath ./cmd/kei/
+	GOOS=linux GOARCH=amd64 $(GO) build -o tmp/kei-linux-amd64 -ldflags='$(LDFLAGS)' -trimpath ./cmd/kei/
+	GOOS=linux GOARCH=arm64 $(GO) build -o tmp/kei-linux-arm64 -ldflags='$(LDFLAGS)' -trimpath ./cmd/kei/
 
 test:
 	$(GO) test -p 1 -count=1 ./...

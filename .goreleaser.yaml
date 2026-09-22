@@ -15,7 +15,7 @@ before:
     - ./scripts/fetch-proxy.sh
 
 builds:
-  - main: .
+  - main: ./cmd/kei/
     binary: kei
     ldflags:
       - -s -w

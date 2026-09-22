@@ -12,8 +12,10 @@ import (
 	"strings"
 )
 
-// upgradeModule is this CLI's own Go module; upgrades always install it.
-const upgradeModule = "github.com/HaikeiLabs/kei-cli"
+// upgradePackage is this CLI's own entrypoint package; upgrades always
+// install it. go install names the resulting binary after the final path
+// element, "kei".
+const upgradePackage = "github.com/HaikeiLabs/kei-cli/cmd/kei"
 
 type upgradeRunner interface {
 	Run(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error
@@ -53,8 +55,8 @@ func runUpgradeCommand(args []string, stdout, stderr io.Writer, runner upgradeRu
 		fmt.Fprintln(stderr, "upgrade accepts no positional arguments")
 		return 2
 	}
-	fmt.Fprintf(stdout, "Installing %s@%s...\n", upgradeModule, *upgradeVersion)
-	if err := runner.Run(context.Background(), stdout, stderr, "go", "install", upgradeModule+"@"+*upgradeVersion); err != nil {
+	fmt.Fprintf(stdout, "Installing %s@%s...\n", upgradePackage, *upgradeVersion)
+	if err := runner.Run(context.Background(), stdout, stderr, "go", "install", upgradePackage+"@"+*upgradeVersion); err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
 			fmt.Fprintln(stderr, "upgrade failed: the go command was not found; install Go and ensure it is on PATH")
 			return 1
@@ -67,7 +69,7 @@ func runUpgradeCommand(args []string, stdout, stderr io.Writer, runner upgradeRu
 		fmt.Fprintf(stderr, "upgrade failed: %v\n", err)
 		return 1
 	}
-	installed := filepath.Join(installedDir, "kei-cli")
+	installed := filepath.Join(installedDir, "kei")
 	current, err := executable()
 	if err != nil {
 		fmt.Fprintf(stderr, "upgrade failed: locate current executable: %v\n", err)

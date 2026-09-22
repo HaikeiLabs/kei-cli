@@ -13,7 +13,7 @@ import (
 // parse cleanly, read the token from stdin, and hand it to jq/AWS via file
 // rather than argv so it never reaches the process list.
 func TestUpdateAwsSecretScriptIsSecure(t *testing.T) {
-	scriptPath := filepath.Join("scripts", "update-aws-secret.sh")
+	scriptPath := filepath.Join(findRepoRoot(t), "scripts", "update-aws-secret.sh")
 	info, err := os.Stat(scriptPath)
 	if err != nil {
 		t.Fatalf("script not found: %v", err)
