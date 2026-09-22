@@ -32,7 +32,7 @@ func TestUpgradeReplacesCurrentBinary(t *testing.T) {
 	if err := os.MkdirAll(installedDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(installedDir, "kei-cli"), []byte("new-binary"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(installedDir, "kei"), []byte("new-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	runner := &fakeUpgradeRunner{}
@@ -41,7 +41,7 @@ func TestUpgradeReplacesCurrentBinary(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("upgrade exit = %d, stderr=%s", code, stderr.String())
 	}
-	if len(runner.args) != 3 || runner.args[0] != "go" || runner.args[1] != "install" || runner.args[2] != upgradeModule+"@latest" {
+	if len(runner.args) != 3 || runner.args[0] != "go" || runner.args[1] != "install" || runner.args[2] != upgradePackage+"@latest" {
 		t.Fatalf("go install args = %v", runner.args)
 	}
 	data, err := os.ReadFile(current)
@@ -73,7 +73,7 @@ func TestUpgradePinsRequestedVersion(t *testing.T) {
 	if err := os.MkdirAll(installedDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(installedDir, "kei-cli"), []byte("new"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(installedDir, "kei"), []byte("new"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	runner := &fakeUpgradeRunner{}
@@ -82,14 +82,14 @@ func TestUpgradePinsRequestedVersion(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("upgrade exit = %d, stderr=%s", code, stderr.String())
 	}
-	if len(runner.args) != 3 || runner.args[2] != upgradeModule+"@v0.2.0" {
+	if len(runner.args) != 3 || runner.args[2] != upgradePackage+"@v0.2.0" {
 		t.Fatalf("go install args = %v", runner.args)
 	}
 }
 
 func TestUpgradeInPlaceWhenRunningInstalledBinary(t *testing.T) {
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "kei-cli")
+	bin := filepath.Join(dir, "kei")
 	if err := os.WriteFile(bin, []byte("new-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}

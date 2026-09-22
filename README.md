@@ -38,8 +38,7 @@ kei --version
 Requires Go 1.26+:
 
 ```sh
-go install github.com/HaikeiLabs/kei-cli@latest
-mv "$(go env GOPATH)/bin/kei-cli" "$(go env GOPATH)/bin/kei"
+go install github.com/HaikeiLabs/kei-cli/cmd/kei@latest
 export PATH="$(go env GOPATH)/bin:$PATH"
 ```
 
@@ -58,7 +57,7 @@ kei upgrade --version VERSION
 ### Building from source
 
 ```sh
-go build -o tmp/kei .
+go build -o tmp/kei ./cmd/kei/
 ./tmp/kei help
 ```
 

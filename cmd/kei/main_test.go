@@ -9,7 +9,7 @@ import (
 )
 
 func TestInstallScriptIsValidBash(t *testing.T) {
-	scriptPath := filepath.Join("scripts", "install.sh")
+	scriptPath := filepath.Join(findRepoRoot(t), "scripts", "install.sh")
 	info, err := os.Stat(scriptPath)
 	if err != nil {
 		t.Fatalf("install script not found: %v", err)
@@ -23,7 +23,7 @@ func TestInstallScriptIsValidBash(t *testing.T) {
 }
 
 func TestInstallScriptStaticChecks(t *testing.T) {
-	scriptPath := filepath.Join("scripts", "install.sh")
+	scriptPath := filepath.Join(findRepoRoot(t), "scripts", "install.sh")
 	src, err := os.ReadFile(scriptPath)
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +70,7 @@ func TestInstallScriptStaticChecks(t *testing.T) {
 }
 
 func TestProxyBundleFetchScriptContract(t *testing.T) {
-	scriptPath := filepath.Join("scripts", "fetch-proxy.sh")
+	scriptPath := filepath.Join(findRepoRoot(t), "scripts", "fetch-proxy.sh")
 	src, err := os.ReadFile(scriptPath)
 	if err != nil {
 		t.Fatal(err)
@@ -106,19 +106,16 @@ func TestProxyBundleFetchScriptContract(t *testing.T) {
 }
 
 func TestGoreleaserConfigIsValidYAML(t *testing.T) {
-	configPath := filepath.Join("..", ".goreleaser.yaml")
-	// Check config exists at repo root
-	if _, err := os.Stat(".goreleaser.yaml"); err != nil {
-		// Try relative to repo root
-		if _, err2 := os.Stat(configPath); err2 != nil {
-			t.Fatalf(".goreleaser.yaml not found")
-		}
+	root := findRepoRoot(t)
+	configPath := filepath.Join(root, ".goreleaser.yaml")
+	if _, err := os.Stat(configPath); err != nil {
+		t.Fatalf(".goreleaser.yaml not found: %v", err)
 	}
 
 	// If goreleaser is on PATH, run a schema validation
 	if path, err := exec.LookPath("goreleaser"); err == nil {
-		cmd := exec.Command(path, "check", "--config", ".goreleaser.yaml")
-		cmd.Dir = findRepoRoot(t)
+		cmd := exec.Command(path, "check", "--config", configPath)
+		cmd.Dir = root
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("goreleaser check failed: %v\n%s", err, out)
 		}
@@ -126,7 +123,7 @@ func TestGoreleaserConfigIsValidYAML(t *testing.T) {
 }
 
 func TestGoreleaserConfigHasRequiredSections(t *testing.T) {
-	configPath := ".goreleaser.yaml"
+	configPath := filepath.Join(findRepoRoot(t), ".goreleaser.yaml")
 	src, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatal(err)
@@ -164,7 +161,7 @@ func TestGoreleaserConfigHasRequiredSections(t *testing.T) {
 }
 
 func TestReleaseWorkflowPinsAndValidatesProxy(t *testing.T) {
-	src, err := os.ReadFile(filepath.Join(".github", "workflows", "release.yaml"))
+	src, err := os.ReadFile(filepath.Join(findRepoRoot(t), ".github", "workflows", "release.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +191,7 @@ func TestBuildWithVersionLDFlag(t *testing.T) {
 	cmd := exec.Command("go", "build",
 		"-o", filepath.Join(dir, "kei"),
 		"-ldflags", "-X main.version=test-ldflags-v0.1.0",
-		".",
+		"./cmd/kei/",
 	)
 	cmd.Dir = findRepoRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -225,7 +222,7 @@ func TestBuildWithTrimPath(t *testing.T) {
 		"-o", filepath.Join(dir, "kei"),
 		"-ldflags", "-X main.version=test-trimpath",
 		"-trimpath",
-		".",
+		"./cmd/kei/",
 	)
 	cmd.Dir = findRepoRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -248,7 +245,7 @@ func TestBuildIsReproducible(t *testing.T) {
 			"-o", output,
 			"-ldflags", "-X main.version=v0.0.0 -X main.commit=test -X main.date=2026-01-01T00:00:00Z",
 			"-trimpath",
-			".",
+			"./cmd/kei/",
 		)
 		cmd.Dir = findRepoRoot(t)
 		cmd.Env = append(os.Environ(),
@@ -316,14 +313,14 @@ func fileHash(path string) (string, error) {
 }
 
 func TestReleaseWorkflowExists(t *testing.T) {
-	workflowPath := filepath.Join(".github", "workflows", "release.yaml")
+	workflowPath := filepath.Join(findRepoRoot(t), ".github", "workflows", "release.yaml")
 	if _, err := os.Stat(workflowPath); err != nil {
 		t.Fatalf("release workflow not found: %v", err)
 	}
 }
 
 func TestReleaseWorkflowUsesRunnerIdentity(t *testing.T) {
-	workflowPath := filepath.Join(".github", "workflows", "release.yaml")
+	workflowPath := filepath.Join(findRepoRoot(t), ".github", "workflows", "release.yaml")
 	src, err := os.ReadFile(workflowPath)
 	if err != nil {
 		t.Fatal(err)
@@ -353,7 +350,7 @@ func TestReleaseWorkflowUsesRunnerIdentity(t *testing.T) {
 }
 
 func TestReleaseWorkflowNoStaticCredentials(t *testing.T) {
-	workflowPath := filepath.Join(".github", "workflows", "release.yaml")
+	workflowPath := filepath.Join(findRepoRoot(t), ".github", "workflows", "release.yaml")
 	src, err := os.ReadFile(workflowPath)
 	if err != nil {
 		t.Fatal(err)
@@ -378,7 +375,7 @@ func TestReleaseWorkflowNoStaticCredentials(t *testing.T) {
 }
 
 func TestReleaseWorkflowTagValidation(t *testing.T) {
-	workflowPath := filepath.Join(".github", "workflows", "release.yaml")
+	workflowPath := filepath.Join(findRepoRoot(t), ".github", "workflows", "release.yaml")
 	src, err := os.ReadFile(workflowPath)
 	if err != nil {
 		t.Fatal(err)
@@ -402,7 +399,7 @@ func TestReleaseWorkflowTagValidation(t *testing.T) {
 }
 
 func TestReleaseWorkflowEnvironmentVariables(t *testing.T) {
-	workflowPath := filepath.Join(".github", "workflows", "release.yaml")
+	workflowPath := filepath.Join(findRepoRoot(t), ".github", "workflows", "release.yaml")
 	src, err := os.ReadFile(workflowPath)
 	if err != nil {
 		t.Fatal(err)
@@ -429,7 +426,8 @@ func TestReleaseWorkflowEnvironmentVariables(t *testing.T) {
 }
 
 func TestGoreleaserConfigSigning(t *testing.T) {
-	src, err := os.ReadFile(".goreleaser.yaml")
+	root := findRepoRoot(t)
+	src, err := os.ReadFile(filepath.Join(root, ".goreleaser.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,7 +451,7 @@ func TestGoreleaserConfigSigning(t *testing.T) {
 
 	// GORELEASER_KEY is set in the workflow env, not in the YAML.
 	// Verify the workflow sets it.
-	workflowSrc, err := os.ReadFile(filepath.Join(".github", "workflows", "release.yaml"))
+	workflowSrc, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -463,7 +461,7 @@ func TestGoreleaserConfigSigning(t *testing.T) {
 }
 
 func TestGoreleaserConfigS3CredentialsNotHardcoded(t *testing.T) {
-	src, err := os.ReadFile(".goreleaser.yaml")
+	src, err := os.ReadFile(filepath.Join(findRepoRoot(t), ".goreleaser.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -494,13 +492,14 @@ func TestInstallScriptReferencesWorkflowRequiredVars(t *testing.T) {
 	// The release workflow uses AWS_S3_RELEASES_BUCKET and AWS_REGION.
 	// The install script uses AWS_S3_RELEASES_URL_BASE.
 	// These should be consistent.
-	workflowSrc, err := os.ReadFile(filepath.Join(".github", "workflows", "release.yaml"))
+	root := findRepoRoot(t)
+	workflowSrc, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	workflowText := string(workflowSrc)
 
-	installSrc, err := os.ReadFile(filepath.Join("scripts", "install.sh"))
+	installSrc, err := os.ReadFile(filepath.Join(root, "scripts", "install.sh"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -524,7 +523,8 @@ func TestWorkflowUploadsInstallScriptToCustomerURL(t *testing.T) {
 	// This requires the workflow to upload scripts/install.sh to
 	// s3://BUCKET/kei-cli/install.sh. Verify the workflow contains
 	// an explicit upload step for this path.
-	workflowSrc, err := os.ReadFile(filepath.Join(".github", "workflows", "release.yaml"))
+	root := findRepoRoot(t)
+	workflowSrc, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -560,7 +560,7 @@ func TestWorkflowUploadsInstallScriptToCustomerURL(t *testing.T) {
 	}
 
 	// Verify the install script's documented URL matches the upload path.
-	installSrc, err := os.ReadFile(filepath.Join("scripts", "install.sh"))
+	installSrc, err := os.ReadFile(filepath.Join(root, "scripts", "install.sh"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -578,7 +578,8 @@ func TestWorkflowLatestResolutionIsBackedByArtifact(t *testing.T) {
 	// The install script resolves "latest" by fetching latest.txt from:
 	//   $AWS_S3_RELEASES_URL_BASE/kei-cli/latest.txt
 	// Verify the workflow publishes this file for stable releases.
-	workflowSrc, err := os.ReadFile(filepath.Join(".github", "workflows", "release.yaml"))
+	root := findRepoRoot(t)
+	workflowSrc, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -592,7 +593,7 @@ func TestWorkflowLatestResolutionIsBackedByArtifact(t *testing.T) {
 	}
 
 	// The install script must reference the same path
-	installSrc, err := os.ReadFile(filepath.Join("scripts", "install.sh"))
+	installSrc, err := os.ReadFile(filepath.Join(root, "scripts", "install.sh"))
 	if err != nil {
 		t.Fatal(err)
 	}
