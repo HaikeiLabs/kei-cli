@@ -119,7 +119,7 @@ func Main(version, command string, args []string, stdout, stderr io.Writer, stdi
 
 func PrintUsage(w io.Writer) {
 	fmt.Fprintln(w, "Kei CLI")
-	fmt.Fprintln(w, "\nUsage:\n  kei setup [--config PATH] [--control-plane-url URL] [--runtime-token TOKEN]\n  kei runtime bootstrap [--config PATH] [--proxy-path PATH]\n  kei login [--no-browser]\n  kei logout\n  kei upgrade [--version VERSION]\n  kei bot init --platform cli|teams|discord|slack --name NAME [--agent ID]\n  kei bot credential --installation ID [--rotate]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default]\n  kei bot status --installation ID\n  kei bot delete --installation ID --yes\n  kei model-profiles list|get|create|update|delete|test|set-default\n  kei credential-store get|put\n  kei --version")
+	fmt.Fprintln(w, "\nUsage:\n  kei setup [--config PATH] [--control-plane-url URL] [--runtime-token TOKEN]\n  kei runtime bootstrap [--config PATH] [--proxy-path PATH]\n  kei login [--no-browser]\n  kei logout\n  kei upgrade [--version VERSION]\n  kei bot init --platform cli|teams|discord|slack --name NAME [--agent ID]\n  kei bot credential --installation ID --workspace WORKSPACE_ID [--rotate]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default]\n  kei bot status --installation ID\n  kei bot delete --installation ID --yes\n  kei model-profiles list|get|create|update|delete|test|set-default\n  kei credential-store get|put\n  kei --version")
 }
 
 func printVersion(w io.Writer, version string) {
@@ -176,6 +176,7 @@ func runBotCredentialCommand(args []string, stdout, stderr io.Writer, client *ht
 	flags := flag.NewFlagSet("bot credential", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	installationID := flags.String("installation", "", "installation ID")
+	workspaceID := flags.String("workspace", "", "workspace ID (or set KEI_WORKSPACE_ID)")
 	rotate := flags.Bool("rotate", false, "rotate an existing runtime credential")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || *installationID == "" {
 		fmt.Fprintln(stderr, "bot credential requires --installation ID")
@@ -183,6 +184,18 @@ func runBotCredentialCommand(args []string, stdout, stderr io.Writer, client *ht
 	}
 	if _, err := uuid.Parse(*installationID); err != nil {
 		fmt.Fprintln(stderr, "bot credential: --installation must be a UUID")
+		return 2
+	}
+	wid := *workspaceID
+	if wid == "" {
+		wid = os.Getenv("KEI_WORKSPACE_ID")
+	}
+	if wid == "" {
+		fmt.Fprintln(stderr, "bot credential requires --workspace ID or KEI_WORKSPACE_ID environment variable")
+		return 2
+	}
+	if _, err := uuid.Parse(wid); err != nil {
+		fmt.Fprintln(stderr, "bot credential: --workspace must be a UUID")
 		return 2
 	}
 	if writerIsTerminal(stdout) {
@@ -203,7 +216,7 @@ func runBotCredentialCommand(args []string, stdout, stderr io.Writer, client *ht
 	if *rotate {
 		action = "rotate"
 	}
-	runtimeToken, status, err := requestRuntimeCredentialAction(context.Background(), client, baseURL, cliToken, *installationID, action)
+	runtimeToken, status, err := requestRuntimeCredentialAction(context.Background(), client, baseURL, cliToken, *installationID, wid, action)
 	if err != nil {
 		fmt.Fprintf(stderr, "bot credential failed: %v\n", err)
 		return 1
