@@ -100,7 +100,7 @@ The CLI uses Kei device authorization. It prints a browser URL and one-time
 verification code; complete the flow in your browser:
 
 ```sh
-kei login --api-url https://app.haikeilabs.com
+kei login
 ```
 
 The approval page opens automatically. Use `--no-browser` in a headless
@@ -114,7 +114,7 @@ printed or written to the repository.
 Remove the stored CLI token for a Kei environment:
 
 ```sh
-kei logout --api-url https://app.haikeilabs.com
+kei logout
 ```
 
 Logout only removes the local credential from the OS keychain; it does not
@@ -156,8 +156,9 @@ kei bot credential --installation INSTALLATION_ID | secret-manager import
 kei bot credential --installation INSTALLATION_ID --rotate | secret-manager import
 ```
 
-All commands accept `--api-url URL` when using a Kei environment other than
-the default public service.
+The CLI always targets the Kei production API at `https://app.haikeilabs.com`.
+Set the `KEI_WEB_URL` environment variable to override the endpoint for
+development and testing.
 
 ## Rotating a runtime credential into AWS Secrets Manager
 

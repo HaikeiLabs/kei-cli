@@ -157,9 +157,10 @@ func TestBotCredentialWritesOnlyTokenToNonTerminalOutput(t *testing.T) {
 		json.NewEncoder(w).Encode(runtimeCredentialResponse{RuntimeToken: "kh_live_test_token"})
 	}))
 	defer server.Close()
+	t.Setenv("KEI_WEB_URL", server.URL)
 	store := &memoryCredentialStore{server: server.URL, token: "cli-session-token"}
 	var stdout, stderr bytes.Buffer
-	if code := runBotCredentialCommand([]string{"--api-url", server.URL, "--installation", installationID}, &stdout, &stderr, server.Client(), store); code != 0 {
+	if code := runBotCredentialCommand([]string{"--installation", installationID}, &stdout, &stderr, server.Client(), store); code != 0 {
 		t.Fatalf("credential command exit = %d, stderr = %s", code, stderr.String())
 	}
 	if stdout.String() != "kh_live_test_token\n" {
@@ -210,9 +211,10 @@ func TestBotStatusPrintsSafeInstallationMetadata(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"12345678-1234-1234-1234-123456789012","platform":"teams","status":"active","binding_status":"verified","deployment":{"key_vault_name":"customerkeivault","runtime_secret_name":"kei-runtime-123"}}`))
 	}))
 	defer server.Close()
+	t.Setenv("KEI_WEB_URL", server.URL)
 	store.server = server.URL
 	var stdout, stderr bytes.Buffer
-	if code := runBotStatusCommand([]string{"--api-url", server.URL, "--installation", installationID}, &stdout, &stderr, server.Client(), store); code != 0 {
+	if code := runBotStatusCommand([]string{"--installation", installationID}, &stdout, &stderr, server.Client(), store); code != 0 {
 		t.Fatalf("status command exit = %d, stderr=%s", code, stderr.String())
 	}
 	if strings.Contains(stdout.String(), "kh_live_") || !strings.Contains(stdout.String(), `"binding_status":"verified"`) {
@@ -244,9 +246,10 @@ func TestBotDeleteRevokesInstallation(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
+	t.Setenv("KEI_WEB_URL", server.URL)
 	store.server = server.URL
 	var stdout, stderr bytes.Buffer
-	if code := runBotDeleteCommand([]string{"--api-url", server.URL, "--installation", installationID, "--yes"}, &stdout, &stderr, server.Client(), store); code != 0 {
+	if code := runBotDeleteCommand([]string{"--installation", installationID, "--yes"}, &stdout, &stderr, server.Client(), store); code != 0 {
 		t.Fatalf("delete command exit = %d, stderr=%s", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "revoked its credential") {
@@ -277,12 +280,38 @@ func TestBotAgentsAddUsesCLIOrganizationScopedEndpoint(t *testing.T) {
 		_, _ = w.Write([]byte(`{"installation_id":"` + installationID + `","agent_id":"` + agentID + `","is_default":true}`))
 	}))
 	defer server.Close()
+	t.Setenv("KEI_WEB_URL", server.URL)
 	store.server = server.URL
 	var stdout, stderr bytes.Buffer
-	if code := runBotAgentsAdd([]string{"--api-url", server.URL, "--installation", installationID, "--agent", agentID, "--default"}, &stdout, &stderr, server.Client(), store); code != 0 {
+	if code := runBotAgentsAdd([]string{"--installation", installationID, "--agent", agentID, "--default"}, &stdout, &stderr, server.Client(), store); code != 0 {
 		t.Fatalf("agent add exit = %d, stderr=%s", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), agentID) {
 		t.Fatalf("agent add output did not include assignment: %s", stdout.String())
+	}
+}
+
+func TestDefaultKeiWebURLIsHTTPS(t *testing.T) {
+	if defaultKeiWebURL != "https://app.haikeilabs.com" {
+		t.Fatalf("defaultKeiWebURL = %q, want https://app.haikeilabs.com", defaultKeiWebURL)
+	}
+}
+
+func TestNoApiURLHelpSurface(t *testing.T) {
+	var buf bytes.Buffer
+	PrintUsage(&buf)
+	if strings.Contains(buf.String(), "--api-url") {
+		t.Fatalf("PrintUsage still contains --api-url:\n%s", buf.String())
+	}
+}
+
+func TestApiURLFlagRejected(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	store := &memoryCredentialStore{}
+	if code := runLogoutCommand([]string{"--api-url", "https://example.com"}, &stdout, &stderr, store); code != 2 {
+		t.Fatalf("expected exit code 2 for unknown --api-url flag, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "flag provided but not defined: -api-url") {
+		t.Fatalf("expected unknown flag error, got: %s", stderr.String())
 	}
 }

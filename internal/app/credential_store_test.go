@@ -21,9 +21,10 @@ func TestCredentialStoreGet(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"cs-1","org_id":"org-1","secret_backend":"aws_secrets_manager","backend_config":{"region":"us-east-1"},"secret_name_prefix":"kei/","status":"active","version":1}`))
 	}))
 	defer server.Close()
+	t.Setenv("KEI_WEB_URL", server.URL)
 	store.server = server.URL
 	var stdout, stderr bytes.Buffer
-	if code := runCredentialStoreGet([]string{"--api-url", server.URL}, &stdout, &stderr, server.Client(), store); code != 0 {
+	if code := runCredentialStoreGet([]string{}, &stdout, &stderr, server.Client(), store); code != 0 {
 		t.Fatalf("get exit = %d, stderr=%s", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "aws_secrets_manager") {
@@ -37,9 +38,10 @@ func TestCredentialStoreGetNotFound(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
+	t.Setenv("KEI_WEB_URL", server.URL)
 	store.server = server.URL
 	var stdout, stderr bytes.Buffer
-	if code := runCredentialStoreGet([]string{"--api-url", server.URL}, &stdout, &stderr, server.Client(), store); code != 1 {
+	if code := runCredentialStoreGet([]string{}, &stdout, &stderr, server.Client(), store); code != 1 {
 		t.Fatalf("get exit = %d, want 1", code)
 	}
 	if !strings.Contains(stderr.String(), "No credential store") {
@@ -70,9 +72,10 @@ func TestCredentialStorePut(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"cs-1","org_id":"org-1","secret_backend":"aws_secrets_manager","backend_config":{"region":"us-east-1"},"secret_name_prefix":"kei/","status":"active","version":1}`))
 	}))
 	defer server.Close()
+	t.Setenv("KEI_WEB_URL", server.URL)
 	store.server = server.URL
 	var stdout, stderr bytes.Buffer
-	if code := runCredentialStorePut([]string{"--api-url", server.URL, "--secret-backend", "aws_secrets_manager", "--backend-config", `{"region":"us-east-1"}`, "--secret-name-prefix", "kei/"}, &stdout, &stderr, server.Client(), store); code != 0 {
+	if code := runCredentialStorePut([]string{"--secret-backend", "aws_secrets_manager", "--backend-config", `{"region":"us-east-1"}`, "--secret-name-prefix", "kei/"}, &stdout, &stderr, server.Client(), store); code != 0 {
 		t.Fatalf("put exit = %d, stderr=%s", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "cs-1") {
