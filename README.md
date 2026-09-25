@@ -152,9 +152,12 @@ be redirected or piped; the CLI refuses to print a credential to an
 interactive terminal:
 
 ```sh
-kei bot credential --installation INSTALLATION_ID | secret-manager import
-kei bot credential --installation INSTALLATION_ID --rotate | secret-manager import
+kei bot credential --installation INSTALLATION_ID --workspace WORKSPACE_ID | secret-manager import
+kei bot credential --installation INSTALLATION_ID --workspace WORKSPACE_ID --rotate | secret-manager import
 ```
+
+The `--workspace` flag is required and accepts a UUID. The workspace ID can
+also be set via the `KEI_WORKSPACE_ID` environment variable.
 
 The CLI always targets the Kei production API at `https://app.haikeilabs.com`.
 Set the `KEI_WEB_URL` environment variable to override the endpoint for

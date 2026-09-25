@@ -18,6 +18,7 @@ type runtimeInstallationStatus struct {
 	ID              string         `json:"id"`
 	Platform        string         `json:"platform,omitempty"`
 	DisplayName     string         `json:"display_name,omitempty"`
+	WorkspaceID     string         `json:"workspace_id,omitempty"`
 	Status          string         `json:"status"`
 	BindingStatus   string         `json:"binding_status"`
 	Deployment      map[string]any `json:"deployment,omitempty"`
