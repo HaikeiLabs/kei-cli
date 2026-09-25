@@ -98,6 +98,10 @@ func Main(version, command string, args []string, stdout, stderr io.Writer, stdi
 		return runBotCommand(args, stdout, stderr, &http.Client{Timeout: 15 * time.Second}, osKeychainStore{})
 	case "runtime":
 		return runRuntimeCommand(args, stdout, stderr)
+	case "model-profiles":
+		return runModelProfilesCommand(args, stdout, stderr, &http.Client{Timeout: 30 * time.Second}, osKeychainStore{})
+	case "credential-store":
+		return runCredentialStoreCommand(args, stdout, stderr, &http.Client{Timeout: 30 * time.Second}, osKeychainStore{})
 	case "upgrade":
 		return runUpgradeCommand(args, stdout, stderr, osExecRunner{}, os.Executable, gopathBinDir)
 	case "version", "--version", "-v":
@@ -115,7 +119,7 @@ func Main(version, command string, args []string, stdout, stderr io.Writer, stdi
 
 func PrintUsage(w io.Writer) {
 	fmt.Fprintln(w, "Kei CLI")
-	fmt.Fprintln(w, "\nUsage:\n  kei setup [--config PATH] [--control-plane-url URL] [--runtime-token TOKEN]\n  kei runtime bootstrap [--config PATH] [--proxy-path PATH]\n  kei login [--api-url URL] [--no-browser]\n  kei logout [--api-url URL]\n  kei upgrade [--version VERSION]\n  kei bot init --platform cli|teams|discord|slack --name NAME [--agent ID] [--api-url URL]\n  kei bot credential --installation ID [--rotate] [--api-url URL]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default] [--api-url URL]\n  kei bot status --installation ID [--api-url URL]\n  kei bot delete --installation ID --yes [--api-url URL]\n  kei --version")
+	fmt.Fprintln(w, "\nUsage:\n  kei setup [--config PATH] [--control-plane-url URL] [--runtime-token TOKEN]\n  kei runtime bootstrap [--config PATH] [--proxy-path PATH]\n  kei login [--api-url URL] [--no-browser]\n  kei logout [--api-url URL]\n  kei upgrade [--version VERSION]\n  kei bot init --platform cli|teams|discord|slack --name NAME [--agent ID] [--api-url URL]\n  kei bot credential --installation ID [--rotate] [--api-url URL]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default] [--api-url URL]\n  kei bot status --installation ID [--api-url URL]\n  kei bot delete --installation ID --yes [--api-url URL]\n  kei model-profiles list|get|create|update|delete|test|set-default [--api-url URL]\n  kei credential-store get|put [--api-url URL]\n  kei --version")
 }
 
 func printVersion(w io.Writer, version string) {
