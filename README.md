@@ -128,12 +128,15 @@ Create pending installation metadata for a bot:
 ```sh
 kei bot init \
   --platform cli \
-  --name "Local OpenWebUI"
+  --name "Local OpenWebUI" \
+  --workspace "My Workspace"
 ```
 
 Use `--platform cli` for a platform-neutral local runtime such as
 `kei-connector-runtime` behind OpenWebUI. The existing `teams`, `discord`, and
-`slack` values remain for chat-platform installations.
+`slack` values remain for chat-platform installations. The `--workspace` flag
+is optional on `init`; when provided, the workspace ID or name is forwarded to
+the installation record.
 
 The command prints the installation ID. Use that ID to inspect the installation
 or manage its agent assignments:
@@ -156,8 +159,17 @@ kei bot credential --installation INSTALLATION_ID --workspace WORKSPACE_ID | sec
 kei bot credential --installation INSTALLATION_ID --workspace WORKSPACE_ID --rotate | secret-manager import
 ```
 
-The `--workspace` flag is required and accepts a UUID. The workspace ID can
-also be set via the `KEI_WORKSPACE_ID` environment variable.
+The `--workspace` flag is required and accepts a UUID or an exact workspace
+name. When a name is given, the CLI resolves it to a UUID by calling the
+workspaces API. The workspace value can also be set via the `KEI_WORKSPACE_ID`
+environment variable.
+
+List available workspaces:
+
+```sh
+kei workspaces list
+kei workspaces list --json
+```
 
 The CLI always targets the Kei production API at `https://app.haikeilabs.com`.
 Set the `KEI_WEB_URL` environment variable to override the endpoint for
