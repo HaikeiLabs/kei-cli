@@ -30,7 +30,6 @@ type runtimeInstallationStatus struct {
 func runBotStatusCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("bot status", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	apiURL := flags.String("api-url", keiWebURL(), "Kei web URL")
 	installationID := flags.String("installation", "", "Kei installation ID")
 	if err := flags.Parse(args); err != nil {
 		return 2
@@ -43,7 +42,7 @@ func runBotStatusCommand(args []string, stdout, stderr io.Writer, client *http.C
 		fmt.Fprintln(stderr, "bot status: --installation must be a UUID")
 		return 2
 	}
-	baseURL, err := normalizedKeiWebURL(*apiURL)
+	baseURL, err := normalizedKeiWebURL(keiWebURL())
 	if err != nil {
 		fmt.Fprintf(stderr, "bot status: %v\n", err)
 		return 2

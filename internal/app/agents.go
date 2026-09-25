@@ -37,50 +37,49 @@ func runBotAgentsCommand(args []string, stdout, stderr io.Writer, client *http.C
 	}
 }
 
-func parseBotAgentFlags(args []string, stderr io.Writer, command string) (string, string, string, bool, bool) {
+func parseBotAgentFlags(args []string, stderr io.Writer, command string) (string, string, bool, bool) {
 	flags := flag.NewFlagSet("bot agents "+command, flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	apiURL := flags.String("api-url", keiWebURL(), "Kei web URL")
 	installationID := flags.String("installation", "", "Kei installation ID")
 	agentID := flags.String("agent", "", "Kei agent ID")
 	makeDefault := flags.Bool("default", false, "make this the default agent")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
-		return "", "", "", false, false
+		return "", "", false, false
 	}
 	if _, err := uuid.Parse(*installationID); err != nil {
 		fmt.Fprintln(stderr, "--installation must be a UUID")
-		return "", "", "", false, false
+		return "", "", false, false
 	}
 	if *agentID != "" {
 		if _, err := uuid.Parse(*agentID); err != nil {
 			fmt.Fprintln(stderr, "--agent must be a UUID")
-			return "", "", "", false, false
+			return "", "", false, false
 		}
 	}
-	return *apiURL, *installationID, *agentID, *makeDefault, true
+	return *installationID, *agentID, *makeDefault, true
 }
 
-func loadCLIWebToken(apiURL string, store credentialStore, stderr io.Writer) (string, string, bool) {
-	baseURL, err := normalizedKeiWebURL(apiURL)
+func loadCLIWebToken(store credentialStore, stderr io.Writer) (string, string, bool) {
+	baseURL, err := normalizedKeiWebURL(keiWebURL())
 	if err != nil {
-		fmt.Fprintf(stderr, "bot agents: %v\n", err)
+		fmt.Fprintf(stderr, "%v\n", err)
 		return "", "", false
 	}
 	token, err := store.Load(baseURL)
 	if err != nil {
-		fmt.Fprintln(stderr, "bot agents: not logged in; run kei login first")
+		fmt.Fprintln(stderr, "not logged in; run kei login first")
 		return "", "", false
 	}
 	return baseURL, token, true
 }
 
 func runBotAgentsList(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	apiURL, installationID, _, _, ok := parseBotAgentFlags(args, stderr, "list")
+	installationID, _, _, ok := parseBotAgentFlags(args, stderr, "list")
 	if !ok {
 		fmt.Fprintln(stderr, "bot agents list requires --installation ID")
 		return 2
 	}
-	baseURL, token, ok := loadCLIWebToken(apiURL, store, stderr)
+	baseURL, token, ok := loadCLIWebToken(store, stderr)
 	if !ok {
 		return 1
 	}
@@ -101,12 +100,12 @@ func runBotAgentsList(args []string, stdout, stderr io.Writer, client *http.Clie
 }
 
 func runBotAgentsAdd(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	apiURL, installationID, agentID, makeDefault, ok := parseBotAgentFlags(args, stderr, "add")
+	installationID, agentID, makeDefault, ok := parseBotAgentFlags(args, stderr, "add")
 	if !ok || agentID == "" {
 		fmt.Fprintln(stderr, "bot agents add requires --installation ID and --agent ID")
 		return 2
 	}
-	baseURL, token, ok := loadCLIWebToken(apiURL, store, stderr)
+	baseURL, token, ok := loadCLIWebToken(store, stderr)
 	if !ok {
 		return 1
 	}
@@ -118,12 +117,12 @@ func runBotAgentsAdd(args []string, stdout, stderr io.Writer, client *http.Clien
 }
 
 func runBotAgentsRemove(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	apiURL, installationID, agentID, _, ok := parseBotAgentFlags(args, stderr, "remove")
+	installationID, agentID, _, ok := parseBotAgentFlags(args, stderr, "remove")
 	if !ok || agentID == "" {
 		fmt.Fprintln(stderr, "bot agents remove requires --installation ID and --agent ID")
 		return 2
 	}
-	baseURL, token, ok := loadCLIWebToken(apiURL, store, stderr)
+	baseURL, token, ok := loadCLIWebToken(store, stderr)
 	if !ok {
 		return 1
 	}

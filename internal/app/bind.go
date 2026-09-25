@@ -17,7 +17,6 @@ import (
 func runBotBindCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("bot bind", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	apiURL := flags.String("api-url", keiWebURL(), "Kei web URL")
 	installationID := flags.String("installation", "", "installation ID")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || *installationID == "" {
 		fmt.Fprintln(stderr, "bot bind requires --installation ID")
@@ -27,7 +26,7 @@ func runBotBindCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 		fmt.Fprintln(stderr, "bot bind: --installation must be a UUID")
 		return 2
 	}
-	baseURL, token, ok := loadCLIWebToken(*apiURL, store, stderr)
+	baseURL, token, ok := loadCLIWebToken(store, stderr)
 	if !ok {
 		return 1
 	}

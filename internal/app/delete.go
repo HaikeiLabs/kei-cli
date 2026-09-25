@@ -14,7 +14,6 @@ import (
 func runBotDeleteCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("bot delete", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	apiURL := flags.String("api-url", keiWebURL(), "Kei web URL")
 	installationID := flags.String("installation", "", "Kei installation ID")
 	yes := flags.Bool("yes", false, "confirm permanent deletion")
 	if err := flags.Parse(args); err != nil {
@@ -32,7 +31,7 @@ func runBotDeleteCommand(args []string, stdout, stderr io.Writer, client *http.C
 		fmt.Fprintln(stderr, "bot delete permanently removes the installation and revokes its credential; repeat with --yes")
 		return 2
 	}
-	baseURL, token, ok := loadCLIWebToken(*apiURL, store, stderr)
+	baseURL, token, ok := loadCLIWebToken(store, stderr)
 	if !ok {
 		return 1
 	}

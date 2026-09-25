@@ -9,7 +9,7 @@ import (
 func TestLogoutRemovesStoredCredential(t *testing.T) {
 	store := &memoryCredentialStore{server: "https://app.haikeilabs.com", token: "cli-session-token"}
 	var stdout, stderr bytes.Buffer
-	if code := runLogoutCommand([]string{"--api-url", "https://app.haikeilabs.com/"}, &stdout, &stderr, store); code != 0 {
+	if code := runLogoutCommand(nil, &stdout, &stderr, store); code != 0 {
 		t.Fatalf("logout exit = %d, stderr=%s", code, stderr.String())
 	}
 	if store.token != "" || store.server != "" {
@@ -23,7 +23,7 @@ func TestLogoutRemovesStoredCredential(t *testing.T) {
 func TestLogoutIsIdempotentWhenNotLoggedIn(t *testing.T) {
 	store := &memoryCredentialStore{}
 	var stdout, stderr bytes.Buffer
-	if code := runLogoutCommand([]string{"--api-url", "https://app.haikeilabs.com"}, &stdout, &stderr, store); code != 0 {
+	if code := runLogoutCommand(nil, &stdout, &stderr, store); code != 0 {
 		t.Fatalf("logout exit = %d, stderr=%s", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "Not logged in to app.haikeilabs.com") {
@@ -34,11 +34,12 @@ func TestLogoutIsIdempotentWhenNotLoggedIn(t *testing.T) {
 func TestLogoutRejectsInvalidURLAndPositionalArgs(t *testing.T) {
 	store := &memoryCredentialStore{}
 	var stdout, stderr bytes.Buffer
-	if code := runLogoutCommand([]string{"--api-url", "not-a-url"}, &stdout, &stderr, store); code != 2 {
-		t.Fatalf("invalid URL exit = %d, want 2", code)
-	}
 	if code := runLogoutCommand([]string{"extra"}, &stdout, &stderr, store); code != 2 {
 		t.Fatalf("positional argument exit = %d, want 2", code)
+	}
+	t.Setenv("KEI_WEB_URL", "not-a-url")
+	if code := runLogoutCommand(nil, &stdout, &stderr, store); code != 2 {
+		t.Fatalf("invalid KEI_WEB_URL exit = %d, want 2", code)
 	}
 }
 

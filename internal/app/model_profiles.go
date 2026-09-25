@@ -82,8 +82,8 @@ func runModelProfilesCommand(args []string, stdout, stderr io.Writer, client *ht
 	}
 }
 
-func loadCLIWebTokenAndBaseURL(apiURL string, store credentialStore, stderr io.Writer) (string, string, bool) {
-	baseURL, err := normalizedKeiWebURL(apiURL)
+func loadCLIWebTokenAndBaseURL(store credentialStore, stderr io.Writer) (string, string, bool) {
+	baseURL, err := normalizedKeiWebURL(keiWebURL())
 	if err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)
 		return "", "", false
@@ -96,25 +96,14 @@ func loadCLIWebTokenAndBaseURL(apiURL string, store credentialStore, stderr io.W
 	return baseURL, token, true
 }
 
-func parseCommonFlags(args []string, stderr io.Writer, command string) (apiURL string, ok bool) {
-	flags := flag.NewFlagSet("model-profiles "+command, flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	apiURL = *flags.String("api-url", keiWebURL(), "Kei web URL")
-	if err := flags.Parse(args); err != nil {
-		return "", false
-	}
-	return apiURL, true
-}
-
 func runModelProfilesList(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("model-profiles list", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	apiURL := flags.String("api-url", keiWebURL(), "Kei web URL")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		fmt.Fprintln(stderr, "model-profiles list takes no positional arguments")
 		return 2
 	}
-	baseURL, token, ok := loadCLIWebTokenAndBaseURL(*apiURL, store, stderr)
+	baseURL, token, ok := loadCLIWebTokenAndBaseURL(store, stderr)
 	if !ok {
 		return 1
 	}
@@ -130,7 +119,6 @@ func runModelProfilesList(args []string, stdout, stderr io.Writer, client *http.
 func runModelProfilesGet(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("model-profiles get", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	apiURL := flags.String("api-url", keiWebURL(), "Kei web URL")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -143,7 +131,7 @@ func runModelProfilesGet(args []string, stdout, stderr io.Writer, client *http.C
 		fmt.Fprintln(stderr, "profile ID must be a UUID")
 		return 2
 	}
-	baseURL, token, ok := loadCLIWebTokenAndBaseURL(*apiURL, store, stderr)
+	baseURL, token, ok := loadCLIWebTokenAndBaseURL(store, stderr)
 	if !ok {
 		return 1
 	}
@@ -159,7 +147,6 @@ func runModelProfilesGet(args []string, stdout, stderr io.Writer, client *http.C
 func runModelProfilesCreate(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("model-profiles create", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	apiURL := flags.String("api-url", keiWebURL(), "Kei web URL")
 	displayName := flags.String("display-name", "", "model profile display name")
 	endpoint := flags.String("endpoint", "", "model API endpoint URL")
 	authType := flags.String("auth-type", "", "authentication type (e.g. bearer, basic)")
@@ -182,7 +169,7 @@ func runModelProfilesCreate(args []string, stdout, stderr io.Writer, client *htt
 		fmt.Fprintf(stderr, "model-profiles create: %v\n", err)
 		return 1
 	}
-	baseURL, token, ok := loadCLIWebTokenAndBaseURL(*apiURL, store, stderr)
+	baseURL, token, ok := loadCLIWebTokenAndBaseURL(store, stderr)
 	if !ok {
 		return 1
 	}
@@ -199,7 +186,6 @@ func runModelProfilesCreate(args []string, stdout, stderr io.Writer, client *htt
 func runModelProfilesUpdate(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("model-profiles update", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	apiURL := flags.String("api-url", keiWebURL(), "Kei web URL")
 	displayName := flags.String("display-name", "", "model profile display name")
 	endpoint := flags.String("endpoint", "", "model API endpoint URL")
 	authType := flags.String("auth-type", "", "authentication type")
@@ -226,7 +212,7 @@ func runModelProfilesUpdate(args []string, stdout, stderr io.Writer, client *htt
 		fmt.Fprintf(stderr, "model-profiles update: %v\n", err)
 		return 1
 	}
-	baseURL, token, ok := loadCLIWebTokenAndBaseURL(*apiURL, store, stderr)
+	baseURL, token, ok := loadCLIWebTokenAndBaseURL(store, stderr)
 	if !ok {
 		return 1
 	}
@@ -243,7 +229,6 @@ func runModelProfilesUpdate(args []string, stdout, stderr io.Writer, client *htt
 func runModelProfilesDelete(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("model-profiles delete", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	apiURL := flags.String("api-url", keiWebURL(), "Kei web URL")
 	yes := flags.Bool("yes", false, "confirm deletion")
 	if err := flags.Parse(args); err != nil {
 		return 2
@@ -261,7 +246,7 @@ func runModelProfilesDelete(args []string, stdout, stderr io.Writer, client *htt
 		fmt.Fprintln(stderr, "model-profiles delete requires --yes to confirm")
 		return 2
 	}
-	baseURL, token, ok := loadCLIWebTokenAndBaseURL(*apiURL, store, stderr)
+	baseURL, token, ok := loadCLIWebTokenAndBaseURL(store, stderr)
 	if !ok {
 		return 1
 	}
@@ -277,7 +262,6 @@ func runModelProfilesDelete(args []string, stdout, stderr io.Writer, client *htt
 func runModelProfilesTest(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("model-profiles test", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	apiURL := flags.String("api-url", keiWebURL(), "Kei web URL")
 	endpoint := flags.String("endpoint", "", "model API endpoint URL to test")
 	model := flags.String("model", "", "model identifier to test with")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
@@ -296,7 +280,7 @@ func runModelProfilesTest(args []string, stdout, stderr io.Writer, client *http.
 		fmt.Fprintf(stderr, "model-profiles test: %v\n", err)
 		return 1
 	}
-	baseURL, token, ok := loadCLIWebTokenAndBaseURL(*apiURL, store, stderr)
+	baseURL, token, ok := loadCLIWebTokenAndBaseURL(store, stderr)
 	if !ok {
 		return 1
 	}
@@ -313,7 +297,6 @@ func runModelProfilesTest(args []string, stdout, stderr io.Writer, client *http.
 func runModelProfilesSetDefault(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("model-profiles set-default", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	apiURL := flags.String("api-url", keiWebURL(), "Kei web URL")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -326,7 +309,7 @@ func runModelProfilesSetDefault(args []string, stdout, stderr io.Writer, client 
 		fmt.Fprintln(stderr, "profile ID must be a UUID")
 		return 2
 	}
-	baseURL, token, ok := loadCLIWebTokenAndBaseURL(*apiURL, store, stderr)
+	baseURL, token, ok := loadCLIWebTokenAndBaseURL(store, stderr)
 	if !ok {
 		return 1
 	}

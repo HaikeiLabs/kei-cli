@@ -47,12 +47,11 @@ func runCredentialStoreCommand(args []string, stdout, stderr io.Writer, client *
 func runCredentialStoreGet(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("credential-store get", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	apiURL := flags.String("api-url", keiWebURL(), "Kei web URL")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		fmt.Fprintln(stderr, "credential-store get takes no positional arguments")
 		return 2
 	}
-	baseURL, token, ok := loadCLIWebTokenAndBaseURL(*apiURL, store, stderr)
+	baseURL, token, ok := loadCLIWebTokenAndBaseURL(store, stderr)
 	if !ok {
 		return 1
 	}
@@ -68,7 +67,6 @@ func runCredentialStoreGet(args []string, stdout, stderr io.Writer, client *http
 func runCredentialStorePut(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("credential-store put", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	apiURL := flags.String("api-url", keiWebURL(), "Kei web URL")
 	secretBackend := flags.String("secret-backend", "", "secret backend type (e.g. aws_secrets_manager, azure_key_vault, hashicorp_vault)")
 	backendConfigRaw := flags.String("backend-config", "{}", "backend configuration as JSON")
 	secretNamePrefix := flags.String("secret-name-prefix", "", "prefix for secret names")
@@ -94,7 +92,7 @@ func runCredentialStorePut(args []string, stdout, stderr io.Writer, client *http
 		fmt.Fprintf(stderr, "credential-store put: %v\n", err)
 		return 1
 	}
-	baseURL, token, ok := loadCLIWebTokenAndBaseURL(*apiURL, store, stderr)
+	baseURL, token, ok := loadCLIWebTokenAndBaseURL(store, stderr)
 	if !ok {
 		return 1
 	}

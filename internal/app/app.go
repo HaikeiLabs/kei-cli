@@ -119,7 +119,7 @@ func Main(version, command string, args []string, stdout, stderr io.Writer, stdi
 
 func PrintUsage(w io.Writer) {
 	fmt.Fprintln(w, "Kei CLI")
-	fmt.Fprintln(w, "\nUsage:\n  kei setup [--config PATH] [--control-plane-url URL] [--runtime-token TOKEN]\n  kei runtime bootstrap [--config PATH] [--proxy-path PATH]\n  kei login [--api-url URL] [--no-browser]\n  kei logout [--api-url URL]\n  kei upgrade [--version VERSION]\n  kei bot init --platform cli|teams|discord|slack --name NAME [--agent ID] [--api-url URL]\n  kei bot credential --installation ID [--rotate] [--api-url URL]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default] [--api-url URL]\n  kei bot status --installation ID [--api-url URL]\n  kei bot delete --installation ID --yes [--api-url URL]\n  kei model-profiles list|get|create|update|delete|test|set-default [--api-url URL]\n  kei credential-store get|put [--api-url URL]\n  kei --version")
+	fmt.Fprintln(w, "\nUsage:\n  kei setup [--config PATH] [--control-plane-url URL] [--runtime-token TOKEN]\n  kei runtime bootstrap [--config PATH] [--proxy-path PATH]\n  kei login [--no-browser]\n  kei logout\n  kei upgrade [--version VERSION]\n  kei bot init --platform cli|teams|discord|slack --name NAME [--agent ID]\n  kei bot credential --installation ID [--rotate]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default]\n  kei bot status --installation ID\n  kei bot delete --installation ID --yes\n  kei model-profiles list|get|create|update|delete|test|set-default\n  kei credential-store get|put\n  kei --version")
 }
 
 func printVersion(w io.Writer, version string) {
@@ -129,7 +129,6 @@ func printVersion(w io.Writer, version string) {
 func runLoginCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("login", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	apiURL := flags.String("api-url", keiWebURL(), "Kei web URL")
 	noBrowser := flags.Bool("no-browser", false, "print the approval URL without opening a browser")
 	if err := flags.Parse(args); err != nil {
 		return 2
@@ -142,7 +141,7 @@ func runLoginCommand(args []string, stdout, stderr io.Writer, client *http.Clien
 	if *noBrowser {
 		openBrowser = func(string) error { return nil }
 	}
-	if err := login(context.Background(), *apiURL, hostname(), stdout, client, store, time.Sleep, openBrowser); err != nil {
+	if err := login(context.Background(), keiWebURL(), hostname(), stdout, client, store, time.Sleep, openBrowser); err != nil {
 		fmt.Fprintf(stderr, "login failed: %v\n", err)
 		return 1
 	}
@@ -176,7 +175,6 @@ func runBotCommand(args []string, stdout, stderr io.Writer, client *http.Client,
 func runBotCredentialCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("bot credential", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	apiURL := flags.String("api-url", keiWebURL(), "Kei web URL")
 	installationID := flags.String("installation", "", "installation ID")
 	rotate := flags.Bool("rotate", false, "rotate an existing runtime credential")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || *installationID == "" {
@@ -191,7 +189,7 @@ func runBotCredentialCommand(args []string, stdout, stderr io.Writer, client *ht
 		fmt.Fprintln(stderr, "refusing to write a runtime credential to an interactive terminal; pipe stdout to another command")
 		return 2
 	}
-	baseURL, err := normalizedKeiWebURL(*apiURL)
+	baseURL, err := normalizedKeiWebURL(keiWebURL())
 	if err != nil {
 		fmt.Fprintf(stderr, "bot credential: %v\n", err)
 		return 2
@@ -234,7 +232,6 @@ func writerIsTerminal(w io.Writer) bool {
 func runBotInitCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("bot init", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	apiURL := flags.String("api-url", keiWebURL(), "Kei web URL")
 	platform := flags.String("platform", "", "runtime platform (cli, teams, discord, or slack)")
 	agentID := flags.String("agent", "", "Kei agent ID")
 	displayName := flags.String("name", "", "installation name")
@@ -245,7 +242,7 @@ func runBotInitCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 		fmt.Fprintln(stderr, "bot init requires --platform cli|teams|discord|slack and --name NAME")
 		return 2
 	}
-	installation, err := createBotInstallation(context.Background(), *apiURL, *agentID, *platform, *displayName, io.Discard, client, store)
+	installation, err := createBotInstallation(context.Background(), keiWebURL(), *agentID, *platform, *displayName, io.Discard, client, store)
 	if err != nil {
 		fmt.Fprintf(stderr, "bot init failed: %v\n", err)
 		return 1
@@ -423,10 +420,10 @@ func keiWebURL() string {
 func normalizedKeiWebURL(raw string) (string, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
-		return "", errors.New("--api-url must be an absolute http(s) URL")
+		return "", errors.New("KEI_WEB_URL must be an absolute http(s) URL")
 	}
 	if parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", errors.New("--api-url must not include a query or fragment")
+		return "", errors.New("KEI_WEB_URL must not include a query or fragment")
 	}
 	return strings.TrimRight(parsed.String(), "/"), nil
 }

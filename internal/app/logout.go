@@ -12,7 +12,6 @@ import (
 func runLogoutCommand(args []string, stdout, stderr io.Writer, store credentialStore) int {
 	flags := flag.NewFlagSet("logout", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	apiURL := flags.String("api-url", keiWebURL(), "Kei web URL")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -20,7 +19,7 @@ func runLogoutCommand(args []string, stdout, stderr io.Writer, store credentialS
 		fmt.Fprintln(stderr, "logout accepts no positional arguments")
 		return 2
 	}
-	baseURL, err := normalizedKeiWebURL(*apiURL)
+	baseURL, err := normalizedKeiWebURL(keiWebURL())
 	if err != nil {
 		fmt.Fprintf(stderr, "logout: %v\n", err)
 		return 2

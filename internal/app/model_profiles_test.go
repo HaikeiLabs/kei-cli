@@ -21,9 +21,10 @@ func TestModelProfilesList(t *testing.T) {
 		_, _ = w.Write([]byte(`[{"profile_id":"11111111-1111-1111-1111-111111111111","org_id":"org-1","display_name":"test-profile","endpoint":"https://api.example.com/v1","auth_type":"bearer","status":"active","version":1}]`))
 	}))
 	defer server.Close()
+	t.Setenv("KEI_WEB_URL", server.URL)
 	store.server = server.URL
 	var stdout, stderr bytes.Buffer
-	if code := runModelProfilesList([]string{"--api-url", server.URL}, &stdout, &stderr, server.Client(), store); code != 0 {
+	if code := runModelProfilesList([]string{}, &stdout, &stderr, server.Client(), store); code != 0 {
 		t.Fatalf("list exit = %d, stderr=%s", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "test-profile") {
@@ -45,9 +46,10 @@ func TestModelProfilesGet(t *testing.T) {
 		_, _ = w.Write([]byte(`{"profile_id":"` + profileID + `","org_id":"org-1","display_name":"test-profile","endpoint":"https://api.example.com/v1","auth_type":"bearer","status":"active","version":1}`))
 	}))
 	defer server.Close()
+	t.Setenv("KEI_WEB_URL", server.URL)
 	store.server = server.URL
 	var stdout, stderr bytes.Buffer
-	if code := runModelProfilesGet([]string{"--api-url", server.URL, profileID}, &stdout, &stderr, server.Client(), store); code != 0 {
+	if code := runModelProfilesGet([]string{profileID}, &stdout, &stderr, server.Client(), store); code != 0 {
 		t.Fatalf("get exit = %d, stderr=%s", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), profileID) {
@@ -86,9 +88,10 @@ func TestModelProfilesCreate(t *testing.T) {
 		_, _ = w.Write([]byte(`{"profile_id":"22222222-2222-2222-2222-222222222222","org_id":"org-1","display_name":"my-profile","endpoint":"https://api.openai.com/v1","auth_type":"bearer","status":"active","version":1}`))
 	}))
 	defer server.Close()
+	t.Setenv("KEI_WEB_URL", server.URL)
 	store.server = server.URL
 	var stdout, stderr bytes.Buffer
-	if code := runModelProfilesCreate([]string{"--api-url", server.URL, "--display-name", "my-profile", "--endpoint", "https://api.openai.com/v1", "--auth-type", "bearer"}, &stdout, &stderr, server.Client(), store); code != 0 {
+	if code := runModelProfilesCreate([]string{"--display-name", "my-profile", "--endpoint", "https://api.openai.com/v1", "--auth-type", "bearer"}, &stdout, &stderr, server.Client(), store); code != 0 {
 		t.Fatalf("create exit = %d, stderr=%s", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "22222222") {
@@ -128,9 +131,10 @@ func TestModelProfilesUpdate(t *testing.T) {
 		_, _ = w.Write([]byte(`{"profile_id":"` + profileID + `","display_name":"new-name","endpoint":"https://api.example.com/v1","auth_type":"bearer","status":"active","version":2}`))
 	}))
 	defer server.Close()
+	t.Setenv("KEI_WEB_URL", server.URL)
 	store.server = server.URL
 	var stdout, stderr bytes.Buffer
-	if code := runModelProfilesUpdate([]string{"--api-url", server.URL, "--display-name", "new-name", profileID}, &stdout, &stderr, server.Client(), store); code != 0 {
+	if code := runModelProfilesUpdate([]string{"--display-name", "new-name", profileID}, &stdout, &stderr, server.Client(), store); code != 0 {
 		t.Fatalf("update exit = %d, stderr=%s", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "new-name") {
@@ -164,9 +168,10 @@ func TestModelProfilesDelete(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
+	t.Setenv("KEI_WEB_URL", server.URL)
 	store.server = server.URL
 	var stdout, stderr bytes.Buffer
-	if code := runModelProfilesDelete([]string{"--api-url", server.URL, "--yes", profileID}, &stdout, &stderr, server.Client(), store); code != 0 {
+	if code := runModelProfilesDelete([]string{"--yes", profileID}, &stdout, &stderr, server.Client(), store); code != 0 {
 		t.Fatalf("delete exit = %d, stderr=%s", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "deleted") {
@@ -193,9 +198,10 @@ func TestModelProfilesTest(t *testing.T) {
 		_, _ = w.Write([]byte(`{"status":"ok","model":"gpt-4","latency":"320ms"}`))
 	}))
 	defer server.Close()
+	t.Setenv("KEI_WEB_URL", server.URL)
 	store.server = server.URL
 	var stdout, stderr bytes.Buffer
-	if code := runModelProfilesTest([]string{"--api-url", server.URL, "--endpoint", "https://api.openai.com/v1", "--model", "gpt-4"}, &stdout, &stderr, server.Client(), store); code != 0 {
+	if code := runModelProfilesTest([]string{"--endpoint", "https://api.openai.com/v1", "--model", "gpt-4"}, &stdout, &stderr, server.Client(), store); code != 0 {
 		t.Fatalf("test exit = %d, stderr=%s", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), `"status":"ok"`) {
@@ -228,9 +234,10 @@ func TestModelProfilesSetDefault(t *testing.T) {
 		_, _ = w.Write([]byte(`{"profile_id":"` + profileID + `","is_workspace_default":true}`))
 	}))
 	defer server.Close()
+	t.Setenv("KEI_WEB_URL", server.URL)
 	store.server = server.URL
 	var stdout, stderr bytes.Buffer
-	if code := runModelProfilesSetDefault([]string{"--api-url", server.URL, profileID}, &stdout, &stderr, server.Client(), store); code != 0 {
+	if code := runModelProfilesSetDefault([]string{profileID}, &stdout, &stderr, server.Client(), store); code != 0 {
 		t.Fatalf("set-default exit = %d, stderr=%s", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), profileID) {
