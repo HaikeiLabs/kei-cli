@@ -9,12 +9,10 @@
 #   AWS_ACCESS_KEY_ID          — AWS access key (or IAM role)
 #   AWS_SECRET_ACCESS_KEY      — AWS secret key
 #
-# In CI (GitHub Actions), credentials are obtained via OIDC federation:
-#   - id-token: write permissions
-#   - aws-actions/configure-aws-credentials with role-to-assume
-#   - No static AWS credentials stored in the repository
+# In CI, the self-hosted kei-cli-release runner gets AWS credentials from its
+# Pod's IRSA role; no static AWS credentials are stored in the repository.
 #
-# See .goreleaser.yaml and .github/workflows/release.yaml for details.
+# See docs/release.md, .goreleaser.yaml, and .github/workflows/release.yaml.
 
 GO       ?= go
 BINARY   ?= kei

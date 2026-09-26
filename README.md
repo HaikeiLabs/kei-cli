@@ -222,133 +222,161 @@ script's second argument (it is the default).
 
 ## Release process
 
-### CI/CD workflow
+Releases are built and published by `.github/workflows/release.yaml`. For
+the step-by-step runbook (prerequisites, watching a run, and what to do when
+a run is skipped or fails), see [docs/release.md](docs/release.md).
 
-Releases are built and published by a GitHub Actions workflow
-(`.github/workflows/release.yaml`) triggered by pushing a semver tag
-(`vX.Y.Z`). The workflow:
+### How a release runs
 
-1. **Validates the tag** — rejects non-semver tags and determines the release
-   channel (stable vs. prerelease).
-2. **Assumes an AWS IAM role** via GitHub OIDC federation — no static AWS
-   credentials are stored in the repository.
-3. **Imports the GPG signing key** from the `GORELEASER_SIGNING_KEY` secret.
-4. **Configures AWS credentials** using `aws-actions/configure-aws-credentials`
-   with `role-to-assume` from the `AWS_ROLE_TO_ASSUME` variable.
-5. **Runs Goreleaser** — builds signed binaries, archives, and SHA-256
-   checksums, then uploads them to the S3 releases bucket.
-6. **Verifies no credentials leaked** into artifacts.
-7. **Publishes `latest.txt`** for stable releases (used by the install script
-   to resolve the latest version).
+The workflow has three jobs:
 
-### Required GitHub configuration
+1. **Authorize manual release.** Runs only for `workflow_dispatch`. It
+   fails unless the person dispatching has `admin` permission on the
+   repository (a repository or organization owner). It is skipped on tag
+   pushes.
+2. **Validate tag.** Resolves the release tag and rejects anything that is
+   not `vMAJOR.MINOR.PATCH[-prerelease]`. It sets the channel: `prerelease`
+   for tags containing `-rc.`, `-alpha.`, or `-beta.`, and `stable`
+   otherwise. On a dispatch it also fails if the calculated tag already
+   exists.
+3. **Release.** Runs only when Validate tag succeeded. On a dispatch it
+   first creates and pushes the calculated tag. It then imports the GPG
+   signing key, checks the runner's AWS identity and bucket access, confirms
+   the pinned kei-proxy archive exists, and runs GoReleaser to build, sign,
+   and upload the artifacts. After that it uploads `install.sh`, checks the
+   published checksums and installer for leaked credentials, and, for stable
+   releases only, writes `latest.txt`.
 
-| Name | Type | Description |
+Validate tag and Release run on the self-hosted `kei-cli-release` runner. The
+runner Pod gets its AWS identity from IRSA, a dedicated IAM role for the
+release service account. No AWS credentials, OIDC role ARN, or
+`configure-aws-credentials` step appear in the repository or the workflow.
+
+### Cutting a release
+
+**Tag push.** Tag a commit on `main` and push the tag:
+
+```sh
+git fetch origin
+git tag vX.Y.Z origin/main
+git push origin vX.Y.Z
+```
+
+Before #44, tag pushes silently skipped the Release job. Since #44, a tag
+push releases.
+
+**Manual dispatch.** Let the workflow calculate the next version from the
+highest stable `vX.Y.Z` tag, then create and push that tag itself:
+
+```sh
+gh workflow run release.yaml -R HaikeiLabs/kei-cli -f bump=patch   # or minor, major
+```
+
+`bump` defaults to `patch`. A dispatch requires a repository or organization
+owner. For anyone else, Authorize manual release fails and nothing is
+released. A dispatch releases the head of the ref it is started on, which is
+normally `main`.
+
+### The `release` environment
+
+The Release job runs in the `release` GitHub environment. The environment
+holds the `GORELEASER_SIGNING_KEY` secret, the ASCII-armored GPG private key
+for `kei-cli-releases@haikeilabs.com`. The environment has no required
+reviewers and no branch policy. The owner check for a dispatch lives in the
+workflow, not in the environment.
+
+Optional repository variables. None are set today, so the defaults apply:
+
+| Variable | Default | Purpose |
 |---|---|---|
-| `AWS_ROLE_TO_ASSUME` | Variable | ARN of the IAM role for OIDC federation |
-| `AWS_REGION` | Variable | AWS region of the releases bucket |
-| `AWS_S3_RELEASES_BUCKET` | Variable | S3 bucket name for release artifacts |
-| `GORELEASER_SIGNING_KEY` | Secret | GPG private key for checksum signing |
+| `AWS_REGION` | `us-east-1` | Region of the releases bucket |
+| `AWS_S3_RELEASES_BUCKET` | `kei-cli-releases` | Releases bucket |
+| `KEI_PROXY_VERSION` | `v0.1.0` | kei-proxy version bundled into each archive |
 
-### Required AWS IAM trust policy
+### What gets published
 
-The OIDC role assumed by the release workflow must have a trust policy
-similar to:
+Everything goes to `s3://kei-cli-releases/kei-cli/`. The public URL is
+`https://kei-cli-releases.s3.us-east-1.amazonaws.com/kei-cli/`. Versioned
+paths use the version without the leading `v`:
 
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [{
-    "Effect": "Allow",
-    "Principal": {
-      "Federated": "arn:aws:iam::ACCOUNT:oidc-provider/token.actions.githubusercontent.com"
-    },
-    "Action": "sts:AssumeRoleWithWebIdentity",
-    "Condition": {
-      "StringLike": {
-        "token.actions.githubusercontent.com:sub": "repo:HaikeiLabs/kei-cli:ref:refs/tags/v*"
-      },
-      "StringEquals": {
-        "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
-      }
-    }
-  }]
-}
+```
+kei-cli/
+  install.sh                          curl installer; overwritten every release, no-cache
+  latest.txt                          latest stable version, e.g. 0.1.6; stable releases only
+  <version>/
+    kei-cli_<version>_macOS_arm64.tar.gz
+    kei-cli_<version>_macOS_x86_64.tar.gz
+    kei-cli_<version>_Linux_arm64.tar.gz
+    kei-cli_<version>_Linux_x86_64.tar.gz
+    kei-cli_<version>_checksums.txt   SHA-256 of every artifact
+    kei-cli_<version>_checksums.txt.sig   armored GPG signature of the checksums
+    kei-cli_<version>_source.tar.gz
 ```
 
-The role must also have `s3:PutObject` and `s3:ListBucket` permissions on
-`arn:aws:s3:::BUCKET/kei-cli/*`.
+Each archive contains `kei`, `LICENSE`, `README.md`, and the pinned `kei-proxy`
+for the same platform. A prerelease publishes its `<version>/` directory and
+`install.sh`, but leaves `latest.txt` alone. Install a prerelease with
+`-v <version>`. GitHub Releases are disabled; S3 is the only distribution
+channel. Public reads come from the bucket policy, not object ACLs.
 
-### Manual release
-
-To trigger a release from a local workstation (not CI), first create and push
-a tag:
+### Verifying a release
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+BASE=https://kei-cli-releases.s3.us-east-1.amazonaws.com/kei-cli
+curl -fsSL "$BASE/latest.txt"                      # stable releases: prints the new version
+V=0.1.6                                            # the version you released
+A="kei-cli_${V}_macOS_arm64.tar.gz"
+curl -fsSLO "$BASE/$V/$A"
+curl -fsSLO "$BASE/$V/kei-cli_${V}_checksums.txt"
+shasum -a 256 -c --ignore-missing "kei-cli_${V}_checksums.txt"   # expect: <archive>: OK
 ```
 
-Then push the tag — the CI workflow handles the rest.
+On Linux, use `sha256sum -c --ignore-missing` instead. A fresh install with
+the curl installer is also an end-to-end check, because it verifies the same
+checksum. See [docs/release.md](docs/release.md#4-verify-the-release) for the
+signature check.
 
-For a local test build (no upload, no signing):
+### Upgrading from 0.1.5 or earlier (one time)
+
+`kei upgrade` in 0.1.5 and earlier runs
+`go install github.com/HaikeiLabs/kei-cli@<version>`. The entrypoint moved to
+`cmd/kei` in 0.1.6 (#38), so that command no longer builds. Reinstall once,
+using either method:
 
 ```sh
-make snapshot
+curl -fsSL "https://kei-cli-releases.s3.us-east-1.amazonaws.com/kei-cli/install.sh" \
+  | bash -s -- -d "$HOME/.local/bin"
+# or
+go install github.com/HaikeiLabs/kei-cli/cmd/kei@<version>
 ```
 
-### S3 bucket architecture
+From 0.1.6 onward, `kei upgrade` installs `github.com/HaikeiLabs/kei-cli/cmd/kei`
+and works as documented above. The old `go install` path produced a binary
+named `kei-cli`, so after reinstalling you can remove any leftover
+`$(go env GOPATH)/bin/kei-cli`.
 
-Release artifacts are served from an S3 bucket with the following structure.
-All objects are published by the release workflow on tag push:
+### Bundled kei-proxy
 
-```
-s3://BUCKET/kei-cli/
-  install.sh                  — curl installer (fixed path, overwritten each release)
-  latest.txt                  — latest stable version (stable releases only)
-  v0.1.0/
-    kei-cli_v0.1.0_macOS_arm64.tar.gz
-    kei-cli_v0.1.0_macOS_x86_64.tar.gz
-    kei-cli_v0.1.0_Linux_arm64.tar.gz
-    kei-cli_v0.1.0_Linux_x86_64.tar.gz
-    kei-cli_v0.1.0_checksums.txt
-    kei-cli_v0.1.0_source.tar.gz
-```
+Each CLI archive bundles the kei-proxy binary for its platform, pinned by
+`KEI_PROXY_VERSION`. During the release, `scripts/fetch-proxy.sh` downloads
+`s3://kei-cli-releases/kei-proxy/<version>/kei-proxy_<version>_<OS>_<ARCH>.tar.gz`
+using the runner's IRSA identity. `<OS>` is `macOS` or `Linux`, `<ARCH>` is
+`x86_64` or `arm64`, and `<version>` has no leading `v`, even when the pin
+does. The Release job fails early if that proxy release does not exist. To
+bundle a newer proxy, set the `KEI_PROXY_VERSION` repository variable before
+cutting the CLI release. The installer installs `kei-proxy` when the archive
+contains it. Older archives without it still install normally.
 
-The `install.sh` script is uploaded to the fixed path `kei-cli/install.sh`
-by the release workflow (not by Goreleaser, which only uploads versioned
-artifacts). It is overwritten on every release with `--cache-control no-cache`
-and `--acl public-read`.
+For a local test build with no upload and no signing:
 
-The bucket must be publicly readable for object GETs (or fronted by a CDN).
-The `install.sh` script constructs download URLs from
-`AWS_S3_RELEASES_URL_BASE`.
-
-### Bundled kei-proxy release input
-
-Release archives bundle a pinned, platform-matched `kei-proxy` binary. The
-pin is configured by the `KEI_PROXY_VERSION` GitHub Actions variable (the
-workflow currently defaults it to `v0.1.0`); change that variable before a
-CLI release when the proxy is upgraded. A leading `v` is allowed for readable
-pinning, but release paths and filenames use the normalized unprefixed version.
-The release runner fetches the proxy
-from the shared bucket using its existing AWS identity, so no new credentials
-or AWS role configuration are needed.
-
-The CLI-side release flow assumes the proxy publisher provides these inputs:
-
-```
-s3://BUCKET/kei-proxy/<version>/kei-proxy_<version>_<GOOS>_<GOARCH>.tar.gz
+```sh
+KEI_PROXY_VERSION=v0.1.0 \
+AWS_S3_RELEASES_URL_BASE=https://kei-cli-releases.s3.us-east-1.amazonaws.com \
+AWS_S3_RELEASES_BUCKET=kei-cli-releases AWS_S3_RELEASES_REGION=us-east-1 \
+GORELEASER_SKIP_SIGN=1 make snapshot
 ```
 
-For a standalone proxy installation, use the proxy publisher's standard
-`kei-proxy/install.sh` endpoint. The CLI release flow fetches versioned proxy
-archives directly so it can bundle the target-matched binary.
-
-Each archive must contain an executable named `kei-proxy` and use the canonical
-filename shown above. The CLI installer installs `kei` from every valid CLI archive and installs
-`kei-proxy` when the optional bundled binary is present, so older or manually
-built standalone kei-cli archives continue to work.
+Artifacts land in `dist/`. Run `make clean` to remove them.
 
 ## Scope
 
