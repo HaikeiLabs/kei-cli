@@ -102,6 +102,8 @@ func Main(version, command string, args []string, stdout, stderr io.Writer, stdi
 		return runModelProfilesCommand(args, stdout, stderr, &http.Client{Timeout: 30 * time.Second}, osKeychainStore{})
 	case "credential-store":
 		return runCredentialStoreCommand(args, stdout, stderr, &http.Client{Timeout: 30 * time.Second}, osKeychainStore{})
+	case "workspaces":
+		return runWorkspaceCommand(args, stdout, stderr, &http.Client{Timeout: 30 * time.Second}, osKeychainStore{})
 	case "upgrade":
 		return runUpgradeCommand(args, stdout, stderr, osExecRunner{}, os.Executable, gopathBinDir)
 	case "version", "--version", "-v":
@@ -119,7 +121,7 @@ func Main(version, command string, args []string, stdout, stderr io.Writer, stdi
 
 func PrintUsage(w io.Writer) {
 	fmt.Fprintln(w, "Kei CLI")
-	fmt.Fprintln(w, "\nUsage:\n  kei setup [--config PATH] [--control-plane-url URL] [--runtime-token TOKEN]\n  kei runtime bootstrap [--config PATH] [--proxy-path PATH]\n  kei login [--no-browser]\n  kei logout\n  kei upgrade [--version VERSION]\n  kei bot init --platform cli|teams|discord|slack --name NAME [--agent ID]\n  kei bot credential --installation ID --workspace WORKSPACE_ID [--rotate]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default]\n  kei bot status --installation ID\n  kei bot delete --installation ID --yes\n  kei model-profiles list|get|create|update|delete|test|set-default\n  kei credential-store get|put\n  kei --version")
+	fmt.Fprintln(w, "\nUsage:\n  kei setup [--config PATH] [--control-plane-url URL] [--runtime-token TOKEN]\n  kei runtime bootstrap [--config PATH] [--proxy-path PATH]\n  kei login [--no-browser]\n  kei logout\n  kei upgrade [--version VERSION]\n  kei bot init --platform cli|teams|discord|slack --name NAME [--agent ID] [--workspace WORKSPACE]\n  kei bot credential --installation ID --workspace WORKSPACE [--rotate]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default]\n  kei bot status --installation ID\n  kei bot delete --installation ID --yes\n  kei workspaces list [--json]\n  kei model-profiles list|get|create|update|delete|test|set-default\n  kei credential-store get|put\n  kei --version")
 }
 
 func printVersion(w io.Writer, version string) {
@@ -176,7 +178,7 @@ func runBotCredentialCommand(args []string, stdout, stderr io.Writer, client *ht
 	flags := flag.NewFlagSet("bot credential", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	installationID := flags.String("installation", "", "installation ID")
-	workspaceID := flags.String("workspace", "", "workspace ID (or set KEI_WORKSPACE_ID)")
+	workspace := flags.String("workspace", "", "workspace ID or name (or set KEI_WORKSPACE_ID)")
 	rotate := flags.Bool("rotate", false, "rotate an existing runtime credential")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || *installationID == "" {
 		fmt.Fprintln(stderr, "bot credential requires --installation ID")
@@ -186,20 +188,12 @@ func runBotCredentialCommand(args []string, stdout, stderr io.Writer, client *ht
 		fmt.Fprintln(stderr, "bot credential: --installation must be a UUID")
 		return 2
 	}
-	wid := *workspaceID
+	wid := *workspace
 	if wid == "" {
 		wid = os.Getenv("KEI_WORKSPACE_ID")
 	}
 	if wid == "" {
-		fmt.Fprintln(stderr, "bot credential requires --workspace ID or KEI_WORKSPACE_ID environment variable")
-		return 2
-	}
-	if _, err := uuid.Parse(wid); err != nil {
-		fmt.Fprintln(stderr, "bot credential: --workspace must be a UUID")
-		return 2
-	}
-	if writerIsTerminal(stdout) {
-		fmt.Fprintln(stderr, "refusing to write a runtime credential to an interactive terminal; pipe stdout to another command")
+		fmt.Fprintln(stderr, "bot credential requires --workspace or KEI_WORKSPACE_ID environment variable")
 		return 2
 	}
 	baseURL, err := normalizedKeiWebURL(keiWebURL())
@@ -211,6 +205,15 @@ func runBotCredentialCommand(args []string, stdout, stderr io.Writer, client *ht
 	if err != nil {
 		fmt.Fprintln(stderr, "bot credential: not logged in; run kei login first")
 		return 1
+	}
+	wid, err = resolveWorkspaceID(context.Background(), client, baseURL, cliToken, wid)
+	if err != nil {
+		fmt.Fprintf(stderr, "bot credential: %v\n", err)
+		return 1
+	}
+	if writerIsTerminal(stdout) {
+		fmt.Fprintln(stderr, "refusing to write a runtime credential to an interactive terminal; pipe stdout to another command")
+		return 2
 	}
 	action := "credential"
 	if *rotate {
@@ -248,6 +251,7 @@ func runBotInitCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 	platform := flags.String("platform", "", "runtime platform (cli, teams, discord, or slack)")
 	agentID := flags.String("agent", "", "Kei agent ID")
 	displayName := flags.String("name", "", "installation name")
+	workspace := flags.String("workspace", "", "workspace ID or name")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -255,7 +259,25 @@ func runBotInitCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 		fmt.Fprintln(stderr, "bot init requires --platform cli|teams|discord|slack and --name NAME")
 		return 2
 	}
-	installation, err := createBotInstallation(context.Background(), keiWebURL(), *agentID, *platform, *displayName, io.Discard, client, store)
+	wid := *workspace
+	if wid != "" {
+		baseURL, err := normalizedKeiWebURL(keiWebURL())
+		if err != nil {
+			fmt.Fprintf(stderr, "bot init: %v\n", err)
+			return 2
+		}
+		cliToken, err := store.Load(baseURL)
+		if err != nil {
+			fmt.Fprintln(stderr, "bot init: not logged in; run kei login first")
+			return 1
+		}
+		wid, err = resolveWorkspaceID(context.Background(), client, baseURL, cliToken, wid)
+		if err != nil {
+			fmt.Fprintf(stderr, "bot init: %v\n", err)
+			return 1
+		}
+	}
+	installation, err := createBotInstallation(context.Background(), keiWebURL(), *agentID, *platform, *displayName, wid, io.Discard, client, store)
 	if err != nil {
 		fmt.Fprintf(stderr, "bot init failed: %v\n", err)
 		return 1
@@ -272,6 +294,7 @@ type createRuntimeInstallationRequest struct {
 	AgentID     string `json:"agent_id,omitempty"`
 	Platform    string `json:"platform"`
 	DisplayName string `json:"display_name"`
+	WorkspaceID string `json:"workspace_id,omitempty"`
 }
 
 type createRuntimeInstallationResponse struct {
@@ -284,16 +307,16 @@ type createRuntimeInstallationResponse struct {
 
 // initBot creates public installation metadata only. Runtime credentials are
 // not handled by this CLI.
-func initBot(ctx context.Context, apiURL, agentID, platform, displayName string, stdout io.Writer, client *http.Client, store credentialStore) error {
-	_, err := createBotInstallation(ctx, apiURL, agentID, platform, displayName, stdout, client, store)
+func initBot(ctx context.Context, apiURL, agentID, platform, displayName, workspaceID string, stdout io.Writer, client *http.Client, store credentialStore) error {
+	_, err := createBotInstallation(ctx, apiURL, agentID, platform, displayName, workspaceID, stdout, client, store)
 	return err
 }
 
-func createBotInstallation(ctx context.Context, apiURL, agentID, platform, displayName string, stdout io.Writer, client *http.Client, store credentialStore) (*createRuntimeInstallationResponse, error) {
-	return createBotInstallationWithOptions(ctx, apiURL, agentID, platform, displayName, stdout, client, store)
+func createBotInstallation(ctx context.Context, apiURL, agentID, platform, displayName, workspaceID string, stdout io.Writer, client *http.Client, store credentialStore) (*createRuntimeInstallationResponse, error) {
+	return createBotInstallationWithOptions(ctx, apiURL, agentID, platform, displayName, workspaceID, stdout, client, store)
 }
 
-func createBotInstallationWithOptions(ctx context.Context, apiURL, agentID, platform, displayName string, stdout io.Writer, client *http.Client, store credentialStore) (*createRuntimeInstallationResponse, error) {
+func createBotInstallationWithOptions(ctx context.Context, apiURL, agentID, platform, displayName, workspaceID string, stdout io.Writer, client *http.Client, store credentialStore) (*createRuntimeInstallationResponse, error) {
 	baseURL, err := normalizedKeiWebURL(apiURL)
 	if err != nil {
 		return nil, err
@@ -302,7 +325,7 @@ func createBotInstallationWithOptions(ctx context.Context, apiURL, agentID, plat
 	if err != nil {
 		return nil, errors.New("not logged in; run kei login first")
 	}
-	body, err := json.Marshal(createRuntimeInstallationRequest{AgentID: agentID, Platform: platform, DisplayName: displayName})
+	body, err := json.Marshal(createRuntimeInstallationRequest{AgentID: agentID, Platform: platform, DisplayName: displayName, WorkspaceID: workspaceID})
 	if err != nil {
 		return nil, fmt.Errorf("encode installation request: %w", err)
 	}
