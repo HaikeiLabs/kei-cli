@@ -104,7 +104,9 @@ jobs:
   validate-tag:
     name: Validate tag
     needs: [authorize_manual_release]
-    if: always() && (needs.authorize_manual_release.result == 'success' || needs.authorize_manual_release.result == 'skipped')
+    # A skipped authorization is only acceptable on tag pushes; a manual
+    # dispatch must pass the owner check.
+    if: always() && (needs.authorize_manual_release.result == 'success' || (github.event_name == 'push' && needs.authorize_manual_release.result == 'skipped'))
     runs-on: kei-cli-release
     outputs:
       tag: ${{ steps.parse.outputs.tag }}
@@ -173,6 +175,10 @@ jobs:
   release:
     name: Release
     needs: [validate-tag]
+    # validate-tag depends on authorize_manual_release, which is skipped on tag
+    # pushes. Without an explicit if:, the implicit success() sees that skip in
+    # the needs chain and skips this job too, so tag pushes never released.
+    if: ${{ always() && needs.validate-tag.result == 'success' }}
     runs-on: kei-cli-release
     permissions:
       contents: write
