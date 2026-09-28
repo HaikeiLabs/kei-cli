@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-const defaultReleaseBase = "https://releases.haikeilabs.com"
+const defaultReleaseBase = "https://kei-cli-releases.s3.us-east-1.amazonaws.com"
 
 var releaseVersionPattern = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[A-Za-z0-9._-]+)?$`)
 
