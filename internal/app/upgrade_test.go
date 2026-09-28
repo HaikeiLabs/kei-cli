@@ -1,25 +1,51 @@
 package app
 
 import (
+	"archive/tar"
 	"bytes"
-	"context"
-	"errors"
+	"compress/gzip"
+	"crypto/sha256"
+	"fmt"
 	"io"
+	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
-type fakeUpgradeRunner struct {
-	args []string
-	err  error
+type upgradeRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f upgradeRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+func releaseTestArchive(t *testing.T, binary string) ([]byte, string) {
+	t.Helper()
+	var out bytes.Buffer
+	gz := gzip.NewWriter(&out)
+	tr := tar.NewWriter(gz)
+	if err := tr.WriteHeader(&tar.Header{Name: "kei", Mode: 0o755, Size: int64(len(binary)), Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tr.Write([]byte(binary)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	archive := out.Bytes()
+	sum := sha256.Sum256(archive)
+	return archive, fmt.Sprintf("%x", sum)
 }
 
-func (f *fakeUpgradeRunner) Run(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error {
-	f.args = append([]string{name}, args...)
-	return f.err
+func releaseTestClient(handler func(string) (int, []byte)) *http.Client {
+	return &http.Client{Transport: upgradeRoundTripper(func(req *http.Request) (*http.Response, error) {
+		status, body := handler(req.URL.String())
+		return &http.Response{StatusCode: status, Status: fmt.Sprintf("%d %s", status, http.StatusText(status)), Body: io.NopCloser(bytes.NewReader(body)), Header: make(http.Header), Request: req}, nil
+	})}
 }
 
 func TestUpgradeReplacesCurrentBinary(t *testing.T) {
@@ -28,21 +54,20 @@ func TestUpgradeReplacesCurrentBinary(t *testing.T) {
 	if err := os.WriteFile(current, []byte("old-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	installedDir := filepath.Join(dir, "gopath", "bin")
-	if err := os.MkdirAll(installedDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(installedDir, "kei"), []byte("new-binary"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	runner := &fakeUpgradeRunner{}
+	archive, sum := releaseTestArchive(t, "new-binary")
+	client := releaseTestClient(func(url string) (int, []byte) {
+		if strings.HasSuffix(url, "/kei-cli/latest.txt") {
+			return 200, []byte("0.2.0")
+		}
+		if strings.HasSuffix(url, ".tar.gz") {
+			return 200, archive
+		}
+		return 200, []byte(fmt.Sprintf("%s  kei-cli_0.2.0_%s_%s.tar.gz\n", sum, testReleaseOS(), testReleaseArch()))
+	})
 	var stdout, stderr bytes.Buffer
-	code := runUpgradeCommand(nil, &stdout, &stderr, runner, func() (string, error) { return current, nil }, func() (string, error) { return installedDir, nil })
+	code := runUpgradeCommand(nil, &stdout, &stderr, client, func() (string, error) { return current, nil }, func(string) string { return "https://release.test" })
 	if code != 0 {
 		t.Fatalf("upgrade exit = %d, stderr=%s", code, stderr.String())
-	}
-	if len(runner.args) != 3 || runner.args[0] != "go" || runner.args[1] != "install" || runner.args[2] != upgradePackage+"@latest" {
-		t.Fatalf("go install args = %v", runner.args)
 	}
 	data, err := os.ReadFile(current)
 	if err != nil {
@@ -58,9 +83,23 @@ func TestUpgradeReplacesCurrentBinary(t *testing.T) {
 	if info.Mode().Perm() != 0o755 {
 		t.Fatalf("current binary permissions = %v", info.Mode())
 	}
-	if !strings.Contains(stdout.String(), "Upgraded kei at "+current) {
+	if !strings.Contains(stdout.String(), "Upgraded kei to 0.2.0 at "+current) {
 		t.Fatalf("upgrade output = %q", stdout.String())
 	}
+}
+
+func testReleaseOS() string {
+	if runtime.GOOS == "darwin" {
+		return "macOS"
+	}
+	return "Linux"
+}
+
+func testReleaseArch() string {
+	if runtime.GOARCH == "arm64" {
+		return "arm64"
+	}
+	return "x86_64"
 }
 
 func TestUpgradePinsRequestedVersion(t *testing.T) {
@@ -69,73 +108,94 @@ func TestUpgradePinsRequestedVersion(t *testing.T) {
 	if err := os.WriteFile(current, []byte("old"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	installedDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(installedDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(installedDir, "kei"), []byte("new"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	runner := &fakeUpgradeRunner{}
+	archive, sum := releaseTestArchive(t, "new")
+	var requestedURL string
+	client := releaseTestClient(func(url string) (int, []byte) {
+		requestedURL = url
+		if strings.HasSuffix(url, ".tar.gz") {
+			return 200, archive
+		}
+		return 200, []byte(fmt.Sprintf("%s  kei-cli_0.2.0_%s_%s.tar.gz\n", sum, testReleaseOS(), testReleaseArch()))
+	})
 	var stdout, stderr bytes.Buffer
-	code := runUpgradeCommand([]string{"--version", "v0.2.0"}, &stdout, &stderr, runner, func() (string, error) { return current, nil }, func() (string, error) { return installedDir, nil })
+	code := runUpgradeCommand([]string{"--version", "v0.2.0"}, &stdout, &stderr, client, func() (string, error) { return current, nil }, func(string) string { return "https://release.test" })
 	if code != 0 {
 		t.Fatalf("upgrade exit = %d, stderr=%s", code, stderr.String())
 	}
-	if len(runner.args) != 3 || runner.args[2] != upgradePackage+"@v0.2.0" {
-		t.Fatalf("go install args = %v", runner.args)
+	if strings.Contains(requestedURL, "/v0.2.0/") || !strings.Contains(requestedURL, "/0.2.0/") {
+		t.Fatalf("pinned release URL = %s", requestedURL)
+	}
+	if !strings.Contains(stdout.String(), "0.2.0") {
+		t.Fatalf("upgrade output = %q", stdout.String())
 	}
 }
 
 func TestUpgradeInPlaceWhenRunningInstalledBinary(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "kei")
-	if err := os.WriteFile(bin, []byte("new-binary"), 0o755); err != nil {
+	if err := os.WriteFile(bin, []byte("old-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	runner := &fakeUpgradeRunner{}
+	archive, sum := releaseTestArchive(t, "replacement")
+	client := releaseTestClient(func(url string) (int, []byte) {
+		if strings.HasSuffix(url, "/latest.txt") {
+			return 200, []byte("0.2.0")
+		}
+		if strings.HasSuffix(url, ".tar.gz") {
+			return 200, archive
+		}
+		return 200, []byte(fmt.Sprintf("%s  kei-cli_0.2.0_%s_%s.tar.gz\n", sum, testReleaseOS(), testReleaseArch()))
+	})
 	var stdout, stderr bytes.Buffer
-	code := runUpgradeCommand(nil, &stdout, &stderr, runner, func() (string, error) { return bin, nil }, func() (string, error) { return dir, nil })
+	code := runUpgradeCommand(nil, &stdout, &stderr, client, func() (string, error) { return bin, nil }, func(string) string { return "https://release.test" })
 	if code != 0 {
 		t.Fatalf("upgrade exit = %d, stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "in place at "+bin) {
-		t.Fatalf("upgrade output = %q", stdout.String())
+	data, err := os.ReadFile(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "replacement" {
+		t.Fatalf("current binary content = %q", data)
 	}
 }
 
-func TestUpgradeReportsMissingGo(t *testing.T) {
-	runner := &fakeUpgradeRunner{err: exec.ErrNotFound}
+func TestUpgradeReportsLatestReleaseFailure(t *testing.T) {
+	client := releaseTestClient(func(string) (int, []byte) { return http.StatusNotFound, nil })
 	var stdout, stderr bytes.Buffer
-	code := runUpgradeCommand(nil, &stdout, &stderr, runner, func() (string, error) { return "/tmp/kei", nil }, func() (string, error) { return "/tmp/bin", nil })
+	code := runUpgradeCommand(nil, &stdout, &stderr, client, func() (string, error) { return "/tmp/kei", nil }, func(string) string { return "https://release.test" })
 	if code != 1 {
 		t.Fatalf("upgrade exit = %d, want 1", code)
 	}
-	if !strings.Contains(stderr.String(), "go command was not found") {
+	if !strings.Contains(stderr.String(), "resolve latest release") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
 
 func TestUpgradeReportsInstallFailure(t *testing.T) {
-	runner := &fakeUpgradeRunner{err: errors.New("module not found")}
+	client := releaseTestClient(func(url string) (int, []byte) {
+		if strings.HasSuffix(url, "/latest.txt") {
+			return 200, []byte("0.2.0")
+		}
+		return http.StatusNotFound, nil
+	})
 	var stdout, stderr bytes.Buffer
-	code := runUpgradeCommand(nil, &stdout, &stderr, runner, func() (string, error) { return "/tmp/kei", nil }, func() (string, error) { return "/tmp/bin", nil })
+	code := runUpgradeCommand(nil, &stdout, &stderr, client, func() (string, error) { return "/tmp/kei", nil }, func(string) string { return "https://release.test" })
 	if code != 1 {
 		t.Fatalf("upgrade exit = %d, want 1", code)
 	}
-	if !strings.Contains(stderr.String(), "upgrade failed: module not found") {
+	if !strings.Contains(stderr.String(), "download release archive") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
 
 func TestUpgradeRejectsPositionalArgs(t *testing.T) {
-	runner := &fakeUpgradeRunner{}
 	var stdout, stderr bytes.Buffer
-	code := runUpgradeCommand([]string{"extra"}, &stdout, &stderr, runner, func() (string, error) { return "/tmp/kei", nil }, func() (string, error) { return "/tmp/bin", nil })
+	code := runUpgradeCommand([]string{"extra"}, &stdout, &stderr, nil, func() (string, error) { return "/tmp/kei", nil }, func(string) string { return "" })
 	if code != 2 {
 		t.Fatalf("upgrade exit = %d, want 2", code)
 	}
-	if len(runner.args) != 0 {
-		t.Fatalf("go install ran despite bad arguments: %v", runner.args)
+	if !strings.Contains(stderr.String(), "no positional arguments") {
+		t.Fatalf("stderr = %q", stderr.String())
 	}
 }

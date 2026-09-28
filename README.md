@@ -12,17 +12,17 @@ The installer downloads the matching archive and verifies its SHA-256 checksum.
 
 ### Option 1: curl install from S3 (recommended)
 
-The public release endpoint is an S3 website endpoint. The install script
+The recommended public release endpoint is `https://releases.haikeilabs.com`; `AWS_S3_RELEASES_URL_BASE` can override it. The install script
 detects your OS and architecture and defaults to `/usr/local/bin`:
 
 ```sh
 # Install the latest version to a user-writable directory:
 export PATH="$HOME/.local/bin:$PATH"
-curl -fsSL "https://kei-cli-releases.s3.us-east-1.amazonaws.com/kei-cli/install.sh" \
+curl -fsSL "https://releases.haikeilabs.com/kei-cli/install.sh" \
   | bash -s -- -d "$HOME/.local/bin"
 
 # Install a specific version:
-curl -fsSL "https://kei-cli-releases.s3.us-east-1.amazonaws.com/kei-cli/install.sh" \
+curl -fsSL "https://releases.haikeilabs.com/kei-cli/install.sh" \
   | bash -s -- -v 0.2.0 -d "$HOME/.local/bin"
 ```
 
@@ -33,9 +33,10 @@ kei help
 kei --version
 ```
 
-### Option 2: go install
+### Option 2: go install (development use)
 
-Requires Go 1.26+:
+For development environments with Go 1.26+, you can build and install from
+the Go module:
 
 ```sh
 go install github.com/HaikeiLabs/kei-cli/cmd/kei@latest
@@ -43,16 +44,22 @@ export PATH="$(go env GOPATH)/bin:$PATH"
 ```
 
 Add the export line to `~/.zshrc` (or your shell's startup file) to make it
-permanent.
+permanent. For deployed binaries, use the S3 release installer above.
 
-To upgrade from the release endpoint, rerun the installer command. Pass
-`-v VERSION` when a pinned release is required. The built-in Go-module upgrade
-path is also available when Go is installed:
+Upgrade a deployed CLI in place from the official S3 release endpoint (no Go
+installation required):
 
 ```sh
-kei upgrade
-kei upgrade --version VERSION
+kei upgrade                         # latest stable release
+kei upgrade --version 0.2.0         # pin a release (optional leading v accepted)
 ```
+
+Upgrade downloads the matching macOS/Linux and amd64/arm64 archive, verifies
+its SHA-256 checksum, then atomically replaces the running executable. The
+current executable's directory must be writable. To use a mirror or alternate
+endpoint, set `AWS_S3_RELEASES_URL_BASE`; otherwise `https://releases.haikeilabs.com`
+is used. GPG signature verification is not performed by this command; checksum
+verification follows the official installer's required SHA-256 check.
 
 ### Building from source
 
@@ -296,7 +303,7 @@ Optional repository variables. None are set today, so the defaults apply:
 ### What gets published
 
 Everything goes to `s3://kei-cli-releases/kei-cli/`. The public URL is
-`https://kei-cli-releases.s3.us-east-1.amazonaws.com/kei-cli/`. Versioned
+`https://releases.haikeilabs.com/kei-cli/`. Versioned
 paths use the version without the leading `v`:
 
 ```
@@ -322,7 +329,7 @@ channel. Public reads come from the bucket policy, not object ACLs.
 ### Verifying a release
 
 ```sh
-BASE=https://kei-cli-releases.s3.us-east-1.amazonaws.com/kei-cli
+BASE=https://releases.haikeilabs.com/kei-cli
 curl -fsSL "$BASE/latest.txt"                      # stable releases: prints the new version
 V=0.1.6                                            # the version you released
 A="kei-cli_${V}_macOS_arm64.tar.gz"
@@ -344,16 +351,14 @@ signature check.
 using either method:
 
 ```sh
-curl -fsSL "https://kei-cli-releases.s3.us-east-1.amazonaws.com/kei-cli/install.sh" \
+curl -fsSL "https://releases.haikeilabs.com/kei-cli/install.sh" \
   | bash -s -- -d "$HOME/.local/bin"
-# or
-go install github.com/HaikeiLabs/kei-cli/cmd/kei@<version>
 ```
 
-From 0.1.6 onward, `kei upgrade` installs `github.com/HaikeiLabs/kei-cli/cmd/kei`
-and works as documented above. The old `go install` path produced a binary
-named `kei-cli`, so after reinstalling you can remove any leftover
-`$(go env GOPATH)/bin/kei-cli`.
+The old `go install` path produced a binary named `kei-cli`, so after
+reinstalling you can remove any leftover `$(go env GOPATH)/bin/kei-cli`.
+From 0.1.6 onward, `kei upgrade [--version VERSION]` upgrades from S3 and
+replaces the running executable after checksum verification.
 
 ### Bundled kei-proxy
 
@@ -371,7 +376,7 @@ For a local test build with no upload and no signing:
 
 ```sh
 KEI_PROXY_VERSION=v0.1.0 \
-AWS_S3_RELEASES_URL_BASE=https://kei-cli-releases.s3.us-east-1.amazonaws.com \
+AWS_S3_RELEASES_URL_BASE=https://releases.haikeilabs.com \
 AWS_S3_RELEASES_BUCKET=kei-cli-releases AWS_S3_RELEASES_REGION=us-east-1 \
 GORELEASER_SKIP_SIGN=1 make snapshot
 ```
