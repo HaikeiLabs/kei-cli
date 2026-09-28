@@ -23,10 +23,10 @@ set -euo pipefail
 # Optional configuration:
 #
 #   AWS_S3_RELEASES_URL_BASE — Public S3 endpoint for curl downloads.
-#                              Format:
-#                                https://<bucket>.s3.<region>.amazonaws.com
-#                              or a CloudFront distribution URL.
-#                              Defaults to the public kei-cli release endpoint.
+#                              Defaults to:
+#                                https://kei-cli-releases.s3.us-east-1.amazonaws.com
+#                              (bucket: kei-cli-releases, region: us-east-1).
+#                              Override for a mirror or CloudFront distribution.
 #
 # The install URL is constructed as:
 #   $AWS_S3_RELEASES_URL_BASE/kei-cli/<version>/<artifact>

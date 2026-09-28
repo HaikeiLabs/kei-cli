@@ -105,7 +105,7 @@ func Main(version, command string, args []string, stdout, stderr io.Writer, stdi
 	case "workspaces":
 		return runWorkspaceCommand(args, stdout, stderr, &http.Client{Timeout: 30 * time.Second}, osKeychainStore{})
 	case "upgrade":
-		return runUpgradeCommand(args, stdout, stderr, osExecRunner{}, os.Executable, gopathBinDir)
+		return runUpgradeCommand(args, stdout, stderr, nil, os.Executable, os.Getenv)
 	case "version", "--version", "-v":
 		printVersion(stdout, version)
 		return 0

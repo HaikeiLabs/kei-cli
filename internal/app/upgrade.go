@@ -1,53 +1,34 @@
 package app
 
 import (
-	"context"
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strings"
+	"time"
 )
 
-// upgradePackage is this CLI's own entrypoint package; upgrades always
-// install it. go install names the resulting binary after the final path
-// element, "kei".
-const upgradePackage = "github.com/HaikeiLabs/kei-cli/cmd/kei"
+const defaultReleaseBase = "https://kei-cli-releases.s3.us-east-1.amazonaws.com"
 
-type upgradeRunner interface {
-	Run(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error
-}
+var releaseVersionPattern = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[A-Za-z0-9._-]+)?$`)
 
-type osExecRunner struct{}
-
-func (osExecRunner) Run(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
-	return cmd.Run()
-}
-
-func gopathBinDir() (string, error) {
-	out, err := exec.Command("go", "env", "GOPATH").Output()
-	if err != nil {
-		return "", fmt.Errorf("go env GOPATH: %w", err)
-	}
-	gopath := strings.TrimSpace(string(out))
-	if gopath == "" {
-		return "", errors.New("go env GOPATH returned an empty path")
-	}
-	return filepath.Join(gopath, "bin"), nil
-}
-
-// runUpgradeCommand installs the latest published version of the kei CLI
-// module with `go install` and replaces the currently running binary with it.
-func runUpgradeCommand(args []string, stdout, stderr io.Writer, runner upgradeRunner, executable func() (string, error), binDir func() (string, error)) int {
+// runUpgradeCommand installs the published platform binary directly from S3.
+// The archive checksum is verified before extraction or replacement.
+func runUpgradeCommand(args []string, stdout, stderr io.Writer, client *http.Client, executable func() (string, error), getenv func(string) string) int {
 	flags := flag.NewFlagSet("upgrade", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	upgradeVersion := flags.String("version", "latest", "module version to install")
+	requested := flags.String("version", "latest", "release version to install (default: latest)")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -55,87 +36,188 @@ func runUpgradeCommand(args []string, stdout, stderr io.Writer, runner upgradeRu
 		fmt.Fprintln(stderr, "upgrade accepts no positional arguments")
 		return 2
 	}
-	fmt.Fprintf(stdout, "Installing %s@%s...\n", upgradePackage, *upgradeVersion)
-	if err := runner.Run(context.Background(), stdout, stderr, "go", "install", upgradePackage+"@"+*upgradeVersion); err != nil {
-		if errors.Is(err, exec.ErrNotFound) {
-			fmt.Fprintln(stderr, "upgrade failed: the go command was not found; install Go and ensure it is on PATH")
-			return 1
+	version := strings.TrimSpace(*requested)
+	if version != "latest" {
+		if !releaseVersionPattern.MatchString(version) || strings.ContainsAny(version, "/\\") {
+			fmt.Fprintln(stderr, "upgrade failed: invalid version; expected VERSION or vVERSION")
+			return 2
 		}
-		fmt.Fprintf(stderr, "upgrade failed: %v\n", err)
-		return 1
+		version = strings.TrimPrefix(version, "v")
 	}
-	installedDir, err := binDir()
+	osName, arch, err := releasePlatform(runtime.GOOS, runtime.GOARCH)
 	if err != nil {
 		fmt.Fprintf(stderr, "upgrade failed: %v\n", err)
 		return 1
 	}
-	installed := filepath.Join(installedDir, "kei")
+	base := strings.TrimRight(getenv("AWS_S3_RELEASES_URL_BASE"), "/")
+	if base == "" {
+		base = defaultReleaseBase
+	}
+	if client == nil {
+		client = &http.Client{Timeout: 2 * time.Minute}
+	}
+
+	tmp, err := os.MkdirTemp("", "kei-upgrade-*")
+	if err != nil {
+		fmt.Fprintf(stderr, "upgrade failed: create temporary directory: %v\n", err)
+		return 1
+	}
+	defer os.RemoveAll(tmp)
+
+	if version == "latest" {
+		fmt.Fprintln(stdout, "Resolving latest kei release...")
+		data, err := fetchRelease(client, base+"/kei-cli/latest.txt", 4096)
+		if err != nil {
+			fmt.Fprintf(stderr, "upgrade failed: resolve latest release: %v\n", err)
+			return 1
+		}
+		version = strings.TrimSpace(string(data))
+		if !releaseVersionPattern.MatchString(version) || strings.ContainsAny(version, "/\\") {
+			fmt.Fprintln(stderr, "upgrade failed: release endpoint returned an invalid version")
+			return 1
+		}
+	}
+
+	archiveName := fmt.Sprintf("kei-cli_%s_%s_%s.tar.gz", version, osName, arch)
+	checksumsName := fmt.Sprintf("kei-cli_%s_checksums.txt", version)
+	prefix := base + "/kei-cli/" + version + "/"
+	fmt.Fprintf(stdout, "Downloading kei %s for %s/%s...\n", version, osName, arch)
+	archive, err := fetchRelease(client, prefix+archiveName, 512<<20)
+	if err != nil {
+		fmt.Fprintf(stderr, "upgrade failed: download release archive: %v\n", err)
+		return 1
+	}
+	checksums, err := fetchRelease(client, prefix+checksumsName, 1<<20)
+	if err != nil {
+		fmt.Fprintf(stderr, "upgrade failed: download checksums: %v\n", err)
+		return 1
+	}
+	if err := verifyReleaseChecksum(archiveName, archive, checksums); err != nil {
+		fmt.Fprintf(stderr, "upgrade failed: %v\n", err)
+		return 1
+	}
+
 	current, err := executable()
 	if err != nil {
 		fmt.Fprintf(stderr, "upgrade failed: locate current executable: %v\n", err)
 		return 1
 	}
-	same, err := sameFile(current, installed)
+	staged, err := extractReleaseBinary(archive, filepath.Dir(current))
 	if err != nil {
-		fmt.Fprintf(stderr, "upgrade failed: compare binaries: %v\n", err)
+		fmt.Fprintf(stderr, "upgrade failed: extract release binary: %v\n", err)
 		return 1
 	}
-	if same {
-		fmt.Fprintf(stdout, "Upgraded kei in place at %s.\n", current)
-		return 0
-	}
-	if err := replaceExecutable(current, installed); err != nil {
+	defer os.Remove(staged)
+	if err := os.Rename(staged, current); err != nil {
 		fmt.Fprintf(stderr, "upgrade failed: replace %s: %v\n", current, err)
-		fmt.Fprintf(stderr, "The new binary is at %s; copy it over %s manually if that location is not writable.\n", installed, current)
+		fmt.Fprintf(stderr, "Verified new binary is staged at %s; copy it over manually if needed.\n", staged)
 		return 1
 	}
-	fmt.Fprintf(stdout, "Upgraded kei at %s.\n", current)
+	fmt.Fprintf(stdout, "Upgraded kei to %s at %s.\n", version, current)
 	return 0
 }
 
-func sameFile(a, b string) (bool, error) {
-	ai, err := os.Stat(a)
-	if err != nil {
-		return false, err
+func releasePlatform(goos, goarch string) (string, string, error) {
+	var osName string
+	switch goos {
+	case "darwin":
+		osName = "macOS"
+	case "linux":
+		osName = "Linux"
+	default:
+		return "", "", fmt.Errorf("unsupported operating system %s (releases support macOS and Linux)", goos)
 	}
-	bi, err := os.Stat(b)
-	if err != nil {
-		return false, err
+	var arch string
+	switch goarch {
+	case "amd64":
+		arch = "x86_64"
+	case "arm64":
+		arch = "arm64"
+	default:
+		return "", "", fmt.Errorf("unsupported architecture %s (releases support amd64 and arm64)", goarch)
 	}
-	return os.SameFile(ai, bi), nil
+	return osName, arch, nil
 }
 
-func replaceExecutable(target, source string) error {
-	dir := filepath.Dir(target)
-	tmp, err := os.CreateTemp(dir, ".kei-upgrade-*")
+func fetchRelease(client *http.Client, url string, limit int64) ([]byte, error) {
+	resp, err := client.Get(url)
 	if err != nil {
-		return fmt.Errorf("create temporary file: %w", err)
+		return nil, err
 	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-	in, err := os.Open(source)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%s returned HTTP %s", url, resp.Status)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
-		tmp.Close()
-		return fmt.Errorf("open installed binary: %w", err)
+		return nil, err
 	}
-	if _, err := io.Copy(tmp, in); err != nil {
-		in.Close()
-		tmp.Close()
-		return fmt.Errorf("copy installed binary: %w", err)
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("%s exceeds size limit", url)
 	}
-	if err := in.Close(); err != nil {
-		tmp.Close()
-		return err
+	return data, nil
+}
+
+func verifyReleaseChecksum(name string, archive, checksums []byte) error {
+	var expected string
+	for _, line := range strings.Split(string(checksums), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && strings.TrimPrefix(fields[len(fields)-1], "*") == name {
+			if expected != "" {
+				return fmt.Errorf("checksums contain duplicate entries for %s", name)
+			}
+			expected = fields[0]
+		}
 	}
-	if err := tmp.Chmod(0o755); err != nil {
-		tmp.Close()
-		return fmt.Errorf("set executable permissions: %w", err)
+	if len(expected) != sha256.Size*2 {
+		return fmt.Errorf("%s is missing a valid SHA-256 checksum", name)
 	}
-	if err := tmp.Close(); err != nil {
-		return err
+	if _, err := hex.DecodeString(expected); err != nil {
+		return fmt.Errorf("%s has an invalid SHA-256 checksum", name)
 	}
-	if err := os.Rename(tmpName, target); err != nil {
-		return fmt.Errorf("replace current binary: %w", err)
+	sum := sha256.Sum256(archive)
+	if !strings.EqualFold(expected, hex.EncodeToString(sum[:])) {
+		return fmt.Errorf("checksum mismatch for %s", name)
 	}
 	return nil
+}
+
+func extractReleaseBinary(archive []byte, destination string) (string, error) {
+	gz, err := gzip.NewReader(bytes.NewReader(archive))
+	if err != nil {
+		return "", err
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	for {
+		header, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return "", err
+		}
+		if header.Name != "kei" {
+			continue
+		}
+		if !header.FileInfo().Mode().IsRegular() || header.Size <= 0 || header.Size > 256<<20 {
+			return "", errors.New("archive contains an invalid kei binary")
+		}
+		f, err := os.CreateTemp(destination, ".kei-upgrade-*")
+		if err != nil {
+			return "", err
+		}
+		if _, err = io.CopyN(f, tr, header.Size); err == nil {
+			err = f.Chmod(0o755)
+		}
+		if closeErr := f.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			os.Remove(f.Name())
+			return "", err
+		}
+		return f.Name(), nil
+	}
+	return "", errors.New("kei binary not found in release archive")
 }
