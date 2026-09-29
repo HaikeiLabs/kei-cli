@@ -248,7 +248,7 @@ func writerIsTerminal(w io.Writer) bool {
 func runBotInitCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("bot init", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	platform := flags.String("platform", "", "runtime platform (cli, teams, discord, or slack)")
+	platform := flags.String("platform", "", "runtime platform (cli, teams, discord, slack, or whatsapp)")
 	agentID := flags.String("agent", "", "Kei agent ID")
 	displayName := flags.String("name", "", "installation name")
 	workspace := flags.String("workspace", "", "workspace ID or name")
@@ -256,7 +256,7 @@ func runBotInitCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 		return 2
 	}
 	if flags.NArg() != 0 || *displayName == "" || !validRuntimePlatform(*platform) {
-		fmt.Fprintln(stderr, "bot init requires --platform cli|teams|discord|slack and --name NAME")
+		fmt.Fprintln(stderr, "bot init requires --platform cli|teams|discord|slack|whatsapp and --name NAME")
 		return 2
 	}
 	wid := *workspace
@@ -287,7 +287,7 @@ func runBotInitCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 }
 
 func validRuntimePlatform(platform string) bool {
-	return platform == "cli" || platform == "teams" || platform == "discord" || platform == "slack"
+	return platform == "cli" || platform == "teams" || platform == "discord" || platform == "slack" || platform == "whatsapp"
 }
 
 type createRuntimeInstallationRequest struct {
