@@ -1,6 +1,6 @@
 # kei-cli release targets.
 #
-# Prerequisites: Go 1.26+, goreleaser (for release targets).
+# Prerequisites: Go 1.27+, goreleaser (for release targets).
 #
 # Required environment for release:
 #   GORELEASER_KEY             — GPG key ID for signing
