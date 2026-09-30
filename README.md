@@ -35,7 +35,7 @@ kei --version
 
 ### Option 2: go install (development use)
 
-For development environments with Go 1.26+, you can build and install from
+For development environments with Go 1.27+, you can build and install from
 the Go module:
 
 ```sh
@@ -181,6 +181,38 @@ kei workspaces list --json
 The CLI always targets the Kei production API at `https://app.haikeilabs.com`.
 Set the `KEI_WEB_URL` environment variable to override the endpoint for
 development and testing.
+
+## Manage connectors
+
+Connector setup renders from the `kei.connector-setup/v1` schema in
+`kei-connector-contracts` v0.3.0, the same definition the console uses. The
+CLI offers the providers Kei has built connectors for: `gmail`,
+`google_drive`, `linear`, `github`, `tito`, and `crm`.
+
+```sh
+# OAuth: pick the account model (per_user is the default).
+kei connectors create --workspace Main --provider gmail --name team-mail
+kei connectors create --workspace Main --provider google_drive --name shared-drive --account-model shared
+kei connectors reconnect CONNECTOR_ID --workspace Main   # opens the consent page for a shared account
+
+# Shared secret: non-secret fields with --set; the secret is read without echo.
+kei connectors create --workspace Main --provider tito --name events --set account_slug=acme
+<secret-manager read> | kei connectors create --workspace Main --provider tito --name events --set account_slug=acme
+kei connectors reconnect CONNECTOR_ID --workspace Main   # replaces the secret (a new generation)
+
+kei connectors list --workspace Main
+kei connectors get CONNECTOR_ID --workspace Main
+kei connectors delete CONNECTOR_ID --workspace Main --yes   # revokes the connector
+```
+
+Missing fields are prompted for, with the schema's labels and defaults. A
+secret field is never accepted as a flag: it is read from the terminal without
+echo, or from stdin. The CLI seals it to the workspace's runtime
+credential-sync keys (the envelope the console uses for model-profile keys),
+and only the sealed copies are sent. The runtime stores the secret in the
+tenant secret manager, and the connector becomes connected when it does. To
+use a secret that is already in your secret manager, pass `--credential-ref
+REF` instead.
 
 ## Rotating a runtime credential into AWS Secrets Manager
 

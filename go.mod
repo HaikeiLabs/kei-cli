@@ -1,8 +1,9 @@
 module github.com/HaikeiLabs/kei-cli
 
-go 1.26.0
+go 1.27.0
 
 require (
+	github.com/HaikeiLabs/kei-connector-contracts v0.3.0
 	github.com/google/uuid v1.6.0
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/zalando/go-keyring v0.2.5

@@ -1,3 +1,5 @@
+github.com/HaikeiLabs/kei-connector-contracts v0.3.0 h1:E+CT5KGI99qXki5LFMcMEr1RZYboqk/sUO8DaOVHWmY=
+github.com/HaikeiLabs/kei-connector-contracts v0.3.0/go.mod h1:Y3GI1O5wqRFogqDGPiXcE20wQyEHX8rTGXw2U2VCKQw=
 github.com/alessio/shellescape v1.4.1 h1:V7yhSDDn8LP4lc4jS8pFkt0zCnzVJlG5JXy9BVKJUX0=
 github.com/alessio/shellescape v1.4.1/go.mod h1:PZAiSCk0LJaZkiCSkPv8qIobYglO3FPpyFjDCtHLS30=
 github.com/danieljoos/wincred v1.2.0 h1:ozqKHaLK0W/ii4KVbbvluM91W2H3Sh0BncbUNPS7jLE=
