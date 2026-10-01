@@ -1,0 +1,37 @@
+{
+  "permission": {
+    "skill": {
+      "draft-plan": "allow",
+      "write": "allow",
+      "editor": "allow"
+    },
+    "external_directory": {
+      "/home/user/code/haikei": "allow",
+      "/home/user/code/haikei/*": "allow",
+      "/home/user/code/haikei/**": "allow",
+      "/home/user/code/pedro/pedro-agentware": "allow",
+      "/home/user/code/pedro/pedro-agentware/*": "allow",
+      "/home/user/code/pedro/pedro-agentware/**": "allow",
+      "/home/user/code/pedro/pedro-tag": "allow",
+      "/home/user/code/pedro/pedro-tag/*": "allow",
+      "/home/user/code/pedro/pedro-tag/**": "allow",
+      "/home/user/code/wiki": "allow",
+      "/home/user/code/wiki/*": "allow",
+      "/home/user/code/wiki/**": "allow",
+      "/tmp/cf-skills": "allow",
+      "/tmp/cf-skills/*": "allow",
+      "/tmp/cf-skills/**": "allow",
+      "/tmp/dvl-skills": "allow",
+      "/tmp/dvl-skills/*": "allow",
+      "/tmp/dvl-skills/**": "allow",
+      "/private/var/folders/**": "allow",
+      "/var/folders/**": "allow",
+      "/private/var/folders/*": "allow",
+      "/var/folders/*": "allow",
+      "/home/user/code/haikei/.specs": "allow",
+      "/home/user/code/haikei/.specs/*": "allow",
+      "/home/user/code/haikei/.specs/**": "allow",
+      "*": "ask"
+    }
+  }
+}
