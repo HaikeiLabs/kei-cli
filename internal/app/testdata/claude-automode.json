@@ -1,0 +1,11 @@
+{
+  "autoMode": {
+    "soft_deny": [
+      "$defaults",
+      "Bash(terraform destroy:*) in ~/code/haikei/gcp-hackathon/terraform \u2014 protected IaC scope per CLAUDE.md's explicit secrets-exposure warning",
+      "Bash(git init:*) in ~/code/haikei/gcp-hackathon/terraform \u2014 CLAUDE.md flags this directory as containing plaintext live secrets that must be gitignored and rotated before any git init",
+      "Bash(kubectl:delete* -n *prod*)",
+      "Bash(helm:*values-prod.yaml*)"
+    ]
+  }
+}
