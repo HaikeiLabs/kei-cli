@@ -1,0 +1,201 @@
+# Installer matrix.
+#
+# Exercises scripts/install.sh from the PR checkout across a matrix of shells
+# and platforms, installing the latest published kei-cli release from S3.
+#
+# For every combination it asserts that:
+#   - the OS and architecture were detected (the downloaded archive name
+#     encodes both, so a wrong detection yields a 404 and a failed install),
+#   - the SHA-256 checksum was verified,
+#   - both installed binaries (kei and kei-proxy) run, and
+#   - `kei --version` reports the version that was requested with -v.
+#
+# Shells/platforms covered:
+#   - ubuntu-24.04        sh (dash)  + bash   (Linux x86_64)
+#   - ubuntu-24.04-arm    sh (dash)  + bash   (Linux arm64)
+#   - macos-15            sh         + bash   (macOS arm64)
+#   - macos-13            sh         + bash   (macOS x86_64 / Intel)
+#   - alpine:latest       busybox ash (sh)    (Linux x86_64, container)
+#
+# Triggered by PRs that touch the installer (and this workflow), and manually.
+
+name: Installer matrix
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/install.sh'
+      - '.github/workflows/installer.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AWS_S3_RELEASES_URL_BASE: https://kei-cli-releases.s3.us-east-1.amazonaws.com
+
+jobs:
+  resolve-version:
+    name: Resolve latest published kei-cli
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.latest.outputs.version }}
+    steps:
+      - name: Fetch latest.txt
+        id: latest
+        run: |
+          set -eu
+          VERSION="$(curl -fsSL --connect-timeout 10 "$AWS_S3_RELEASES_URL_BASE/kei-cli/latest.txt")"
+          if [ -z "$VERSION" ]; then
+            echo "ERROR: could not resolve latest kei-cli version from latest.txt" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Latest published kei-cli version: $VERSION"
+
+  install:
+    name: Install (${{ matrix.runner }} / ${{ matrix.shell }})
+    needs: resolve-version
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04,     shell: sh,   os: Linux, arch: x86_64 }
+          - { runner: ubuntu-24.04,     shell: bash, os: Linux, arch: x86_64 }
+          - { runner: ubuntu-24.04-arm, shell: sh,   os: Linux, arch: arm64 }
+          - { runner: ubuntu-24.04-arm, shell: bash, os: Linux, arch: arm64 }
+          - { runner: macos-15,         shell: sh,   os: macOS, arch: arm64 }
+          - { runner: macos-15,         shell: bash, os: macOS, arch: arm64 }
+          - { runner: macos-13,         shell: sh,   os: macOS, arch: x86_64 }
+          - { runner: macos-13,         shell: bash, os: macOS, arch: x86_64 }
+    env:
+      SHELL_NAME: ${{ matrix.shell }}
+      EXPECTED_OS: ${{ matrix.os }}
+      EXPECTED_ARCH: ${{ matrix.arch }}
+      VERSION: ${{ needs.resolve-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run installer and assert
+        run: |
+          set -eu
+          BIN_DIR="$RUNNER_TEMP/bin"
+          rm -rf "$BIN_DIR"
+          mkdir -p "$BIN_DIR"
+          OUT="$RUNNER_TEMP/installer-output.txt"
+
+          echo ">>> $SHELL_NAME scripts/install.sh -v $VERSION -d $BIN_DIR"
+          set +e
+          "$SHELL_NAME" scripts/install.sh -v "$VERSION" -d "$BIN_DIR" >"$OUT" 2>&1
+          RC=$?
+          set -e
+          echo "----- installer output (rc=$RC) -----"
+          cat "$OUT"
+          echo "----- end installer output -----"
+
+          fail() { echo "FAIL: $*" >&2; exit 1; }
+
+          [ "$RC" -eq 0 ] || fail "installer exited with code $RC"
+
+          # 1. OS/arch detected: the archive name encodes the detected OS and arch.
+          EXPECTED_ARCHIVE="kei-cli_${VERSION}_${EXPECTED_OS}_${EXPECTED_ARCH}.tar.gz"
+          if ! grep -q "Downloading $EXPECTED_ARCHIVE" "$OUT"; then
+            fail "expected archive $EXPECTED_ARCHIVE not detected (OS=$EXPECTED_OS arch=$EXPECTED_ARCH)"
+          fi
+          echo "PASS: detected OS=$EXPECTED_OS arch=$EXPECTED_ARCH (archive $EXPECTED_ARCHIVE)"
+
+          # 2. Checksum verified.
+          if ! grep -q "Verifying checksum" "$OUT"; then
+            fail "no checksum verification step in installer output"
+          fi
+          if grep -qi "checksum mismatch" "$OUT"; then
+            fail "installer reported a checksum mismatch"
+          fi
+          echo "PASS: checksum verified"
+
+          # 3. Both binaries installed and runnable.
+          [ -x "$BIN_DIR/kei" ] || fail "kei binary not installed at $BIN_DIR/kei"
+          [ -x "$BIN_DIR/kei-proxy" ] || fail "kei-proxy binary not installed at $BIN_DIR/kei-proxy"
+          KEI_VERSION_OUT="$("$BIN_DIR/kei" --version)" || fail "kei --version failed"
+          PROXY_VERSION_OUT="$("$BIN_DIR/kei-proxy" --version)" || fail "kei-proxy --version failed"
+          echo "PASS: kei --version => $KEI_VERSION_OUT"
+          echo "PASS: kei-proxy --version => $PROXY_VERSION_OUT"
+
+          # 4. kei --version matches the requested version.
+          case "$KEI_VERSION_OUT" in
+            *"$VERSION"*) echo "PASS: kei --version matches requested $VERSION" ;;
+            *) fail "kei --version '$KEI_VERSION_OUT' does not contain requested version $VERSION" ;;
+          esac
+
+          echo "ALL ASSERTIONS PASSED ($SHELL_NAME on ${{ matrix.runner }})"
+
+  install-alpine:
+    name: Install (alpine / busybox ash)
+    needs: resolve-version
+    runs-on: ubuntu-24.04
+    container:
+      image: alpine:latest
+    env:
+      SHELL_NAME: sh
+      EXPECTED_OS: Linux
+      EXPECTED_ARCH: x86_64
+      VERSION: ${{ needs.resolve-version.outputs.version }}
+    steps:
+      - name: Install curl (not in the base alpine image)
+        run: apk add --no-cache curl
+
+      - uses: actions/checkout@v4
+
+      - name: Run installer and assert
+        run: |
+          set -eu
+          BIN_DIR="$RUNNER_TEMP/bin"
+          rm -rf "$BIN_DIR"
+          mkdir -p "$BIN_DIR"
+          OUT="$RUNNER_TEMP/installer-output.txt"
+
+          echo ">>> $SHELL_NAME scripts/install.sh -v $VERSION -d $BIN_DIR"
+          set +e
+          "$SHELL_NAME" scripts/install.sh -v "$VERSION" -d "$BIN_DIR" >"$OUT" 2>&1
+          RC=$?
+          set -e
+          echo "----- installer output (rc=$RC) -----"
+          cat "$OUT"
+          echo "----- end installer output -----"
+
+          fail() { echo "FAIL: $*" >&2; exit 1; }
+
+          [ "$RC" -eq 0 ] || fail "installer exited with code $RC"
+
+          # 1. OS/arch detected: the archive name encodes the detected OS and arch.
+          EXPECTED_ARCHIVE="kei-cli_${VERSION}_${EXPECTED_OS}_${EXPECTED_ARCH}.tar.gz"
+          if ! grep -q "Downloading $EXPECTED_ARCHIVE" "$OUT"; then
+            fail "expected archive $EXPECTED_ARCHIVE not detected (OS=$EXPECTED_OS arch=$EXPECTED_ARCH)"
+          fi
+          echo "PASS: detected OS=$EXPECTED_OS arch=$EXPECTED_ARCH (archive $EXPECTED_ARCHIVE)"
+
+          # 2. Checksum verified.
+          if ! grep -q "Verifying checksum" "$OUT"; then
+            fail "no checksum verification step in installer output"
+          fi
+          if grep -qi "checksum mismatch" "$OUT"; then
+            fail "installer reported a checksum mismatch"
+          fi
+          echo "PASS: checksum verified"
+
+          # 3. Both binaries installed and runnable.
+          [ -x "$BIN_DIR/kei" ] || fail "kei binary not installed at $BIN_DIR/kei"
+          [ -x "$BIN_DIR/kei-proxy" ] || fail "kei-proxy binary not installed at $BIN_DIR/kei-proxy"
+          KEI_VERSION_OUT="$("$BIN_DIR/kei" --version)" || fail "kei --version failed"
+          PROXY_VERSION_OUT="$("$BIN_DIR/kei-proxy" --version)" || fail "kei-proxy --version failed"
+          echo "PASS: kei --version => $KEI_VERSION_OUT"
+          echo "PASS: kei-proxy --version => $PROXY_VERSION_OUT"
+
+          # 4. kei --version matches the requested version.
+          case "$KEI_VERSION_OUT" in
+            *"$VERSION"*) echo "PASS: kei --version matches requested $VERSION" ;;
+            *) fail "kei --version '$KEI_VERSION_OUT' does not contain requested version $VERSION" ;;
+          esac
+
+          echo "ALL ASSERTIONS PASSED (busybox ash on alpine)"
