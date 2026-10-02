@@ -7,6 +7,7 @@
 #
 # Published artifacts (all under s3://BUCKET/kei-cli/):
 #   install.sh                  — curl installer (fixed path, overwritten each release)
+#   KEI_PROXY_VERSION           — pinned kei-proxy version, default for --proxy-only
 #   latest.txt                  — latest stable version (stable releases only)
 #   <version>/                  — goreleaser artifacts per version
 #     kei-cli_<v>_<os>_<arch>.tar.gz
@@ -332,6 +333,24 @@ jobs:
             --cache-control "no-cache"
 
           echo "Published install.sh to s3://${BUCKET}/kei-cli/install.sh"
+
+      - name: Publish KEI_PROXY_VERSION alongside install.sh
+        run: |
+          BUCKET="${{ env.AWS_S3_RELEASES_BUCKET }}"
+          PIN_FILE="KEI_PROXY_VERSION"
+          if [ ! -f "$PIN_FILE" ]; then
+            echo "ERROR: $PIN_FILE not found at repo root."
+            exit 1
+          fi
+          # The --proxy-only installer resolves its default kei-proxy version
+          # from this file (published next to install.sh) when no -v is given,
+          # so it must be republished on every release.
+          aws s3 cp "$PIN_FILE" "s3://${BUCKET}/kei-cli/KEI_PROXY_VERSION" \
+            --region "${{ env.AWS_REGION }}" \
+            --content-type "text/plain" \
+            --cache-control "no-cache"
+
+          echo "Published KEI_PROXY_VERSION to s3://${BUCKET}/kei-cli/KEI_PROXY_VERSION"
 
       - name: Verify no credentials leaked in artifacts
         run: |
