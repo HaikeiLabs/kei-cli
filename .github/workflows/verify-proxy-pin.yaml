@@ -1,0 +1,55 @@
+# Verifies that the in-repo KEI_PROXY_VERSION pin is valid, the proxy
+# artifact exists, and the binary version matches the pin. Runs on every PR
+# to main so the pin cannot drift unnoticed.
+name: Verify kei-proxy pin
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify-pin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read and validate KEI_PROXY_VERSION pin
+        id: pin
+        run: |
+          PIN_FILE="KEI_PROXY_VERSION"
+          if [ ! -f "$PIN_FILE" ]; then
+            echo "ERROR: $PIN_FILE not found at repo root."
+            exit 1
+          fi
+          PIN=$(cat "$PIN_FILE" | tr -d '[:space:]')
+          if ! echo "$PIN" | grep -qE '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+            echo "ERROR: $PIN_FILE contains malformed version '$PIN'. Expected vX.Y.Z (e.g. v0.1.15)."
+            exit 1
+          fi
+          echo "pin=$PIN" >> "$GITHUB_OUTPUT"
+          echo "version=${PIN#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch kei-proxy archives
+        run: ./scripts/fetch-proxy.sh
+        env:
+          AWS_S3_RELEASES_URL_BASE: https://kei-cli-releases.s3.us-east-1.amazonaws.com
+
+      - name: Verify kei-proxy version matches pin
+        run: |
+          EXPECTED="${{ steps.pin.outputs.version }}"
+          # Map runner OS/arch (ubuntu-latest = Linux x86_64)
+          OS="linux"
+          ARCH="amd64"
+          PROXY_BINARY="tmp/kei-proxy/${OS}/${ARCH}/kei-proxy"
+          if [ ! -f "$PROXY_BINARY" ]; then
+            echo "ERROR: kei-proxy binary not found at $PROXY_BINARY"
+            exit 1
+          fi
+          RAW=$("$PROXY_BINARY" --version 2>&1 | head -1)
+          VERSION=$(echo "$RAW" | awk '{print $NF}')
+          echo "kei-proxy --version: $RAW"
+          if [ "$VERSION" != "$EXPECTED" ]; then
+            echo "ERROR: fetched kei-proxy version '$VERSION' does not match pin '$EXPECTED'."
+            exit 1
+          fi
+          echo "Verified: kei-proxy $VERSION matches pin $EXPECTED ✓"

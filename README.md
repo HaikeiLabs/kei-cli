@@ -330,7 +330,9 @@ Optional repository variables. None are set today, so the defaults apply:
 |---|---|---|
 | `AWS_REGION` | `us-east-1` | Region of the releases bucket |
 | `AWS_S3_RELEASES_BUCKET` | `kei-cli-releases` | Releases bucket |
-| `KEI_PROXY_VERSION` | `v0.1.0` | kei-proxy version bundled into each archive |
+
+The kei-proxy version is pinned by the `KEI_PROXY_VERSION` file at the repo
+root — see the [Bundled kei-proxy](#bundled-kei-proxy) section below.
 
 ### What gets published
 
@@ -395,19 +397,27 @@ replaces the running executable after checksum verification.
 ### Bundled kei-proxy
 
 Each CLI archive bundles the kei-proxy binary for its platform, pinned by
-`KEI_PROXY_VERSION`. During the release, `scripts/fetch-proxy.sh` downloads
+the `KEI_PROXY_VERSION` file at the repo root. During the release,
+`scripts/fetch-proxy.sh` reads the pin from that file and downloads
 `s3://kei-cli-releases/kei-proxy/<version>/kei-proxy_<version>_<OS>_<ARCH>.tar.gz`
 using the runner's IRSA identity. `<OS>` is `macOS` or `Linux`, `<ARCH>` is
 `x86_64` or `arm64`, and `<version>` has no leading `v`, even when the pin
-does. The Release job fails early if that proxy release does not exist. To
-bundle a newer proxy, set the `KEI_PROXY_VERSION` repository variable before
-cutting the CLI release. The installer installs `kei-proxy` when the archive
-contains it. Older archives without it still install normally.
+does. The Release job fails early if that proxy release does not exist, and
+again if the fetched binary's `--version` does not match the pin. A CI
+workflow (`verify-proxy-pin.yaml`) checks the same on every PR so the pin
+cannot drift unnoticed.
+
+**To bump the pin** when a new kei-proxy is released, edit the
+`KEI_PROXY_VERSION` file at the repo root and change the version string
+(one line, `vX.Y.Z`). Commit and push — the PR CI verifies the new pin is
+valid and the artifact exists.
+
+The installer installs `kei-proxy` when the archive contains it. Older
+archives without it still install normally.
 
 For a local test build with no upload and no signing:
 
 ```sh
-KEI_PROXY_VERSION=v0.1.0 \
 AWS_S3_RELEASES_URL_BASE=https://kei-cli-releases.s3.us-east-1.amazonaws.com \
 AWS_S3_RELEASES_BUCKET=kei-cli-releases AWS_S3_RELEASES_REGION=us-east-1 \
 GORELEASER_SKIP_SIGN=1 make snapshot

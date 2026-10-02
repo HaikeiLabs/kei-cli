@@ -73,11 +73,10 @@ env:
   # AWS_REGION is optional for the current us-east-1 release bucket.
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
   AWS_S3_RELEASES_BUCKET: ${{ vars.AWS_S3_RELEASES_BUCKET || 'kei-cli-releases' }}
-  # Pin the proxy independently from the CLI version. The proxy release must
-  # already exist under kei-proxy/<version>/ in this same bucket.
-  KEI_PROXY_VERSION: ${{ vars.KEI_PROXY_VERSION || 'v0.1.0' }}
-  # The GPG key ID, used by goreleaser's signing step. Must match the
-  # imported key's identity (email or key ID).
+  # Pin the proxy independently from the CLI version. Read from the
+  # KEI_PROXY_VERSION file at the repo root (see the Read pin step below).
+  # The proxy release must already exist under kei-proxy/<version>/ in this
+  # same bucket.
   GORELEASER_KEY: kei-cli-releases@haikeilabs.com
 
 jobs:
@@ -189,6 +188,21 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Read and validate KEI_PROXY_VERSION pin
+        run: |
+          PIN_FILE="KEI_PROXY_VERSION"
+          if [ ! -f "$PIN_FILE" ]; then
+            echo "ERROR: $PIN_FILE not found at repo root."
+            exit 1
+          fi
+          PIN=$(cat "$PIN_FILE" | tr -d '[:space:]')
+          if ! echo "$PIN" | grep -qE '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+            echo "ERROR: $PIN_FILE contains malformed version '$PIN'. Expected vX.Y.Z (e.g. v0.1.15)."
+            exit 1
+          fi
+          echo "KEI_PROXY_VERSION=$PIN" >> "$GITHUB_ENV"
+          echo "Using kei-proxy version $PIN"
+
       - name: Create and push release tag for manual release
         if: github.event_name == 'workflow_dispatch'
         env:
@@ -267,6 +281,34 @@ jobs:
           AWS_S3_RELEASES_REGION: ${{ env.AWS_REGION }}
           KEI_PROXY_VERSION: ${{ env.KEI_PROXY_VERSION }}
           GORELEASER_CURRENT_TAG: ${{ needs.validate-tag.outputs.tag }}
+
+      - name: Verify bundled kei-proxy version matches pin
+        run: |
+          EXPECTED="${KEI_PROXY_VERSION#v}"
+          # Map runner OS/arch to fetch-proxy.sh directory convention
+          case "$(uname -s)" in
+            Darwin) OS="darwin" ;;
+            Linux)  OS="linux" ;;
+            *)      echo "ERROR: unsupported OS $(uname -s)"; exit 1 ;;
+          esac
+          case "$(uname -m)" in
+            x86_64|amd64) ARCH="amd64" ;;
+            arm64|aarch64) ARCH="arm64" ;;
+            *)      echo "ERROR: unsupported arch $(uname -m)"; exit 1 ;;
+          esac
+          PROXY_BINARY="tmp/kei-proxy/${OS}/${ARCH}/kei-proxy"
+          if [ ! -f "$PROXY_BINARY" ]; then
+            echo "ERROR: kei-proxy binary not found at $PROXY_BINARY"
+            exit 1
+          fi
+          RAW=$("$PROXY_BINARY" --version 2>&1 | head -1)
+          VERSION=$(echo "$RAW" | awk '{print $NF}')
+          echo "kei-proxy --version: $RAW"
+          if [ "$VERSION" != "$EXPECTED" ]; then
+            echo "ERROR: bundled kei-proxy version '$VERSION' does not match pin '$EXPECTED'."
+            exit 1
+          fi
+          echo "Verified: kei-proxy $VERSION matches pin $EXPECTED ✓"
 
       - name: Upload install.sh to public release endpoint
         run: |

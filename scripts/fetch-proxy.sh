@@ -13,9 +13,28 @@ set -euo pipefail
 # Each archive must contain an executable named kei-proxy. The filename is
 # derived from the release contract below so a malformed environment value
 # cannot append a second platform suffix or an unmatched template delimiter.
+#
+# The version is read from the KEI_PROXY_VERSION file at the repo root.
+# Override with the KEI_PROXY_VERSION environment variable if needed.
 
 PROJECT="kei-proxy"
-PIN="${KEI_PROXY_VERSION:?KEI_PROXY_VERSION must be set}"
+
+if [ -n "${KEI_PROXY_VERSION:-}" ]; then
+  PIN="$KEI_PROXY_VERSION"
+else
+  PIN_FILE="KEI_PROXY_VERSION"
+  if [ ! -f "$PIN_FILE" ]; then
+    echo "Error: KEI_PROXY_VERSION not set and $PIN_FILE not found at repo root." >&2
+    exit 1
+  fi
+  PIN=$(cat "$PIN_FILE" | tr -d '[:space:]')
+fi
+
+if ! echo "$PIN" | grep -qE '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+  echo "Error: KEI_PROXY_VERSION '$PIN' is not a valid semver tag (vX.Y.Z)." >&2
+  exit 1
+fi
+
 VERSION="${PIN#v}"
 OUTPUT_DIR="${KEI_PROXY_OUTPUT_DIR:-tmp/kei-proxy}"
 
