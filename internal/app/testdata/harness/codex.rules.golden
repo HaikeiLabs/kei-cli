@@ -1,0 +1,2 @@
+# managed by kei harness sync; edits are overwritten
+prefix_rule(pattern=["git", "status"], decision="allow", justification="kei policy")

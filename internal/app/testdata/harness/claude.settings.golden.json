@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(user:*)",
+      "Bash(git status:*)"
+    ],
+    "deny": [
+      "Bash(user-deny:*)"
+    ]
+  }
+}
