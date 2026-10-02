@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,8 +26,8 @@ func runPolicies(t *testing.T, server *httptest.Server, store credentialStore, s
 func TestPoliciesList(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
 		_, _ = w.Write([]byte(`{"policies":[
-			{"id":"` + testPolicyID + `","org_id":"org-1","workspace_id":"` + testWorkspaceID + `","name":"allow-git","src_pattern":"harness:claude","dst_pattern":"shell:git","effect":"permit","priority":100,"enabled":true,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"},
-			{"id":"55555555-5555-5555-5555-555555555555","org_id":"org-1","workspace_id":"` + testWorkspaceID + `","name":"deny-rm","src_pattern":"harness:claude","dst_pattern":"shell:rm","effect":"deny","priority":200,"enabled":true,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}
+			{"id":"` + testPolicyID + `","org_id":"org-1","workspace_id":"` + testWorkspaceID + `","name":"allow-git","src_pattern":"harness:claude","dst_pattern":"shell:git","effect":"permit","priority":100,"enabled":true,"approval_required":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"},
+			{"id":"55555555-5555-5555-5555-555555555555","org_id":"org-1","workspace_id":"` + testWorkspaceID + `","name":"deny-rm","src_pattern":"harness:claude","dst_pattern":"shell:rm","effect":"deny","priority":200,"enabled":true,"approval_required":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}
 		],"next_page_token":""}`))
 	})
 	code, stdout, stderr := runPolicies(t, server, store, "", "list", "--workspace", testWorkspaceID)
@@ -34,11 +35,14 @@ func TestPoliciesList(t *testing.T) {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
 	req := fake.only(t)
-	if req.Method != http.MethodGet || req.Path != "/api/cli/policies" || req.Query != "workspace_id="+testWorkspaceID {
+	if req.Method != http.MethodGet || req.Path != "/api/v1/policies" || !strings.Contains(req.Query, "workspace_id="+testWorkspaceID) {
 		t.Fatalf("request = %s %s?%s", req.Method, req.Path, req.Query)
 	}
 	if req.Auth != "Bearer cli-session-token" {
 		t.Fatalf("Authorization = %q", req.Auth)
+	}
+	if req.Headers["X-Kei-API-Shape"] != "aip" {
+		t.Fatalf("X-Kei-API-Shape header = %q, want aip", req.Headers["X-Kei-API-Shape"])
 	}
 	for _, want := range []string{testPolicyID, "allow-git", "harness:claude", "shell:git", "permit", "deny-rm", "deny"} {
 		if !strings.Contains(stdout, want) {
@@ -49,16 +53,48 @@ func TestPoliciesList(t *testing.T) {
 
 func TestPoliciesListJSON(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		_, _ = w.Write([]byte(`{"policies":[{"id":"` + testPolicyID + `","name":"allow-git","effect":"permit"}],"next_page_token":""}`))
+		_, _ = w.Write([]byte(`{"policies":[{"id":"` + testPolicyID + `","name":"allow-git","effect":"permit","approval_required":false}],"next_page_token":""}`))
 	})
 	code, stdout, stderr := runPolicies(t, server, store, "", "list", "--workspace", testWorkspaceID, "--json")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
-	if !strings.Contains(stdout, `"id":"`+testPolicyID+`"`) {
+	if !strings.Contains(stdout, testPolicyID) {
 		t.Fatalf("JSON output missing policy id:\n%s", stdout)
 	}
 	_ = fake
+}
+
+func TestPoliciesListPagination(t *testing.T) {
+	calls := 0
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		calls++
+		if calls == 1 {
+			_, _ = w.Write([]byte(`{"policies":[
+				{"id":"` + testPolicyID + `","org_id":"org-1","workspace_id":"` + testWorkspaceID + `","name":"page1","src_pattern":"harness:a","dst_pattern":"shell:x","effect":"permit","priority":1,"enabled":true,"approval_required":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}
+			],"next_page_token":"cursor2"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"policies":[
+				{"id":"55555555-5555-5555-5555-555555555555","org_id":"org-1","workspace_id":"` + testWorkspaceID + `","name":"page2","src_pattern":"harness:b","dst_pattern":"shell:y","effect":"deny","priority":2,"enabled":true,"approval_required":false,"created_at":"2026-01-02T00:00:00Z","updated_at":"2026-01-02T00:00:00Z"}
+			],"next_page_token":""}`))
+	})
+	code, stdout, stderr := runPolicies(t, server, store, "", "list", "--workspace", testWorkspaceID, "--page-size", "1")
+	if code != 0 {
+		t.Fatalf("exit = %d stderr=%s", code, stderr)
+	}
+	if calls != 2 {
+		t.Fatalf("expected 2 requests, got %d", calls)
+	}
+	if !strings.Contains(fake.requests[0].Query, "workspace_id="+testWorkspaceID) || !strings.Contains(fake.requests[0].Query, "page_size=1") {
+		t.Fatalf("page 1 query = %q", fake.requests[0].Query)
+	}
+	if !strings.Contains(fake.requests[1].Query, "page_token=cursor2") {
+		t.Fatalf("page 2 query = %q, missing page_token", fake.requests[1].Query)
+	}
+	if !strings.Contains(stdout, "page1") || !strings.Contains(stdout, "page2") {
+		t.Fatalf("stdout missing both pages:\n%s", stdout)
+	}
 }
 
 func TestPoliciesListEmpty(t *testing.T) {
@@ -79,15 +115,18 @@ func TestPoliciesListEmpty(t *testing.T) {
 
 func TestPoliciesGet(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","org_id":"org-1","workspace_id":"` + testWorkspaceID + `","name":"allow-git","description":"Allow git","src_pattern":"harness:claude","dst_pattern":"shell:git","effect":"permit","priority":100,"enabled":true,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}`))
+		_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","org_id":"org-1","workspace_id":"` + testWorkspaceID + `","name":"allow-git","description":"Allow git","src_pattern":"harness:claude","dst_pattern":"shell:git","effect":"permit","priority":100,"enabled":true,"approval_required":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}`))
 	})
 	code, stdout, stderr := runPolicies(t, server, store, "", "get", testPolicyID, "--workspace", testWorkspaceID)
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
 	req := fake.only(t)
-	if req.Method != http.MethodGet || req.Path != "/api/cli/policies/"+testPolicyID || req.Query != "workspace_id="+testWorkspaceID {
+	if req.Method != http.MethodGet || req.Path != "/api/v1/policies/"+testPolicyID || req.Query != "workspace_id="+testWorkspaceID {
 		t.Fatalf("request = %s %s?%s", req.Method, req.Path, req.Query)
+	}
+	if req.Headers["X-Kei-API-Shape"] != "aip" {
+		t.Fatalf("X-Kei-API-Shape header = %q, want aip", req.Headers["X-Kei-API-Shape"])
 	}
 	for _, want := range []string{testPolicyID, "allow-git", "harness:claude", "shell:git", "permit", "100"} {
 		if !strings.Contains(stdout, want) {
@@ -98,13 +137,13 @@ func TestPoliciesGet(t *testing.T) {
 
 func TestPoliciesGetJSON(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","name":"allow-git","effect":"permit"}`))
+		_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","name":"allow-git","effect":"permit","approval_required":false}`))
 	})
 	code, stdout, stderr := runPolicies(t, server, store, "", "get", testPolicyID, "--workspace", testWorkspaceID, "--json")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
-	if !strings.Contains(stdout, `"id":"`+testPolicyID+`"`) {
+	if !strings.Contains(stdout, testPolicyID) {
 		t.Fatalf("JSON output missing policy id:\n%s", stdout)
 	}
 	_ = fake
@@ -123,7 +162,7 @@ func TestPoliciesGetRequiresUUID(t *testing.T) {
 func TestPoliciesCreate(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
 		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","org_id":"org-1","workspace_id":"` + testWorkspaceID + `","name":"allow-git","src_pattern":"harness:claude","dst_pattern":"shell:git","effect":"permit","priority":100,"enabled":true,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}`))
+		_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","org_id":"org-1","workspace_id":"` + testWorkspaceID + `","name":"allow-git","src_pattern":"harness:claude","dst_pattern":"shell:git","effect":"permit","priority":100,"enabled":true,"approval_required":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}`))
 	})
 	code, stdout, stderr := runPolicies(t, server, store, "", "create", "--workspace", testWorkspaceID,
 		"--name", "allow-git", "--src-pattern", "harness:claude", "--dst-pattern", "shell:git", "--effect", "permit", "--priority", "100")
@@ -131,8 +170,11 @@ func TestPoliciesCreate(t *testing.T) {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
 	req := fake.only(t)
-	if req.Method != http.MethodPost || req.Path != "/api/cli/policies" || req.Query != "workspace_id="+testWorkspaceID {
+	if req.Method != http.MethodPost || req.Path != "/api/v1/policies" || req.Query != "workspace_id="+testWorkspaceID {
 		t.Fatalf("request = %s %s?%s", req.Method, req.Path, req.Query)
+	}
+	if req.Headers["X-Kei-API-Shape"] != "aip" {
+		t.Fatalf("X-Kei-API-Shape header = %q, want aip", req.Headers["X-Kei-API-Shape"])
 	}
 	if req.Body["name"] != "allow-git" || req.Body["src_pattern"] != "harness:claude" || req.Body["dst_pattern"] != "shell:git" || req.Body["effect"] != "permit" {
 		t.Fatalf("body = %v", req.Body)
@@ -172,18 +214,25 @@ func TestPoliciesCreateRequiresFields(t *testing.T) {
 
 func TestPoliciesUpdate(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","name":"renamed","effect":"deny","priority":100,"enabled":true}`))
+		_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","name":"renamed","effect":"deny","priority":100,"enabled":true,"approval_required":false}`))
 	})
 	code, stdout, stderr := runPolicies(t, server, store, "", "update", testPolicyID, "--workspace", testWorkspaceID, "--name", "renamed", "--effect", "deny")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
 	req := fake.only(t)
-	if req.Method != http.MethodPatch || req.Path != "/api/cli/policies/"+testPolicyID {
+	if req.Method != http.MethodPatch || req.Path != "/api/v1/policies/"+testPolicyID {
 		t.Fatalf("request = %s %s", req.Method, req.Path)
 	}
-	if !strings.Contains(req.Query, "workspace_id="+testWorkspaceID) || !strings.Contains(req.Query, "update_mask=") {
-		t.Fatalf("query = %q, want workspace_id and update_mask", req.Query)
+	if !strings.Contains(req.Query, "workspace_id="+testWorkspaceID) {
+		t.Fatalf("query = %q, want workspace_id", req.Query)
+	}
+	q, _ := url.ParseQuery(req.Query)
+	if q.Get("update_mask") != "name,effect" {
+		t.Fatalf("query = %q, want update_mask=name,effect", req.Query)
+	}
+	if req.Headers["X-Kei-API-Shape"] != "aip" {
+		t.Fatalf("X-Kei-API-Shape header = %q, want aip", req.Headers["X-Kei-API-Shape"])
 	}
 	if req.Body["name"] != "renamed" || req.Body["effect"] != "deny" {
 		t.Fatalf("body = %v", req.Body)
@@ -201,7 +250,7 @@ func TestPoliciesUpdate(t *testing.T) {
 
 func TestPoliciesUpdateSendsOnlySetFlags(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","name":"x","effect":"permit","priority":50,"enabled":true}`))
+		_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","name":"x","effect":"permit","priority":50,"enabled":true,"approval_required":false}`))
 	})
 	_, _, stderr := runPolicies(t, server, store, "", "update", testPolicyID, "--workspace", testWorkspaceID, "--priority", "50")
 	if stderr != "" {
@@ -253,11 +302,14 @@ func TestPoliciesDelete(t *testing.T) {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
 	req := fake.only(t)
-	if req.Method != http.MethodDelete || req.Path != "/api/cli/policies/"+testPolicyID {
+	if req.Method != http.MethodDelete || req.Path != "/api/v1/policies/"+testPolicyID {
 		t.Fatalf("request = %s %s", req.Method, req.Path)
 	}
 	if !strings.Contains(req.Query, "workspace_id="+testWorkspaceID) {
 		t.Fatalf("query = %q, want workspace_id", req.Query)
+	}
+	if req.Headers["X-Kei-API-Shape"] != "aip" {
+		t.Fatalf("X-Kei-API-Shape header = %q, want aip", req.Headers["X-Kei-API-Shape"])
 	}
 	if !strings.Contains(stdout, "deleted") {
 		t.Fatalf("delete output = %q", stdout)
@@ -305,7 +357,7 @@ func TestPoliciesResolveWorkspaceByName(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
-	if fake.count() != 2 || fake.requests[1].Query != "workspace_id="+testWorkspaceID {
+	if fake.count() != 2 || !strings.Contains(fake.requests[1].Query, "workspace_id="+testWorkspaceID) {
 		t.Fatalf("requests = %#v", fake.requests)
 	}
 	if !strings.Contains(stdout, "No policies") {
@@ -503,14 +555,14 @@ func TestPoliciesImportApplyCreatesPolicies(t *testing.T) {
 			_, _ = w.Write([]byte(`{"workspaces":[{"id":"` + testWorkspaceID + `","name":"Main"}]}`))
 			return
 		}
-		if r.Method == http.MethodPost && r.Path == "/api/cli/policies" {
+		if r.Method == http.MethodPost && r.Path == "/api/v1/policies" {
 			created++
 			name, _ := r.Body["name"].(string)
-			effect, _ := r.Body["effect"].(string)
+			eff, _ := r.Body["effect"].(string)
 			src, _ := r.Body["src_pattern"].(string)
 			dst, _ := r.Body["dst_pattern"].(string)
 			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","name":"` + name + `","effect":"` + effect + `","src_pattern":"` + src + `","dst_pattern":"` + dst + `"}`))
+			_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","name":"` + name + `","effect":"` + eff + `","src_pattern":"` + src + `","dst_pattern":"` + dst + `","approval_required":false}`))
 			return
 		}
 		t.Errorf("unexpected request %s %s", r.Method, r.Path)
@@ -581,7 +633,7 @@ func TestPoliciesImportMissingFile(t *testing.T) {
 func TestPoliciesSurfacesAPIError(t *testing.T) {
 	_, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":{"reason":"invalid_argument","message":"effect must be permit or deny"}}`))
+		_, _ = w.Write([]byte(`{"reason":"invalid_argument","message":"effect must be permit or deny"}`))
 	})
 	code, _, stderr := runPolicies(t, server, store, "", "create", "--workspace", testWorkspaceID,
 		"--name", "x", "--src-pattern", "harness:claude", "--dst-pattern", "shell:git", "--effect", "permit")

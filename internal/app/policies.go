@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -22,19 +23,20 @@ import (
 var codexTokenRe = regexp.MustCompile(`"([^"]*)"`)
 
 type policy struct {
-	ID          string  `json:"id"`
-	OrgID       string  `json:"org_id"`
-	WorkspaceID string  `json:"workspace_id"`
-	AgentID     *string `json:"agent_id"`
-	Name        string  `json:"name"`
-	Description string  `json:"description,omitempty"`
-	SrcPattern  string  `json:"src_pattern"`
-	DstPattern  string  `json:"dst_pattern"`
-	Effect      string  `json:"effect"`
-	Priority    int     `json:"priority"`
-	Enabled     bool    `json:"enabled"`
-	CreatedAt   string  `json:"created_at"`
-	UpdatedAt   string  `json:"updated_at"`
+	ID               string  `json:"id"`
+	OrgID            string  `json:"org_id"`
+	WorkspaceID      string  `json:"workspace_id"`
+	AgentID          *string `json:"agent_id,omitempty"`
+	Name             string  `json:"name"`
+	Description      string  `json:"description,omitempty"`
+	SrcPattern       string  `json:"src_pattern"`
+	DstPattern       string  `json:"dst_pattern"`
+	Effect           string  `json:"effect"`
+	Priority         int     `json:"priority"`
+	Enabled          bool    `json:"enabled"`
+	ApprovalRequired bool    `json:"approval_required"`
+	CreatedAt        string  `json:"created_at"`
+	UpdatedAt        string  `json:"updated_at"`
 }
 
 type createPolicyRequest struct {
@@ -93,12 +95,13 @@ func (s *policySession) do(method, path string, body any, extraQuery url.Values)
 		}
 		reader = bytes.NewReader(encoded)
 	}
-	endpoint := s.baseURL + "/api/cli/policies" + path + "?" + params.Encode()
+	endpoint := s.baseURL + "/api/v1/policies" + path + "?" + params.Encode()
 	req, err := http.NewRequestWithContext(context.Background(), method, endpoint, reader)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+s.token)
+	req.Header.Set("X-Kei-API-Shape", "aip")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -118,6 +121,16 @@ func (s *policySession) do(method, path string, body any, extraQuery url.Values)
 }
 
 func policyErrorMessage(payload []byte) string {
+	var aip struct {
+		Reason  string `json:"reason"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(payload, &aip) == nil && aip.Message != "" {
+		if aip.Reason != "" {
+			return aip.Reason + ": " + aip.Message
+		}
+		return aip.Message
+	}
 	var structured struct {
 		Error struct {
 			Message string `json:"message"`
@@ -210,6 +223,7 @@ func runPoliciesList(args []string, stdout, stderr io.Writer, client *http.Clien
 	flags.SetOutput(stderr)
 	workspace := policiesWorkspaceFlag(flags)
 	jsonOutput := flags.Bool("json", false, "output as JSON")
+	pageSize := flags.Int("page-size", 100, "page size")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		fmt.Fprintln(stderr, "policies list accepts no positional arguments")
 		return 2
@@ -222,29 +236,45 @@ func runPoliciesList(args []string, stdout, stderr io.Writer, client *http.Clien
 	if !ok {
 		return 1
 	}
-	payload, err := session.do(http.MethodGet, "", nil, nil)
-	if err != nil {
-		fmt.Fprintf(stderr, "policies list: %v\n", err)
-		return 1
+	var allPolicies []policy
+	pageToken := ""
+	for {
+		extraQuery := url.Values{"page_size": {strconv.Itoa(*pageSize)}}
+		if pageToken != "" {
+			extraQuery.Set("page_token", pageToken)
+		}
+		payload, err := session.do(http.MethodGet, "", nil, extraQuery)
+		if err != nil {
+			fmt.Fprintf(stderr, "policies list: %v\n", err)
+			return 1
+		}
+		var page struct {
+			Policies      []policy `json:"policies"`
+			NextPageToken string   `json:"next_page_token"`
+		}
+		if err := json.Unmarshal(payload, &page); err != nil {
+			fmt.Fprintf(stderr, "policies list: decode response: %v\n", err)
+			return 1
+		}
+		allPolicies = append(allPolicies, page.Policies...)
+		if page.NextPageToken == "" {
+			break
+		}
+		pageToken = page.NextPageToken
 	}
 	if *jsonOutput {
-		_, _ = stdout.Write(payload)
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(allPolicies)
 		return 0
 	}
-	var page struct {
-		Policies []policy `json:"policies"`
-	}
-	if err := json.Unmarshal(payload, &page); err != nil {
-		fmt.Fprintf(stderr, "policies list: decode response: %v\n", err)
-		return 1
-	}
-	if len(page.Policies) == 0 {
+	if len(allPolicies) == 0 {
 		fmt.Fprintln(stdout, "No policies found.")
 		return 0
 	}
 	table := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(table, "ID\tNAME\tSOURCE\tTARGET\tEFFECT\tPRIORITY\tENABLED")
-	for _, p := range page.Policies {
+	for _, p := range allPolicies {
 		enabled := "no"
 		if p.Enabled {
 			enabled = "yes"
@@ -403,37 +433,29 @@ func runPoliciesUpdate(args []string, stdout, stderr io.Writer, client *http.Cli
 	}
 	set := make(map[string]bool)
 	flags.Visit(func(f *flag.Flag) { set[f.Name] = true })
-	var updateMask []string
 	request := updatePolicyRequest{}
 	if set["name"] {
 		request.Name = name
-		updateMask = append(updateMask, "name")
 	}
 	if set["src-pattern"] {
 		request.SrcPattern = srcPattern
-		updateMask = append(updateMask, "src_pattern")
 	}
 	if set["dst-pattern"] {
 		request.DstPattern = dstPattern
-		updateMask = append(updateMask, "dst_pattern")
 	}
 	if set["effect"] {
 		request.Effect = effect
-		updateMask = append(updateMask, "effect")
 	}
 	if set["priority"] {
 		request.Priority = priority
-		updateMask = append(updateMask, "priority")
 	}
 	if set["enabled"] {
 		request.Enabled = enabled
-		updateMask = append(updateMask, "enabled")
 	}
 	if set["description"] {
 		request.Description = description
-		updateMask = append(updateMask, "description")
 	}
-	if len(updateMask) == 0 {
+	if request.Name == nil && request.Description == nil && request.SrcPattern == nil && request.DstPattern == nil && request.Effect == nil && request.Priority == nil && request.Enabled == nil {
 		fmt.Fprintln(stderr, "policies update requires at least one field to update: --name, --src-pattern, --dst-pattern, --effect, --priority, --enabled, or --description")
 		return 2
 	}
@@ -441,7 +463,32 @@ func runPoliciesUpdate(args []string, stdout, stderr io.Writer, client *http.Cli
 	if !ok {
 		return 1
 	}
-	extraQuery := url.Values{"update_mask": {strings.Join(updateMask, ",")}}
+	var maskFields []string
+	if set["name"] {
+		maskFields = append(maskFields, "name")
+	}
+	if set["description"] {
+		maskFields = append(maskFields, "description")
+	}
+	if set["src-pattern"] {
+		maskFields = append(maskFields, "src_pattern")
+	}
+	if set["dst-pattern"] {
+		maskFields = append(maskFields, "dst_pattern")
+	}
+	if set["effect"] {
+		maskFields = append(maskFields, "effect")
+	}
+	if set["priority"] {
+		maskFields = append(maskFields, "priority")
+	}
+	if set["enabled"] {
+		maskFields = append(maskFields, "enabled")
+	}
+	extraQuery := url.Values{}
+	if len(maskFields) > 0 {
+		extraQuery.Set("update_mask", strings.Join(maskFields, ","))
+	}
 	payload, err := session.do(http.MethodPatch, "/"+url.PathEscape(id), request, extraQuery)
 	if err != nil {
 		fmt.Fprintf(stderr, "policies update: %v\n", err)
