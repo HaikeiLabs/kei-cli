@@ -185,7 +185,7 @@ func openConnectorSession(command, workspace string, stderr io.Writer, client *h
 
 // do sends one request to /api/cli/connectors<path>.
 func (s *connectorSession) do(method, path string, body any) ([]byte, error) {
-	return s.doPath(method, "/api/cli/connectors"+path, body)
+	return s.doPath(method, "/api/v1/data-connectors"+path, body)
 }
 
 // doPath sends one workspace-scoped request and returns the response body, or
@@ -224,6 +224,16 @@ func (s *connectorSession) doPath(method, path string, body any) ([]byte, error)
 }
 
 func connectorErrorMessage(payload []byte) string {
+	var aip struct {
+		Reason  string `json:"reason"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(payload, &aip) == nil && aip.Message != "" {
+		if aip.Reason != "" {
+			return aip.Reason + ": " + aip.Message
+		}
+		return aip.Message
+	}
 	var structured struct {
 		Error struct {
 			Message string `json:"message"`
@@ -276,20 +286,18 @@ func runConnectorsList(args []string, stdout, stderr io.Writer, client *http.Cli
 		_, _ = stdout.Write(payload)
 		return 0
 	}
-	var page struct {
-		Connectors []connector `json:"connectors"`
-	}
-	if err := json.Unmarshal(payload, &page); err != nil {
+	var connectors []connector
+	if err := json.Unmarshal(payload, &connectors); err != nil {
 		fmt.Fprintf(stderr, "connectors list: decode response: %v\n", err)
 		return 1
 	}
-	if len(page.Connectors) == 0 {
+	if len(connectors) == 0 {
 		fmt.Fprintln(stdout, "No connectors found.")
 		return 0
 	}
 	table := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(table, "ID\tNAME\tPROVIDER\tSTATE\tACCOUNT MODEL")
-	for _, c := range page.Connectors {
+	for _, c := range connectors {
 		model := c.AccountModel
 		if model == "" {
 			model = "-"

@@ -27,7 +27,7 @@ import (
 const testWorkspaceID = "22222222-2222-2222-2222-222222222222"
 const testConnectorID = "33333333-3333-3333-3333-333333333333"
 
-// fakeConsole records what the CLI sent to the console's /api/cli/connectors
+// fakeConsole records what the CLI sent to the console's /api/v1/data-connectors
 // routes and answers with canned responses.
 type fakeConsole struct {
 	t        *testing.T
@@ -37,12 +37,13 @@ type fakeConsole struct {
 }
 
 type consoleRequest struct {
-	Method string
-	Path   string
-	Query  string
-	Auth   string
-	Body   map[string]any
-	Raw    string
+	Method  string
+	Path    string
+	Query   string
+	Auth    string
+	Headers map[string]string
+	Body    map[string]any
+	Raw     string
 }
 
 func newFakeConsole(t *testing.T, respond func(w http.ResponseWriter, r consoleRequest)) (*fakeConsole, *httptest.Server, *memoryCredentialStore) {
@@ -50,7 +51,14 @@ func newFakeConsole(t *testing.T, respond func(w http.ResponseWriter, r consoleR
 	fake := &fakeConsole{t: t, respond: respond}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
-		req := consoleRequest{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Auth: r.Header.Get("Authorization"), Raw: string(raw)}
+		req := consoleRequest{
+			Method:  r.Method,
+			Path:    r.URL.Path,
+			Query:   r.URL.RawQuery,
+			Auth:    r.Header.Get("Authorization"),
+			Headers: map[string]string{"X-Kei-API-Shape": r.Header.Get("X-Kei-API-Shape")},
+			Raw:     string(raw),
+		}
 		if len(raw) > 0 {
 			if err := json.Unmarshal(raw, &req.Body); err != nil {
 				t.Fatalf("CLI sent a non-JSON body: %v", err)
@@ -170,18 +178,18 @@ func TestConnectorsCreateRequestsPassTheContractCatalogCheck(t *testing.T) {
 
 func TestConnectorsListRendersStateAndIDs(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		_, _ = w.Write([]byte(`{"connectors":[
-			{"id":"` + testConnectorID + `","name":"events","provider":"tito","status":"active","credential_source":"opaque_ref"},
-			{"id":"55555555-5555-5555-5555-555555555555","name":"mail","provider":"gmail","status":"failed","credential_source":"oauth","account_model":"shared"},
-			{"id":"66666666-6666-6666-6666-666666666666","name":"old","provider":"linear","status":"revoked","credential_source":"oauth","account_model":"per_user"}
-		],"next_page_token":""}`))
+		_, _ = w.Write([]byte(`[
+		{"id":"` + testConnectorID + `","name":"events","provider":"tito","status":"active","credential_source":"opaque_ref"},
+		{"id":"55555555-5555-5555-5555-555555555555","name":"mail","provider":"gmail","status":"failed","credential_source":"oauth","account_model":"shared"},
+		{"id":"66666666-6666-6666-6666-666666666666","name":"old","provider":"linear","status":"revoked","credential_source":"oauth","account_model":"per_user"}
+	]`))
 	})
 	code, stdout, stderr := runConnectors(t, server, store, "", "list", "--workspace", testWorkspaceID)
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
 	req := fake.only(t)
-	if req.Method != http.MethodGet || req.Path != "/api/cli/connectors" || req.Query != "workspace_id="+testWorkspaceID {
+	if req.Method != http.MethodGet || req.Path != "/api/v1/data-connectors" || req.Query != "workspace_id="+testWorkspaceID {
 		t.Fatalf("request = %s %s?%s", req.Method, req.Path, req.Query)
 	}
 	if req.Auth != "Bearer cli-session-token" {
@@ -213,7 +221,7 @@ func TestConnectorsResolveWorkspaceByName(t *testing.T) {
 			_, _ = w.Write([]byte(`{"workspaces":[{"id":"` + testWorkspaceID + `","name":"Main"}]}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"connectors":[],"next_page_token":""}`))
+		_, _ = w.Write([]byte(`[]`))
 	})
 	code, stdout, stderr := runConnectors(t, server, store, "", "list", "--workspace", "Main")
 	if code != 0 {
@@ -233,7 +241,7 @@ func TestConnectorsGetShowsInstanceIDStateConfigAndSecretStatus(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
-	if got := rt.paths(); strings.Join(got, " ") != "GET /api/cli/connectors/"+testConnectorID+" GET /api/cli/connectors/"+testConnectorID+"/secrets" {
+	if got := rt.paths(); strings.Join(got, " ") != "GET /api/v1/data-connectors/"+testConnectorID+" GET /api/v1/data-connectors/"+testConnectorID+"/secrets" {
 		t.Fatalf("requests = %v", got)
 	}
 	for _, want := range []string{testConnectorID, "tito", "pending", "account_slug", "acme", "api_token", "generation 2"} {
@@ -258,7 +266,7 @@ func TestConnectorsCreatePerUserOAuth(t *testing.T) {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
 	req := fake.only(t)
-	if req.Method != http.MethodPost || req.Path != "/api/cli/connectors" || req.Query != "workspace_id="+testWorkspaceID {
+	if req.Method != http.MethodPost || req.Path != "/api/v1/data-connectors" || req.Query != "workspace_id="+testWorkspaceID {
 		t.Fatalf("request = %s %s?%s", req.Method, req.Path, req.Query)
 	}
 	if req.Body["provider"] != "gmail" || req.Body["credential_source"] != "oauth" || req.Body["account_model"] != "per_user" {
@@ -327,8 +335,8 @@ func TestConnectorsCreateSealsSecretAndSetsItWithoutSendingPlaintext(t *testing.
 	}
 	want := []string{
 		"GET /api/cli/credential-store/recipients",
-		"POST /api/cli/connectors",
-		"POST /api/cli/connectors/" + testConnectorID + ":setSecret",
+		"POST /api/v1/data-connectors",
+		"POST /api/v1/data-connectors/" + testConnectorID + ":setSecret",
 	}
 	if got := rt.paths(); strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("requests = %v, want %v", got, want)
@@ -499,7 +507,7 @@ func TestConnectorsCreatePromptsForMissingRequiredConfig(t *testing.T) {
 func TestConnectorsCreateSurfacesCatalogError(t *testing.T) {
 	_, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":{"reason":"provider_not_supported","message":"provider must be one of gmail"}}`))
+		_, _ = w.Write([]byte(`{"reason":"provider_not_supported","message":"provider must be one of gmail"}`))
 	})
 	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", testWorkspaceID, "--provider", "linear", "--name", "x")
 	if code != 1 || !strings.Contains(stderr, "provider must be one of gmail") || !strings.Contains(stderr, "400") {
@@ -514,7 +522,7 @@ func TestConnectorsReconnectPrintsConsentURL(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
-	if got := rt.paths(); strings.Join(got, "|") != "GET /api/cli/connectors/"+testConnectorID+"|POST /api/cli/connectors/"+testConnectorID+":reconnect" {
+	if got := rt.paths(); strings.Join(got, "|") != "GET /api/v1/data-connectors/"+testConnectorID+"|POST /api/v1/data-connectors/"+testConnectorID+":reconnect" {
 		t.Fatalf("requests = %v", got)
 	}
 	if !strings.Contains(stdout, rt.authURL) {
@@ -530,10 +538,10 @@ func TestConnectorsReconnectRotatesSecretThenReactivates(t *testing.T) {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
 	want := []string{
-		"GET /api/cli/connectors/" + testConnectorID,
+		"GET /api/v1/data-connectors/" + testConnectorID,
 		"GET /api/cli/credential-store/recipients",
-		"POST /api/cli/connectors/" + testConnectorID + ":setSecret",
-		"POST /api/cli/connectors/" + testConnectorID + ":reconnect",
+		"POST /api/v1/data-connectors/" + testConnectorID + ":setSecret",
+		"POST /api/v1/data-connectors/" + testConnectorID + ":reconnect",
 	}
 	if got := rt.paths(); strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("requests = %v, want %v", got, want)
@@ -580,13 +588,13 @@ func TestConnectorsReconnectPerUserExplains(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusConflict)
-		_, _ = w.Write([]byte(`{"error":{"reason":"failed_precondition","message":"each user connects their own account for this connector from the console"}}`))
+		_, _ = w.Write([]byte(`{"reason":"failed_precondition","message":"each user connects their own account for this connector from the console"}`))
 	})
 	code, _, stderr := runConnectors(t, server, store, "", "reconnect", testConnectorID, "--workspace", testWorkspaceID)
 	if code != 1 || !strings.Contains(stderr, "users connect their own accounts through their chat harness") {
 		t.Fatalf("exit = %d stderr=%q", code, stderr)
 	}
-	if got := fake.only(t); got.Method != http.MethodGet || got.Path != "/api/cli/connectors/"+testConnectorID {
+	if got := fake.only(t); got.Method != http.MethodGet || got.Path != "/api/v1/data-connectors/"+testConnectorID {
 		t.Fatalf("per-user reconnect made a connect request: %#v", got)
 	}
 }
@@ -607,7 +615,7 @@ func TestConnectorsDeleteRevokes(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
-	if req := fake.only(t); req.Method != http.MethodDelete || req.Path != "/api/cli/connectors/"+testConnectorID {
+	if req := fake.only(t); req.Method != http.MethodDelete || req.Path != "/api/v1/data-connectors/"+testConnectorID {
 		t.Fatalf("request = %s %s", req.Method, req.Path)
 	}
 	if !strings.Contains(stdout, "revoked") {
@@ -671,7 +679,7 @@ func (rt *secretConsole) respond(w http.ResponseWriter, r consoleRequest) {
 	if r.Query != "workspace_id="+testWorkspaceID {
 		rt.t.Errorf("%s %s query = %q, want the workspace scope", r.Method, r.Path, r.Query)
 	}
-	base := "/api/cli/connectors/" + testConnectorID
+	base := "/api/v1/data-connectors/" + testConnectorID
 	switch {
 	case r.Method == http.MethodGet && r.Path == "/api/cli/credential-store/recipients":
 		recipients := `[{"runtime_installation_id":"` + testRuntimeID + `","key_id":"k1","public_key":"` + base64.RawStdEncoding.EncodeToString(rt.private.PublicKey().Bytes()) + `"}]`
@@ -679,12 +687,12 @@ func (rt *secretConsole) respond(w http.ResponseWriter, r consoleRequest) {
 			recipients = `[]`
 		}
 		_, _ = w.Write([]byte(`{"credential_store_installation_id":"` + testStoreID + `","secret_backend":"aws-secrets-manager","recipients":` + recipients + `}`))
-	case r.Method == http.MethodPost && r.Path == "/api/cli/connectors":
+	case r.Method == http.MethodPost && r.Path == "/api/v1/data-connectors":
 		createdResponse(w, r)
 	case r.Method == http.MethodPost && r.Path == base+":setSecret":
 		if rt.failSetSecret {
 			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(`{"error":{"reason":"invalid_argument","message":"credential delivery recipient is not an active runtime for the connector workspace"}}`))
+			_, _ = w.Write([]byte(`{"reason":"invalid_argument","message":"credential delivery recipient is not an active runtime for the connector workspace"}`))
 			return
 		}
 		recipients, _ := r.Body["recipients"].([]any)
