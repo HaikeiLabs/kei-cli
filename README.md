@@ -33,6 +33,24 @@ kei help
 kei --version
 ```
 
+### Managing the installation
+
+The installer records what it installs in a `.kei-install-manifest` file in the
+install directory. Use it to install only the proxy or to remove the
+installation:
+
+```sh
+# Install only kei-proxy (from the standalone kei-proxy release). The default
+# version is the pinned KEI_PROXY_VERSION; override it with -v.
+curl -fsSL "https://kei-cli-releases.s3.us-east-1.amazonaws.com/kei-cli/install.sh" \
+  | sh -s -- --proxy-only -d "$HOME/.local/bin"
+
+# Remove exactly the files the installer recorded (kei, kei-proxy, and the
+# manifest) from the install directory.
+curl -fsSL "https://kei-cli-releases.s3.us-east-1.amazonaws.com/kei-cli/install.sh" \
+  | sh -s -- --uninstall -d "$HOME/.local/bin"
+```
+
 ### Option 2: go install (development use)
 
 For development environments with Go 1.27+, you can build and install from

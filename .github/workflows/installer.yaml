@@ -14,7 +14,7 @@
 #   - ubuntu-24.04        sh (dash)  + bash   (Linux x86_64)
 #   - ubuntu-24.04-arm    sh (dash)  + bash   (Linux arm64)
 #   - macos-15            sh         + bash   (macOS arm64)
-#   - macos-13            sh         + bash   (macOS x86_64 / Intel)
+#   - macos-15-intel      sh         + bash   (macOS x86_64 / Intel)
 #   - alpine:latest       busybox ash (sh)    (Linux x86_64, container)
 #
 # Triggered by PRs that touch the installer (and this workflow), and manually.
@@ -53,6 +53,27 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Latest published kei-cli version: $VERSION"
 
+  resolve-proxy-version:
+    name: Resolve pinned kei-proxy version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.pin.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read KEI_PROXY_VERSION pin
+        id: pin
+        run: |
+          set -eu
+          if [ ! -f "KEI_PROXY_VERSION" ]; then
+            echo "ERROR: KEI_PROXY_VERSION not found at repo root." >&2
+            exit 1
+          fi
+          PIN="$(tr -d '[:space:]' < KEI_PROXY_VERSION)"
+          VERSION="${PIN#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Pinned kei-proxy version: $VERSION"
+
   install:
     name: Install (${{ matrix.runner }} / ${{ matrix.shell }})
     needs: resolve-version
@@ -67,8 +88,8 @@ jobs:
           - { runner: ubuntu-24.04-arm, shell: bash, os: Linux, arch: arm64 }
           - { runner: macos-15,         shell: sh,   os: macOS, arch: arm64 }
           - { runner: macos-15,         shell: bash, os: macOS, arch: arm64 }
-          - { runner: macos-13,         shell: sh,   os: macOS, arch: x86_64 }
-          - { runner: macos-13,         shell: bash, os: macOS, arch: x86_64 }
+          - { runner: macos-15-intel,   shell: sh,   os: macOS, arch: x86_64 }
+          - { runner: macos-15-intel,   shell: bash, os: macOS, arch: x86_64 }
     env:
       SHELL_NAME: ${{ matrix.shell }}
       EXPECTED_OS: ${{ matrix.os }}
@@ -197,5 +218,202 @@ jobs:
             *"$VERSION"*) echo "PASS: kei --version matches requested $VERSION" ;;
             *) fail "kei --version '$KEI_VERSION_OUT' does not contain requested version $VERSION" ;;
           esac
+
+          echo "ALL ASSERTIONS PASSED (busybox ash on alpine)"
+
+  proxy-only-uninstall:
+    name: proxy-only + uninstall (${{ matrix.runner }} / ${{ matrix.shell }})
+    needs: [resolve-version, resolve-proxy-version]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, shell: sh }
+          - { runner: ubuntu-24.04, shell: bash }
+          - { runner: macos-15,     shell: sh }
+          - { runner: macos-15,     shell: bash }
+    env:
+      SHELL_NAME: ${{ matrix.shell }}
+      VERSION: ${{ needs.resolve-version.outputs.version }}
+      PROXY_VERSION: ${{ needs.resolve-proxy-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test --proxy-only and --uninstall
+        run: |
+          set -eu
+          fail() { echo "FAIL: $*" >&2; exit 1; }
+
+          # ---- --proxy-only: installs only kei-proxy from kei-proxy/<ver>/ ----
+          PBIN="$RUNNER_TEMP/proxy-only/bin"
+          rm -rf "$PBIN"
+          mkdir -p "$PBIN"
+          POUT="$RUNNER_TEMP/proxy-only-output.txt"
+          echo ">>> $SHELL_NAME scripts/install.sh --proxy-only -d $PBIN"
+          set +e
+          "$SHELL_NAME" scripts/install.sh --proxy-only -d "$PBIN" >"$POUT" 2>&1
+          PRC=$?
+          set -e
+          echo "----- --proxy-only output (rc=$PRC) -----"
+          cat "$POUT"
+          echo "----- end --proxy-only output -----"
+          [ "$PRC" -eq 0 ] || fail "--proxy-only exited with code $PRC"
+          grep -q "Verifying checksum" "$POUT" || fail "--proxy-only did not verify a checksum"
+          grep -qi "checksum mismatch" "$POUT" && fail "--proxy-only reported a checksum mismatch"
+          [ -x "$PBIN/kei-proxy" ] || fail "--proxy-only did not install kei-proxy"
+          if [ -e "$PBIN/kei" ]; then
+            fail "--proxy-only must not install kei"
+          fi
+          PVER="$("$PBIN/kei-proxy" --version)" || fail "kei-proxy --version failed after --proxy-only"
+          case "$PVER" in
+            *"$PROXY_VERSION"*) echo "PASS: kei-proxy $PVER matches pin $PROXY_VERSION" ;;
+            *) fail "kei-proxy version '$PVER' does not match pin $PROXY_VERSION" ;;
+          esac
+          [ -f "$PBIN/.kei-install-manifest" ] || fail "--proxy-only did not write the install manifest"
+          echo "PASS: --proxy-only"
+
+          # ---- --uninstall after --proxy-only ----
+          echo ">>> $SHELL_NAME scripts/install.sh --uninstall -d $PBIN"
+          set +e
+          "$SHELL_NAME" scripts/install.sh --uninstall -d "$PBIN" >"$RUNNER_TEMP/uninstall-proxy.txt" 2>&1
+          UPRC=$?
+          set -e
+          cat "$RUNNER_TEMP/uninstall-proxy.txt"
+          [ "$UPRC" -eq 0 ] || fail "--uninstall (proxy-only) exited with code $UPRC"
+          if [ -e "$PBIN/kei-proxy" ]; then
+            fail "--uninstall did not remove kei-proxy"
+          fi
+          if [ -e "$PBIN/.kei-install-manifest" ]; then
+            fail "--uninstall did not remove the manifest"
+          fi
+          echo "PASS: --uninstall (after --proxy-only)"
+
+          # ---- full install, then --uninstall ----
+          FBIN="$RUNNER_TEMP/full/bin"
+          rm -rf "$FBIN"
+          mkdir -p "$FBIN"
+          set +e
+          "$SHELL_NAME" scripts/install.sh -v "$VERSION" -d "$FBIN" >"$RUNNER_TEMP/full-output.txt" 2>&1
+          FRC=$?
+          set -e
+          [ "$FRC" -eq 0 ] || fail "full install exited with code $FRC"
+          [ -f "$FBIN/.kei-install-manifest" ] || fail "full install did not write the install manifest"
+          grep -qx "kei" "$FBIN/.kei-install-manifest" || fail "manifest does not list kei"
+          grep -qx "kei-proxy" "$FBIN/.kei-install-manifest" || fail "manifest does not list kei-proxy"
+          echo ">>> $SHELL_NAME scripts/install.sh --uninstall -d $FBIN"
+          set +e
+          "$SHELL_NAME" scripts/install.sh --uninstall -d "$FBIN" >"$RUNNER_TEMP/uninstall-full.txt" 2>&1
+          UFRC=$?
+          set -e
+          cat "$RUNNER_TEMP/uninstall-full.txt"
+          [ "$UFRC" -eq 0 ] || fail "--uninstall (full) exited with code $UFRC"
+          if [ -e "$FBIN/kei" ]; then
+            fail "--uninstall did not remove kei"
+          fi
+          if [ -e "$FBIN/kei-proxy" ]; then
+            fail "--uninstall did not remove kei-proxy"
+          fi
+          if [ -e "$FBIN/.kei-install-manifest" ]; then
+            fail "--uninstall did not remove the manifest"
+          fi
+          echo "PASS: --uninstall (after full install)"
+
+          echo "ALL ASSERTIONS PASSED ($SHELL_NAME on ${{ matrix.runner }})"
+
+  proxy-only-uninstall-alpine:
+    name: proxy-only + uninstall (alpine / busybox ash)
+    needs: [resolve-version, resolve-proxy-version]
+    runs-on: ubuntu-24.04
+    container:
+      image: alpine:latest
+    env:
+      SHELL_NAME: sh
+      VERSION: ${{ needs.resolve-version.outputs.version }}
+      PROXY_VERSION: ${{ needs.resolve-proxy-version.outputs.version }}
+    steps:
+      - name: Install curl (not in the base alpine image)
+        run: apk add --no-cache curl
+
+      - uses: actions/checkout@v4
+
+      - name: Test --proxy-only and --uninstall
+        run: |
+          set -eu
+          fail() { echo "FAIL: $*" >&2; exit 1; }
+
+          # ---- --proxy-only: installs only kei-proxy from kei-proxy/<ver>/ ----
+          PBIN="$RUNNER_TEMP/proxy-only/bin"
+          rm -rf "$PBIN"
+          mkdir -p "$PBIN"
+          POUT="$RUNNER_TEMP/proxy-only-output.txt"
+          echo ">>> $SHELL_NAME scripts/install.sh --proxy-only -d $PBIN"
+          set +e
+          "$SHELL_NAME" scripts/install.sh --proxy-only -d "$PBIN" >"$POUT" 2>&1
+          PRC=$?
+          set -e
+          echo "----- --proxy-only output (rc=$PRC) -----"
+          cat "$POUT"
+          echo "----- end --proxy-only output -----"
+          [ "$PRC" -eq 0 ] || fail "--proxy-only exited with code $PRC"
+          grep -q "Verifying checksum" "$POUT" || fail "--proxy-only did not verify a checksum"
+          grep -qi "checksum mismatch" "$POUT" && fail "--proxy-only reported a checksum mismatch"
+          [ -x "$PBIN/kei-proxy" ] || fail "--proxy-only did not install kei-proxy"
+          if [ -e "$PBIN/kei" ]; then
+            fail "--proxy-only must not install kei"
+          fi
+          PVER="$("$PBIN/kei-proxy" --version)" || fail "kei-proxy --version failed after --proxy-only"
+          case "$PVER" in
+            *"$PROXY_VERSION"*) echo "PASS: kei-proxy $PVER matches pin $PROXY_VERSION" ;;
+            *) fail "kei-proxy version '$PVER' does not match pin $PROXY_VERSION" ;;
+          esac
+          [ -f "$PBIN/.kei-install-manifest" ] || fail "--proxy-only did not write the install manifest"
+          echo "PASS: --proxy-only"
+
+          # ---- --uninstall after --proxy-only ----
+          echo ">>> $SHELL_NAME scripts/install.sh --uninstall -d $PBIN"
+          set +e
+          "$SHELL_NAME" scripts/install.sh --uninstall -d "$PBIN" >"$RUNNER_TEMP/uninstall-proxy.txt" 2>&1
+          UPRC=$?
+          set -e
+          cat "$RUNNER_TEMP/uninstall-proxy.txt"
+          [ "$UPRC" -eq 0 ] || fail "--uninstall (proxy-only) exited with code $UPRC"
+          if [ -e "$PBIN/kei-proxy" ]; then
+            fail "--uninstall did not remove kei-proxy"
+          fi
+          if [ -e "$PBIN/.kei-install-manifest" ]; then
+            fail "--uninstall did not remove the manifest"
+          fi
+          echo "PASS: --uninstall (after --proxy-only)"
+
+          # ---- full install, then --uninstall ----
+          FBIN="$RUNNER_TEMP/full/bin"
+          rm -rf "$FBIN"
+          mkdir -p "$FBIN"
+          set +e
+          "$SHELL_NAME" scripts/install.sh -v "$VERSION" -d "$FBIN" >"$RUNNER_TEMP/full-output.txt" 2>&1
+          FRC=$?
+          set -e
+          [ "$FRC" -eq 0 ] || fail "full install exited with code $FRC"
+          [ -f "$FBIN/.kei-install-manifest" ] || fail "full install did not write the install manifest"
+          grep -qx "kei" "$FBIN/.kei-install-manifest" || fail "manifest does not list kei"
+          grep -qx "kei-proxy" "$FBIN/.kei-install-manifest" || fail "manifest does not list kei-proxy"
+          echo ">>> $SHELL_NAME scripts/install.sh --uninstall -d $FBIN"
+          set +e
+          "$SHELL_NAME" scripts/install.sh --uninstall -d "$FBIN" >"$RUNNER_TEMP/uninstall-full.txt" 2>&1
+          UFRC=$?
+          set -e
+          cat "$RUNNER_TEMP/uninstall-full.txt"
+          [ "$UFRC" -eq 0 ] || fail "--uninstall (full) exited with code $UFRC"
+          if [ -e "$FBIN/kei" ]; then
+            fail "--uninstall did not remove kei"
+          fi
+          if [ -e "$FBIN/kei-proxy" ]; then
+            fail "--uninstall did not remove kei-proxy"
+          fi
+          if [ -e "$FBIN/.kei-install-manifest" ]; then
+            fail "--uninstall did not remove the manifest"
+          fi
+          echo "PASS: --uninstall (after full install)"
 
           echo "ALL ASSERTIONS PASSED (busybox ash on alpine)"
