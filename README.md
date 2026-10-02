@@ -157,6 +157,14 @@ kei bot agents add --installation INSTALLATION_ID --agent AGENT_ID --default
 kei bot agents remove --installation INSTALLATION_ID --agent AGENT_ID
 ```
 
+`kei bot status` includes the installation lifecycle fields above and, when the
+server has reported it, a read-only `policy_bundle` snapshot with its state,
+version, revision, digest, timestamps, and safe reason code. A `null` value means
+no compatible health report is available; it does not change installation
+`status` or `binding_status`. The CLI never prints bundle contents or runtime
+credentials. Health projection availability depends on the runtime/catalog
+producer rollout.
+
 To create or rotate a runtime credential for a command pipeline, stdout must
 be redirected or piped; the CLI refuses to print a credential to an
 interactive terminal:

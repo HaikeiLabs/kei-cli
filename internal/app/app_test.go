@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -312,6 +313,137 @@ func TestBotStatusPrintsSafeInstallationMetadata(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "kh_live_") || !strings.Contains(stdout.String(), `"binding_status":"verified"`) {
 		t.Fatalf("unsafe or incomplete status output: %s", stdout.String())
+	}
+}
+
+func TestBotStatusRendersApprovedPolicyBundleHealth(t *testing.T) {
+	installationID := "12345678-1234-1234-1234-123456789012"
+	// This active read projection is copied byte-for-byte from the canonical
+	// kei-connector-contracts PR #14 fixture. State variants below retain its
+	// exact field set and are shaped according to the same approved contract.
+	canonicalFixture, err := os.ReadFile("testdata/runtime-policy-bundle-health-read-active.v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var canonical map[string]any
+	if err := json.Unmarshal(canonicalFixture, &canonical); err != nil {
+		t.Fatal(err)
+	}
+	states := []struct {
+		state      string
+		reasonCode string
+		cold       bool
+	}{
+		{state: "cold", reasonCode: "bundle_missing", cold: true},
+		{state: "active"},
+		{state: "stale_but_valid", reasonCode: "bundle_stale"},
+		{state: "expired", reasonCode: "bundle_expired"},
+		{state: "invalid", reasonCode: "integrity_rejected"},
+		{state: "unsupported", reasonCode: "schema_unsupported"},
+		{state: "revoked", reasonCode: "runtime_revoked"},
+	}
+
+	for _, tc := range states {
+		t.Run(tc.state, func(t *testing.T) {
+			var health map[string]any
+			encoded, err := json.Marshal(canonical)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(encoded, &health); err != nil {
+				t.Fatal(err)
+			}
+			health["state"] = tc.state
+			health["reason_code"] = nil
+			if tc.reasonCode != "" {
+				health["reason_code"] = tc.reasonCode
+			}
+			if tc.cold {
+				health["bundle_version"] = nil
+				health["policy_revision"] = nil
+				health["bundle_digest"] = nil
+				health["accepted_at"] = nil
+				health["expires_at"] = nil
+			}
+			response, err := json.Marshal(map[string]any{
+				"id": installationID, "status": "active", "binding_status": "verified", "policy_bundle": health,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			store := &memoryCredentialStore{server: "", token: "cli-session-token"}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/api/cli/runtime-installations/"+installationID {
+					t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+				}
+				if got := r.Header.Get("Authorization"); got != "Bearer cli-session-token" {
+					t.Fatalf("Authorization = %q", got)
+				}
+				_, _ = w.Write(response)
+			}))
+			defer server.Close()
+			t.Setenv("KEI_WEB_URL", server.URL)
+			store.server = server.URL
+			var stdout, stderr bytes.Buffer
+			if code := runBotStatusCommand([]string{"--installation", installationID}, &stdout, &stderr, server.Client(), store); code != 0 {
+				t.Fatalf("status command exit = %d, stderr=%s", code, stderr.String())
+			}
+			var got runtimeInstallationStatus
+			if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+				t.Fatalf("decode CLI output: %v; output=%s", err, stdout.String())
+			}
+			if got.Status != "active" || got.BindingStatus != "verified" {
+				t.Fatalf("installation lifecycle fields changed: %#v", got)
+			}
+			if got.PolicyBundle == nil || got.PolicyBundle.SchemaVersion != 1 || got.PolicyBundle.State != tc.state || got.PolicyBundle.ReportedAt == nil {
+				t.Fatalf("policy bundle health not rendered: %#v", got.PolicyBundle)
+			}
+			if tc.cold {
+				if got.PolicyBundle.BundleVersion != nil || got.PolicyBundle.PolicyRevision != nil || got.PolicyBundle.BundleDigest != nil || got.PolicyBundle.ReasonCode == nil || *got.PolicyBundle.ReasonCode != "bundle_missing" {
+					t.Fatalf("cold state fields do not match the approved contract: %#v", got.PolicyBundle)
+				}
+			} else if got.PolicyBundle.BundleVersion == nil || *got.PolicyBundle.BundleVersion != 42 || got.PolicyBundle.PolicyRevision == nil || *got.PolicyBundle.PolicyRevision != 7 {
+				t.Fatalf("accepted bundle metadata was not rendered: %#v", got.PolicyBundle)
+			}
+			var rendered map[string]json.RawMessage
+			if err := json.Unmarshal(stdout.Bytes(), &rendered); err != nil {
+				t.Fatal(err)
+			}
+			var healthFields map[string]json.RawMessage
+			if err := json.Unmarshal(rendered["policy_bundle"], &healthFields); err != nil {
+				t.Fatal(err)
+			}
+			wantFields := []string{"schema_version", "state", "bundle_version", "policy_revision", "bundle_digest", "checked_at", "accepted_at", "expires_at", "reason_code", "reported_at"}
+			if len(healthFields) != len(wantFields) {
+				t.Fatalf("policy_bundle fields = %v, want exactly %v", healthFields, wantFields)
+			}
+			for _, field := range wantFields {
+				if _, ok := healthFields[field]; !ok {
+					t.Errorf("policy_bundle missing approved field %q", field)
+				}
+			}
+			if strings.Contains(stdout.String(), "cli-session-token") || strings.Contains(stdout.String(), "runtime_token") {
+				t.Fatalf("status output exposed a credential: %s", stdout.String())
+			}
+		})
+	}
+}
+
+func TestBotStatusRendersNullWhenNoPolicyBundleReport(t *testing.T) {
+	installationID := "12345678-1234-1234-1234-123456789012"
+	store := &memoryCredentialStore{token: "cli-session-token"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"id":"` + installationID + `","status":"active","binding_status":"verified","policy_bundle":null}`))
+	}))
+	defer server.Close()
+	t.Setenv("KEI_WEB_URL", server.URL)
+	store.server = server.URL
+	var stdout, stderr bytes.Buffer
+	if code := runBotStatusCommand([]string{"--installation", installationID}, &stdout, &stderr, server.Client(), store); code != 0 {
+		t.Fatalf("status command exit = %d, stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"policy_bundle":null`) {
+		t.Fatalf("missing report was not rendered as null: %s", stdout.String())
 	}
 }
 
