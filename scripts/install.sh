@@ -1,5 +1,5 @@
-#!/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
 # install.sh — Download and install the kei CLI from AWS S3.
 #
@@ -11,9 +11,11 @@ set -euo pipefail
 #
 # Usage:
 #   export AWS_S3_RELEASES_URL_BASE=https://kei-cli-releases.s3.us-east-1.amazonaws.com
-#   curl -fsSL "$AWS_S3_RELEASES_URL_BASE/kei-cli/install.sh" | bash
-#   curl -fsSL "$AWS_S3_RELEASES_URL_BASE/kei-cli/install.sh" | bash -s -- -d ~/.local/bin
-#   curl -fsSL "$AWS_S3_RELEASES_URL_BASE/kei-cli/install.sh" | bash -s -- -v 0.2.0
+#   curl -fsSL "$AWS_S3_RELEASES_URL_BASE/kei-cli/install.sh" | sh
+#   curl -fsSL "$AWS_S3_RELEASES_URL_BASE/kei-cli/install.sh" | sh -s -- -d ~/.local/bin
+#   curl -fsSL "$AWS_S3_RELEASES_URL_BASE/kei-cli/install.sh" | sh -s -- -v 0.2.0
+#   curl -fsSL https://kei-cli-releases.s3.us-east-1.amazonaws.com/kei-cli/install.sh \
+#     | sh -s -- -d "$HOME/.local/bin"
 #
 # Flags:
 #   -v VERSION   Version tag to install (default: latest)
@@ -79,13 +81,21 @@ case "$(uname -m)" in
     ;;
 esac
 
+# Rosetta hint on Darwin
+if [ "$OS" = "macOS" ] && [ "$ARCH" = "x86_64" ]; then
+  if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = "1" ]; then
+    echo "Warning: Running under Rosetta 2 on Apple Silicon." >&2
+    echo "  For a native arm64 build, use: arch -arm64 curl -fsSL ... | sh" >&2
+  fi
+fi
+
 PROJECT="kei-cli"
 
 # ---- Detect checksum tool --------------------------------------------------
 SHA_CMD=""
-if command -v shasum &>/dev/null; then
+if command -v shasum >/dev/null 2>&1; then
   SHA_CMD="shasum -a 256"
-elif command -v sha256sum &>/dev/null; then
+elif command -v sha256sum >/dev/null 2>&1; then
   SHA_CMD="sha256sum"
 else
   echo "Error: no SHA-256 checksum tool found (tried shasum, sha256sum)." >&2
@@ -95,9 +105,6 @@ fi
 
 # ---- Resolve latest version ------------------------------------------------
 if [ "$VERSION" = "latest" ]; then
-  # Fetch the latest version from the S3 bucket listing. This assumes the
-  # bucket listing is enabled (or a CDN lists directories). If the bucket
-  # does not list keys, pass an explicit version via -v.
   LATEST_URL="$AWS_S3_RELEASES_URL_BASE/$PROJECT/latest.txt"
   RESOLVED="$(curl -fsSL --connect-timeout 10 "$LATEST_URL" 2>/dev/null || true)"
   if [ -n "$RESOLVED" ]; then
@@ -136,7 +143,7 @@ curl -fsSL --connect-timeout 15 --retry 3 "$CHECKSUM_URL" -o "$TMP_DIR/$CHECKSUM
 # ---- Verify GPG signature (optional) ---------------------------------------
 # The checksums file is signed with the kei-cli-releases@haikeilabs.com GPG key.
 # If the signature and GPG are available, verify; otherwise warn and skip.
-if command -v gpg &>/dev/null; then
+if command -v gpg >/dev/null 2>&1; then
   if curl -fsSL --connect-timeout 10 "$SIGNATURE_URL" -o "$TMP_DIR/$SIGNATURE_NAME" 2>/dev/null; then
     echo "Verifying GPG signature..." >&2
     if gpg --verify "$TMP_DIR/$SIGNATURE_NAME" "$TMP_DIR/$CHECKSUM_NAME" 2>/dev/null; then
@@ -156,8 +163,7 @@ fi
 
 # ---- Verify checksum -------------------------------------------------------
 echo "Verifying checksum..." >&2
-# Try batch verification first (shasum -c / sha256sum -c), then fall back to
-# manual comparison for portability.
+MANUAL_VERIFY=""
 if [ "$SHA_CMD" = "shasum -a 256" ]; then
   (cd "$TMP_DIR" && shasum -a 256 -c "$CHECKSUM_NAME" --ignore-missing 2>/dev/null) || {
     MANUAL_VERIFY=1
@@ -196,6 +202,14 @@ if [ ! -f "$BINARY" ]; then
 fi
 
 mkdir -p "$INSTALL_DIR"
+
+# Check that INSTALL_DIR is writable
+if ! touch "$INSTALL_DIR/.kei-write-test" 2>/dev/null; then
+  echo "Permission denied writing to $INSTALL_DIR. Re-run with -d \"\$HOME/.local/bin\" or with sudo." >&2
+  exit 1
+fi
+rm -f "$INSTALL_DIR/.kei-write-test"
+
 install -m 0755 "$BINARY" "$INSTALL_DIR/kei"
 
 PROXY_BINARY="$TMP_DIR/kei-proxy"
@@ -208,7 +222,11 @@ echo "Installed kei $VERSION to $INSTALL_DIR/kei" >&2
 echo "Ensure $INSTALL_DIR is on your PATH." >&2
 
 # ---- Verify installation ---------------------------------------------------
-if command -v kei &>/dev/null; then
-  INSTALLED_VERSION="$(kei --version 2>/dev/null || true)"
+if [ -x "$INSTALL_DIR/kei" ]; then
+  INSTALLED_VERSION="$("$INSTALL_DIR/kei" --version 2>/dev/null || true)"
   echo "Verified: $INSTALLED_VERSION" >&2
+fi
+if [ -x "$INSTALL_DIR/kei-proxy" ]; then
+  PROXY_VERSION="$("$INSTALL_DIR/kei-proxy" --version 2>/dev/null || true)"
+  echo "Verified: $PROXY_VERSION" >&2
 fi
