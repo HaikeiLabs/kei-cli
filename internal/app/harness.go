@@ -65,17 +65,16 @@ type bundlePolicy struct {
 }
 
 type bundleHarness struct {
-	ID      string  `json:"id"`
-	Kind    string  `json:"kind"`
-	AgentID *string `json:"agent_id"`
+	AgentID string `json:"agent_id"`
+	Kind    string `json:"kind"`
 }
 
 type harnessResource struct {
-	ID             string  `json:"id"`
-	InstallationID string  `json:"installation_id"`
-	Kind           string  `json:"kind"`
-	DisplayName    string  `json:"display_name"`
-	AgentID        *string `json:"agent_id,omitempty"`
+	InstallationID string `json:"installation_id"`
+	AgentID        string `json:"agent_id"`
+	Kind           string `json:"kind"`
+	AgentName      string `json:"agent_name"`
+	LastSyncedAt   string `json:"last_synced_at,omitempty"`
 }
 
 func runHarnessCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
@@ -146,39 +145,29 @@ func runHarnessAdd(args []string, stdout, stderr io.Writer, client *http.Client,
 	flags.SetOutput(stderr)
 	installation := flags.String("installation", "", "runtime installation ID")
 	kind := flags.String("kind", "", "claude_code, codex, opencode, or custom")
-	displayName := flags.String("display-name", "", "display name for this harness")
-	nameAlias := flags.String("name", "", "alias for --display-name")
-	agentID := flags.String("agent", "", "optional assigned agent ID")
+	agentID := flags.String("agent", "", "assigned agent ID")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		return 2
 	}
-	if *displayName == "" {
-		*displayName = *nameAlias
-	}
-	if !isUUID(*installation) || !validHarnessKind(*kind) || strings.TrimSpace(*displayName) == "" {
-		fmt.Fprintln(stderr, "harness add requires --installation UUID, --kind claude_code|codex|opencode|custom, and --display-name NAME")
+	if !isUUID(*installation) || !validHarnessKind(*kind) || !isUUID(*agentID) {
+		fmt.Fprintln(stderr, "harness add requires --installation UUID, --kind claude_code|codex|opencode|custom, and --agent UUID")
 		return 2
-	}
-	var agent *string
-	if *agentID != "" {
-		if !isUUID(*agentID) {
-			fmt.Fprintln(stderr, "--agent must be a UUID")
-			return 2
-		}
-		agent = agentID
 	}
 	baseURL, token, ok := harnessSession(store, stderr)
 	if !ok {
 		return 1
 	}
 	body := struct {
-		Kind        string  `json:"kind"`
-		DisplayName string  `json:"display_name"`
-		AgentID     *string `json:"agent_id,omitempty"`
-	}{*kind, strings.TrimSpace(*displayName), agent}
+		Kind    string `json:"kind"`
+		AgentID string `json:"agent_id"`
+	}{*kind, *agentID}
 	payload, status, err := harnessRequest(context.Background(), client, baseURL, token, http.MethodPost, harnessCollectionPath(*installation), body)
 	if err != nil || status < 200 || status > 299 {
-		fmt.Fprintf(stderr, "harness add: %s\n", harnessResponseError(payload, status, err))
+		msg := harnessResponseError(payload, status, err)
+		fmt.Fprintf(stderr, "harness add: %s\n", msg)
+		if status >= 400 && status < 500 && (strings.Contains(msg, "agent") || strings.Contains(msg, "assign")) {
+			fmt.Fprintln(stderr, "Hint: ensure the agent is assigned to the installation: kei bot agents add")
+		}
 		return 1
 	}
 	var result harnessResource
@@ -186,7 +175,7 @@ func runHarnessAdd(args []string, stdout, stderr io.Writer, client *http.Client,
 		fmt.Fprintf(stderr, "harness add: decode response: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "Added %s harness %s (%s).\n", result.Kind, result.ID, result.DisplayName)
+	fmt.Fprintf(stdout, "Added %s harness (%s) for agent %s.\n", result.Kind, result.AgentName, result.AgentID)
 	return 0
 }
 
@@ -255,7 +244,11 @@ func runHarnessList(args []string, stdout, stderr io.Writer, client *http.Client
 		return 0
 	}
 	for _, h := range harnesses {
-		fmt.Fprintf(stdout, "%s\t%s\t%s\n", h.ID, h.Kind, h.DisplayName)
+		if h.LastSyncedAt != "" {
+			fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", h.AgentName, h.Kind, h.AgentID, h.LastSyncedAt)
+		} else {
+			fmt.Fprintf(stdout, "%s\t%s\t%s\n", h.AgentName, h.Kind, h.AgentID)
+		}
 	}
 	return 0
 }
@@ -264,30 +257,30 @@ func runHarnessRemove(args []string, stdout, stderr io.Writer, client *http.Clie
 	flags := flag.NewFlagSet("harness remove", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	installation := flags.String("installation", "", "runtime installation ID")
-	harnessID, err := parsePolicyFlags(flags, args)
+	agentID, err := parsePolicyFlags(flags, args)
 	if err != nil {
 		fmt.Fprintf(stderr, "harness remove: %v\n", err)
 		return 2
 	}
-	if !isUUID(*installation) || !isUUID(harnessID) {
-		fmt.Fprintln(stderr, "harness remove requires HARNESS_ID and --installation UUID")
+	if !isUUID(*installation) || !isUUID(agentID) {
+		fmt.Fprintln(stderr, "harness remove requires AGENT_ID and --installation UUID")
 		return 2
 	}
 	baseURL, token, ok := harnessSession(store, stderr)
 	if !ok {
 		return 1
 	}
-	path := harnessCollectionPath(*installation) + "/" + harnessID
+	path := harnessCollectionPath(*installation) + "/" + agentID
 	payload, status, err := harnessRequest(context.Background(), client, baseURL, token, http.MethodDelete, path, nil)
 	if err != nil || status < 200 || status > 299 {
 		fmt.Fprintf(stderr, "harness remove: %s\n", harnessResponseError(payload, status, err))
 		return 1
 	}
-	if err := removeLocalHarness(harnessID); err != nil {
+	if err := removeLocalHarness(agentID); err != nil {
 		fmt.Fprintf(stderr, "harness remove: removed remotely but could not clean local entries: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "Removed harness %s and its Kei-managed local entries.\n", harnessID)
+	fmt.Fprintf(stdout, "Removed harness for agent %s and its Kei-managed local entries.\n", agentID)
 	return 0
 }
 
@@ -417,7 +410,7 @@ func syncHarnessBundle(ctx context.Context, config runtimeConfig, kindFilter str
 		return 0
 	}
 	for _, h := range selected {
-		if !validHarnessKind(h.Kind) || !isUUID(h.ID) {
+		if !validHarnessKind(h.Kind) || !isUUID(h.AgentID) {
 			fmt.Fprintf(stderr, "harness sync: invalid harness in bundle\n")
 			return 1
 		}
@@ -432,7 +425,7 @@ func syncHarnessBundle(ctx context.Context, config runtimeConfig, kindFilter str
 		}
 		if !dryRun {
 			if err := reportHarnessSync(ctx, client, config, h, bundle, payload, now()); err != nil {
-				fmt.Fprintf(stderr, "harness sync: report sync for %s: %v\n", h.ID, err)
+				fmt.Fprintf(stderr, "harness sync: report sync for %s: %v\n", h.AgentID, err)
 				return 1
 			}
 		}
@@ -454,7 +447,7 @@ func isLoopbackHost(host string) bool {
 func reportHarnessSync(ctx context.Context, client *http.Client, config runtimeConfig, h bundleHarness, bundle Bundle, payload []byte, now time.Time) error {
 	digest := sha256.Sum256(payload)
 	body := map[string]any{"last_synced_at": now.UTC().Format(time.RFC3339Nano), "last_synced_bundle_version": bundle.BundleVersion, "last_synced_digest": "sha256:" + hex.EncodeToString(digest[:])}
-	path := "/api/v1/runtime/harnesses/" + h.ID + "?update_mask=last_synced_at,last_synced_bundle_version,last_synced_digest"
+	path := "/api/v1/runtime/harnesses/" + h.AgentID + "?update_mask=last_synced_at,last_synced_bundle_version,last_synced_digest"
 	_, status, err := harnessRequest(ctx, client, strings.TrimRight(config.ControlPlaneURL, "/"), config.RuntimeToken, http.MethodPatch, path, body)
 	if err != nil {
 		return err
@@ -481,11 +474,11 @@ type fileLedger struct {
 }
 
 func syncOneHarness(bundle Bundle, h bundleHarness, dryRun bool, stdout io.Writer, renderer harnessRenderer, timestamp time.Time) error {
-	files, err := harnessFiles(h.Kind, h.ID)
+	files, err := harnessFiles(h.Kind, h.AgentID)
 	if err != nil {
 		return err
 	}
-	ledgerPath := harnessLedgerPath(h.ID)
+	ledgerPath := harnessLedgerPath(h.AgentID)
 	prior := readLedger(ledgerPath)
 	if prior.Bundle > bundle.BundleVersion {
 		return fmt.Errorf("bundle version rollback: local %d, fetched %d", prior.Bundle, bundle.BundleVersion)
@@ -493,7 +486,7 @@ func syncOneHarness(bundle Bundle, h bundleHarness, dryRun bool, stdout io.Write
 	if prior.Bundle == bundle.BundleVersion && prior.Digest != "" && prior.Digest != bundle.PayloadDigest {
 		return fmt.Errorf("bundle payload changed without a version increase")
 	}
-	ledger := syncLedger{HarnessID: h.ID, Kind: h.Kind, Bundle: bundle.BundleVersion, Digest: bundle.PayloadDigest, NotAfter: bundle.NotAfter, Files: map[string]fileLedger{}}
+	ledger := syncLedger{HarnessID: h.AgentID, Kind: h.Kind, Bundle: bundle.BundleVersion, Digest: bundle.PayloadDigest, NotAfter: bundle.NotAfter, Files: map[string]fileLedger{}}
 	inputs := map[string][]byte{}
 	for _, path := range files {
 		cfg, err := os.ReadFile(path)
@@ -508,12 +501,12 @@ func syncOneHarness(bundle Bundle, h bundleHarness, dryRun bool, stdout io.Write
 		}
 		inputs[path] = cfg
 	}
-	rendered, err := renderer.Render(h.Kind, h.ID, bundle, inputs)
+	rendered, err := renderer.Render(h.Kind, h.AgentID, bundle, inputs)
 	if err != nil {
 		return err
 	}
 	outputs := rendered.Files
-	hooks, err := renderer.HookSpec(h.Kind, h.ID)
+	hooks, err := renderer.HookSpec(h.Kind, h.AgentID)
 	if err != nil {
 		return err
 	}
@@ -954,7 +947,7 @@ func (nativeHarnessRenderer) Render(kind, harnessID string, bundle Bundle, files
 	}
 	var selected *bundleHarness
 	for i := range bundle.Harnesses {
-		if bundle.Harnesses[i].ID == harnessID && bundle.Harnesses[i].Kind == kind {
+		if bundle.Harnesses[i].AgentID == harnessID && bundle.Harnesses[i].Kind == kind {
 			selected = &bundle.Harnesses[i]
 			break
 		}
@@ -1094,7 +1087,7 @@ func nativePermissionEntries(kind, harnessID string, harness *bundleHarness, pol
 }
 
 func policyScopeApplies(policy bundlePolicy, harness *bundleHarness) bool {
-	return policy.Scope.AgentID == nil || harness != nil && harness.AgentID != nil && *policy.Scope.AgentID == *harness.AgentID
+	return policy.Scope.AgentID == nil || harness != nil && policy.Scope.AgentID != nil && *policy.Scope.AgentID == harness.AgentID
 }
 
 func shellNativeEntry(kind, prefix string) string {
@@ -1123,8 +1116,8 @@ func harnessSourceApplies(source, kind, id string, h *bundleHarness) bool {
 	case source == "harness:"+kind, source == "harness:"+id:
 		return true
 	case source == "agent:*":
-		return h != nil && h.AgentID != nil
-	case h != nil && h.AgentID != nil && source == "agent:"+*h.AgentID:
+		return h != nil && h.AgentID != ""
+	case h != nil && h.AgentID != "" && source == "agent:"+h.AgentID:
 		return true
 	}
 	return false
