@@ -17,7 +17,7 @@ const testHarnessInstallationID = "66666666-6666-6666-6666-666666666666"
 
 func TestHarnessListUsesConsoleV1ProxyAndBearer(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		_, _ = w.Write([]byte(`{"harnesses":[{"id":"77777777-7777-7777-7777-777777777777","installation_id":"` + testHarnessInstallationID + `","kind":"custom"}]}`))
+		_, _ = w.Write([]byte(`{"harnesses":[{"installation_id":"` + testHarnessInstallationID + `","agent_id":"77777777-7777-7777-7777-777777777777","kind":"custom","agent_name":"My Agent"}]}`))
 	})
 	var stdoutBuf, stderrBuf bytes.Buffer
 	code := runHarnessCommand([]string{"list", "--installation", testHarnessInstallationID}, &stdoutBuf, &stderrBuf, server.Client(), store)
@@ -40,18 +40,18 @@ func TestHarnessAddAndRemoveUseAIPResource(t *testing.T) {
 		calls = append(calls, r)
 		if r.Method == http.MethodPost {
 			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"id":"77777777-7777-7777-7777-777777777777","kind":"custom","display_name":"Kei Assistant"}`))
+			_, _ = w.Write([]byte(`{"installation_id":"` + testHarnessInstallationID + `","agent_id":"77777777-7777-7777-7777-777777777777","kind":"custom","agent_name":"Kei Assistant"}`))
 		}
 	})
 	var stdout, stderr bytes.Buffer
-	code := runHarnessCommand([]string{"add", "--installation", testHarnessInstallationID, "--kind", "custom", "--name", "Kei Assistant"}, &stdout, &stderr, server.Client(), store)
+	code := runHarnessCommand([]string{"add", "--installation", testHarnessInstallationID, "--kind", "custom", "--agent", "77777777-7777-7777-7777-777777777777"}, &stdout, &stderr, server.Client(), store)
 	if code != 0 {
 		t.Fatalf("add exit=%d stderr=%s", code, stderr.String())
 	}
 	if len(calls) != 1 || calls[0].Method != http.MethodPost || calls[0].Path != harnessCollectionPath(testHarnessInstallationID) || calls[0].Auth != "Bearer cli-session-token" {
 		t.Fatalf("add request = %#v", calls)
 	}
-	if calls[0].Body["kind"] != "custom" || calls[0].Body["display_name"] != "Kei Assistant" {
+	if calls[0].Body["kind"] != "custom" || calls[0].Body["agent_id"] != "77777777-7777-7777-7777-777777777777" {
 		t.Fatalf("add body = %#v", calls[0].Body)
 	}
 	stdout.Reset()
@@ -69,10 +69,10 @@ func TestHarnessAddAndRemoveUseAIPResource(t *testing.T) {
 func TestHarnessListFollowsAIPPageTokens(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
 		if strings.Contains(r.Query, "page_token=next") {
-			_, _ = w.Write([]byte(`{"harnesses":[{"id":"88888888-8888-8888-8888-888888888888","kind":"opencode","display_name":"OpenCode"}],"next_page_token":""}`))
+			_, _ = w.Write([]byte(`{"harnesses":[{"installation_id":"` + testHarnessInstallationID + `","agent_id":"88888888-8888-8888-8888-888888888888","kind":"opencode","agent_name":"OpenCode"}],"next_page_token":""}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"harnesses":[{"id":"77777777-7777-7777-7777-777777777777","kind":"codex","display_name":"Codex"}],"next_page_token":"next"}`))
+		_, _ = w.Write([]byte(`{"harnesses":[{"installation_id":"` + testHarnessInstallationID + `","agent_id":"77777777-7777-7777-7777-777777777777","kind":"codex","agent_name":"Codex"}],"next_page_token":"next"}`))
 	})
 	var stdout, stderr bytes.Buffer
 	code := runHarnessCommand([]string{"list", "--installation", testHarnessInstallationID}, &stdout, &stderr, server.Client(), store)
@@ -174,7 +174,7 @@ func TestHarnessSyncFetchesBundleWritesManagedConfigWithBackupAndHook(t *testing
 			return
 		}
 		if r.URL.Path == "/api/v1/runtime/policy-bundles/current" {
-			_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v1","bundle_id":"bundle-1","bundle_version":2,"policy_revision":4,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harness_match_semantics":"kei.harness-match/v1","harnesses":[{"id":"` + harnessID + `","kind":"claude_code","agent_id":null}],"policy_set":{"policies":[]}}`))
+			_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v1","bundle_id":"bundle-1","bundle_version":2,"policy_revision":4,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harness_match_semantics":"kei.harness-match/v1","harnesses":[{"agent_id":"` + harnessID + `","kind":"claude_code"}],"policy_set":{"policies":[]}}`))
 			return
 		}
 		if r.Method == http.MethodPatch {
@@ -227,7 +227,7 @@ func TestHarnessSyncDryRunDoesNotWrite(t *testing.T) {
 			_, _ = w.Write([]byte(`{"id":"runtime-id","org_id":"org-id","platform":"cli"}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v1","bundle_id":"b","bundle_version":1,"policy_revision":1,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harness_match_semantics":"kei.harness-match/v1","harnesses":[{"id":"` + id + `","kind":"claude_code","agent_id":null}],"policy_set":{"policies":[]}}`))
+		_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v1","bundle_id":"b","bundle_version":1,"policy_revision":1,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harness_match_semantics":"kei.harness-match/v1","harnesses":[{"agent_id":"` + id + `","kind":"claude_code"}],"policy_set":{"policies":[]}}`))
 	}))
 	defer server.Close()
 	var stdout, stderr bytes.Buffer
@@ -279,11 +279,11 @@ func TestHarnessExpiredBundleRemovesOnlyManagedAllows(t *testing.T) {
 func TestHarnessRendererGoldenConfigs(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	policySet := json.RawMessage(`{"policies":[{"id":"p1","src_pattern":"*","dst_pattern":"shell:git status","action":"permit","enabled":true},{"id":"p2","src_pattern":"*","dst_pattern":"shell:rm","action":"deny","enabled":true},{"id":"p3","src_pattern":"user:someone","dst_pattern":"shell:secret","action":"permit","enabled":true},{"id":"p4","src_pattern":"*","dst_pattern":"shell:*","action":"permit","enabled":true}]}`)
-	bundle := Bundle{PolicySet: policySet, Harnesses: []bundleHarness{{ID: "77777777-7777-7777-7777-777777777777", Kind: "claude_code"}, {ID: "88888888-8888-8888-8888-888888888888", Kind: "codex"}, {ID: "99999999-9999-9999-9999-999999999999", Kind: "opencode"}}}
+	bundle := Bundle{PolicySet: policySet, Harnesses: []bundleHarness{{AgentID: "77777777-7777-7777-7777-777777777777", Kind: "claude_code"}, {AgentID: "88888888-8888-8888-8888-888888888888", Kind: "codex"}, {AgentID: "99999999-9999-9999-9999-999999999999", Kind: "opencode"}}}
 	cases := []struct{ kind, id, input, golden, path string }{
-		{"claude_code", bundle.Harnesses[0].ID, "claude.settings.input.json", "claude.settings.golden.json", filepath.Join(t.TempDir(), ".claude", "settings.json")},
-		{"codex", bundle.Harnesses[1].ID, "codex.rules.input", "codex.rules.golden", filepath.Join(t.TempDir(), ".codex", "rules", "kei.rules")},
-		{"opencode", bundle.Harnesses[2].ID, "opencode.input.json", "opencode.golden.json", filepath.Join(t.TempDir(), ".config", "opencode", "opencode.json")},
+		{"claude_code", bundle.Harnesses[0].AgentID, "claude.settings.input.json", "claude.settings.golden.json", filepath.Join(t.TempDir(), ".claude", "settings.json")},
+		{"codex", bundle.Harnesses[1].AgentID, "codex.rules.input", "codex.rules.golden", filepath.Join(t.TempDir(), ".codex", "rules", "kei.rules")},
+		{"opencode", bundle.Harnesses[2].AgentID, "opencode.input.json", "opencode.golden.json", filepath.Join(t.TempDir(), ".config", "opencode", "opencode.json")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.kind, func(t *testing.T) {
@@ -343,7 +343,7 @@ func TestHarnessSyncCustomSkipsFilesAndReports(t *testing.T) {
 		case "/api/v1/runtime/whoami":
 			_, _ = w.Write([]byte(`{"id":"runtime-id","org_id":"org-id","platform":"cli"}`))
 		case "/api/v1/runtime/policy-bundles/current":
-			_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v1","bundle_id":"bundle-1","bundle_version":1,"policy_revision":1,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harness_match_semantics":"kei.harness-match/v1","harnesses":[{"id":"` + id + `","kind":"custom"}],"policy_set":{"policies":[]}}`))
+			_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v1","bundle_id":"bundle-1","bundle_version":1,"policy_revision":1,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harness_match_semantics":"kei.harness-match/v1","harnesses":[{"agent_id":"` + id + `","kind":"custom"}],"policy_set":{"policies":[]}}`))
 		case "/api/v1/runtime/harnesses/" + id:
 			reported = r.Method == http.MethodPatch && r.URL.Query().Get("update_mask") == "last_synced_at,last_synced_bundle_version,last_synced_digest"
 			w.WriteHeader(http.StatusOK)
