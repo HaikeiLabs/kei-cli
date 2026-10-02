@@ -23,13 +23,17 @@ Check these before you cut a release:
   `kei-cli-releases@haikeilabs.com`.
 - **Bundled proxy exists.** The kei-proxy version the release will bundle
   must already be published at
-  `s3://kei-cli-releases/kei-proxy/<version>/`. That is the
-  `KEI_PROXY_VERSION` repository variable, or `v0.1.0` when it is unset. To
-  ship a newer proxy, set the variable first:
+  `s3://kei-cli-releases/kei-proxy/<version>/`. The version is read from the
+  `KEI_PROXY_VERSION` file at the repo root. To ship a newer proxy, edit that
+  file first (one line, `vX.Y.Z`):
 
   ```sh
-  gh variable set KEI_PROXY_VERSION -R HaikeiLabs/kei-cli --body v0.1.11
+  echo v0.1.16 > KEI_PROXY_VERSION
+  git add KEI_PROXY_VERSION && git commit -m "chore: bump kei-proxy pin to v0.1.16"
   ```
+
+  The PR CI workflow automatically verifies that the pin is well-formed and
+  that the artifact exists and matches.
 
 - **Pick the version.** Find the current stable version with
   `git fetch --tags origin && git tag -l 'v*' --sort=-v:refname | head -3`
@@ -137,7 +141,7 @@ Find the failing step in the log:
 | Import GPG signing key / Verify GPG key | `GORELEASER_SIGNING_KEY` missing, expired, or not for `kei-cli-releases@haikeilabs.com` | Fix the secret in the `release` environment |
 | Validate runner AWS identity | Runner Pod lost its IRSA role | Fix the runner deployment |
 | Validate S3 bucket accessibility | Role lacks `s3:ListBucket` on the `kei-cli/` prefix | Fix the IAM policy |
-| Validate pinned kei-proxy artifact prefix | `KEI_PROXY_VERSION` points at a proxy release that does not exist | Publish that proxy or change the variable |
+| Validate pinned kei-proxy artifact prefix | The `KEI_PROXY_VERSION` pin file points at a proxy release that does not exist | Publish that proxy or update the pin file |
 | Run Goreleaser | Build error, or upload denied | Read the GoReleaser output |
 | Verify no credentials leaked | A credential pattern appeared in checksums or `install.sh` | **Stop.** Treat it as an incident before retrying |
 
