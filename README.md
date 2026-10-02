@@ -19,11 +19,11 @@ detects your OS and architecture and defaults to `/usr/local/bin`:
 # Install the latest version to a user-writable directory:
 export PATH="$HOME/.local/bin:$PATH"
 curl -fsSL "https://kei-cli-releases.s3.us-east-1.amazonaws.com/kei-cli/install.sh" \
-  | bash -s -- -d "$HOME/.local/bin"
+  | sh -s -- -d "$HOME/.local/bin"
 
 # Install a specific version:
 curl -fsSL "https://kei-cli-releases.s3.us-east-1.amazonaws.com/kei-cli/install.sh" \
-  | bash -s -- -v 0.2.0 -d "$HOME/.local/bin"
+  | sh -s -- -v 0.2.0 -d "$HOME/.local/bin"
 ```
 
 After installing, verify:
@@ -384,7 +384,7 @@ using either method:
 
 ```sh
 curl -fsSL "https://kei-cli-releases.s3.us-east-1.amazonaws.com/kei-cli/install.sh" \
-  | bash -s -- -d "$HOME/.local/bin"
+  | sh -s -- -d "$HOME/.local/bin"
 ```
 
 The old `go install` path produced a binary named `kei-cli`, so after

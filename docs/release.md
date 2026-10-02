@@ -104,7 +104,7 @@ For an end-to-end check, install into a scratch directory and check the
 version:
 
 ```sh
-curl -fsSL "$BASE/install.sh" | bash -s -- -v "$V" -d "$(mktemp -d)"
+curl -fsSL "$BASE/install.sh" | sh -s -- -v "$V" -d "$(mktemp -d)"
 ```
 
 The installer prints `Installed kei <version> to <dir>/kei`. Run
