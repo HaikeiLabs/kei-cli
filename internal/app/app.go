@@ -110,6 +110,8 @@ func Main(version, command string, args []string, stdout, stderr io.Writer, stdi
 		return runPoliciesCommand(args, stdout, stderr, stdin, &http.Client{Timeout: 30 * time.Second}, osKeychainStore{})
 	case "harness":
 		return runHarnessCommand(args, stdout, stderr, &http.Client{Timeout: 30 * time.Second}, osKeychainStore{})
+	case "audit":
+		return runAuditCommand(args, stdout, stderr, &http.Client{Timeout: 15 * time.Second}, osKeychainStore{})
 	case "upgrade":
 		return runUpgradeCommand(args, stdout, stderr, nil, os.Executable, os.Getenv)
 	case "version", "--version", "-v":
@@ -128,6 +130,11 @@ func Main(version, command string, args []string, stdout, stderr io.Writer, stdi
 func PrintUsage(w io.Writer) {
 	fmt.Fprintln(w, "Kei CLI")
 	fmt.Fprintln(w, "\nUsage:\n  kei setup [--config PATH] [--control-plane-url URL] [--runtime-token TOKEN]\n  kei runtime bootstrap [--config PATH] [--proxy-path PATH]\n  kei login [--no-browser]\n  kei logout\n  kei upgrade [--version VERSION]\n  kei bot list [--json] [--all]\n  kei bot init --platform cli|teams|discord|slack --name NAME [--agent ID] [--workspace WORKSPACE]\n  kei bot credential --installation ID --workspace WORKSPACE [--rotate]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default]\n  kei bot status --installation ID\n  kei bot delete --installation ID --yes\n  kei workspaces list [--json]\n  kei connectors create|list|get|reconnect|delete --workspace WORKSPACE\n  kei policies list|get|create|update|delete|import --workspace WORKSPACE\n  kei model-profiles list|get|create|update|delete|test|set-default\n  kei credential-store get|put\n  kei --version")
+	fmt.Fprintln(w, "  kei audit keys create [--identity-out PATH] [--name NAME] [--force]")
+	fmt.Fprintln(w, "  kei audit keys list")
+	fmt.Fprintln(w, "  kei audit keys disable KEY")
+	fmt.Fprintln(w, "  kei audit decrypt --record ID --identity PATH (--out FILE | --stdout)")
+	fmt.Fprintln(w, "  See https://github.com/HaikeiLabs/kei/blob/main/docs/adr/030-audit-args-encryption.md")
 	fmt.Fprintln(w, "  kei harness add|list|remove|sync [--installation ID] [--harness kind] [--dry-run]")
 	fmt.Fprintln(w, "users connect their own accounts through their chat harness")
 }
