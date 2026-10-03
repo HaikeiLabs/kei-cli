@@ -111,7 +111,7 @@ func Main(version, command string, args []string, stdout, stderr io.Writer, stdi
 	case "harness":
 		return runHarnessCommand(args, stdout, stderr, &http.Client{Timeout: 30 * time.Second}, osKeychainStore{})
 	case "audit":
-		return runAuditCommand(args, stdout, stderr, &http.Client{Timeout: 15 * time.Second}, osKeychainStore{})
+		return runAuditCommand(args, stdout, stderr, stdin, &http.Client{Timeout: 15 * time.Second}, osKeychainStore{})
 	case "upgrade":
 		return runUpgradeCommand(args, stdout, stderr, nil, os.Executable, os.Getenv)
 	case "version", "--version", "-v":
