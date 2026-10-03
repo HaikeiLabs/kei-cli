@@ -69,7 +69,7 @@ func (c connectorCreateRequest) contractMetadata(id, orgID, workspaceID, created
 		ID: id, TenantID: orgID, WorkspaceID: workspaceID, Name: c.Name, Provider: c.Provider,
 		Status: contract.StatusPending, CredentialSource: c.CredentialSource, CredentialRef: c.CredentialRef,
 		AccountModel: c.AccountModel, Scopes: c.Scopes, Resources: c.Resources, Capabilities: c.Capabilities,
-		Policy:    contract.PolicyAttributes{AllowedActions: c.Policy.AllowedActions, AllowedResources: c.Policy.AllowedResources, DestructiveEnabled: c.Policy.DestructiveEnabled},
+		Policy:    contract.PolicyAttributes{AllowedActions: c.Policy.AllowedActions, AllowedResources: c.Policy.AllowedResources},
 		CreatedBy: createdBy, Config: c.Config,
 	}
 }
