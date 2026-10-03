@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"golang.org/x/term"
 )
 
 type auditEncryptionKey struct {
@@ -47,17 +49,69 @@ func defaultIdentityPath() (string, error) {
 	return filepath.Join(home, ".config", "kei", "audit-identity.txt"), nil
 }
 
+// rotationWarning is printed when the user creates or disables a key while
+// other active keys exist, to clarify that only future records are affected.
+// See ADR-030 (https://github.com/HaikeiLabs/kei/blob/main/docs/adr/030-audit-args-encryption.md) and HAI-348.
+const rotationWarning = "Only future audit records will use the new key. Past records stay encrypted to previous keys; keep those private keys to read them."
+
+// confirmRotation prints rotationWarning and prompts for y/N confirmation.
+// Returns true if the user confirmed (or --yes was set), false if declined.
+// When stdin is non-interactive (piped or otherwise not a terminal) and yes is
+// false, prints rotationWarning to stderr and returns false.
+func confirmRotation(stdin io.Reader, stderr io.Writer, yes bool) bool {
+	if yes {
+		return true
+	}
+	fmt.Fprintln(stderr, rotationWarning)
+	if file, ok := stdin.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
+		fmt.Fprint(stderr, "Continue? [y/N] ")
+		response, _ := bufio.NewReader(stdin).ReadString('\n')
+		response = strings.TrimSpace(response)
+		return strings.EqualFold(response, "y") || strings.EqualFold(response, "yes")
+	}
+	return false
+}
+
+// hasActiveKeys checks whether any audit encryption key has state "active"
+// for the given organization. Returns false on any non-OK response.
+func hasActiveKeys(client *http.Client, baseURL, token, orgID string) (bool, error) {
+	target := baseURL + "/api/v1/organizations/" + url.PathEscape(orgID) + "/auditEncryptionKeys"
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, target, nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false, nil
+	}
+	var page auditKeyListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
+		return false, err
+	}
+	for _, k := range page.Keys {
+		if k.State == "active" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // runAuditCommand dispatches audit subcommands.
 // Behavior is specified in ADR-030:
 // https://github.com/HaikeiLabs/kei/blob/main/docs/adr/030-audit-args-encryption.md
-func runAuditCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
+func runAuditCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "audit requires a subcommand")
 		return 2
 	}
 	switch args[0] {
 	case "keys":
-		return runAuditKeysCommand(args[1:], stdout, stderr, client, store)
+		return runAuditKeysCommand(args[1:], stdout, stderr, stdin, client, store)
 	case "decrypt":
 		return runAuditDecryptCommand(args[1:], stdout, stderr, client, store)
 	default:
@@ -69,18 +123,18 @@ func runAuditCommand(args []string, stdout, stderr io.Writer, client *http.Clien
 // runAuditKeysCommand dispatches audit keys subcommands.
 // Behavior is specified in ADR-030:
 // https://github.com/HaikeiLabs/kei/blob/main/docs/adr/030-audit-args-encryption.md
-func runAuditKeysCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
+func runAuditKeysCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "audit keys requires a subcommand (create|list|disable)")
 		return 2
 	}
 	switch args[0] {
 	case "create":
-		return runAuditKeysCreateCommand(args[1:], stdout, stderr, client, store)
+		return runAuditKeysCreateCommand(args[1:], stdout, stderr, stdin, client, store)
 	case "list":
 		return runAuditKeysListCommand(args[1:], stdout, stderr, client, store)
 	case "disable":
-		return runAuditKeysDisableCommand(args[1:], stdout, stderr, client, store)
+		return runAuditKeysDisableCommand(args[1:], stdout, stderr, stdin, client, store)
 	default:
 		fmt.Fprintf(stderr, "unknown audit keys command %q\n", args[0])
 		return 2
@@ -89,14 +143,19 @@ func runAuditKeysCommand(args []string, stdout, stderr io.Writer, client *http.C
 
 // runAuditKeysCreateCommand generates an age X25519 key pair, uploads the
 // public key to Kei, and writes the private identity file to disk.
+// When at least one ACTIVE key already exists (a rotation), it prints
+// rotationWarning and requires interactive y/N confirmation. Use --yes to
+// skip the prompt in scripts.
 // Behavior is specified in ADR-030:
 // https://github.com/HaikeiLabs/kei/blob/main/docs/adr/030-audit-args-encryption.md
-func runAuditKeysCreateCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
+// See also HAI-348.
+func runAuditKeysCreateCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("audit keys create", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	identityOut := flags.String("identity-out", "", "path to write the age identity file (default ~/.config/kei/audit-identity.txt)")
 	name := flags.String("name", "", "display name for the key")
 	force := flags.Bool("force", false, "overwrite existing identity file")
+	yes := flags.Bool("yes", false, "confirm key rotation")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -134,6 +193,16 @@ func runAuditKeysCreateCommand(args []string, stdout, stderr io.Writer, client *
 	if err != nil {
 		fmt.Fprintf(stderr, "audit keys create: cannot determine organization; run kei login again\n")
 		return 1
+	}
+
+	// If at least one active key exists, this is a rotation — warn and confirm.
+	active, err := hasActiveKeys(client, baseURL, token, orgID)
+	if err != nil {
+		fmt.Fprintf(stderr, "audit keys create: %v\n", err)
+		return 1
+	}
+	if active && !confirmRotation(stdin, stderr, *yes) {
+		return 2
 	}
 
 	reqBody := createAuditKeyRequest{PublicKey: identity.Recipient().String()}
@@ -268,12 +337,15 @@ func runAuditKeysListCommand(args []string, stdout, stderr io.Writer, client *ht
 
 // runAuditKeysDisableCommand disables an audit encryption key so new records
 // no longer use it. Previously encrypted records remain decryptable with the
-// corresponding private identity.
+// corresponding private identity. It prints rotationWarning and requires
+// interactive y/N confirmation; use --yes to skip the prompt in scripts.
 // Behavior is specified in ADR-030:
 // https://github.com/HaikeiLabs/kei/blob/main/docs/adr/030-audit-args-encryption.md
-func runAuditKeysDisableCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
+// See also HAI-348.
+func runAuditKeysDisableCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("audit keys disable", flag.ContinueOnError)
 	flags.SetOutput(stderr)
+	yes := flags.Bool("yes", false, "confirm disabling key")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -283,14 +355,7 @@ func runAuditKeysDisableCommand(args []string, stdout, stderr io.Writer, client 
 	}
 	keyID := flags.Arg(0)
 
-	fmt.Fprintf(stderr, "WARNING: Disabling audit encryption key %q.\n", keyID)
-	fmt.Fprintln(stderr, "Audit records previously encrypted with this key will still require")
-	fmt.Fprintln(stderr, "the private key for decryption. New records will not use this key.")
-	fmt.Fprintln(stderr, "Type the key ID again to confirm:")
-	var confirmation string
-	fmt.Scanln(&confirmation)
-	if strings.TrimSpace(confirmation) != keyID {
-		fmt.Fprintln(stderr, "confirmation does not match; aborting")
+	if !confirmRotation(stdin, stderr, *yes) {
 		return 2
 	}
 

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -27,6 +28,11 @@ func runAuditKeysCreateTest(t *testing.T, handler http.HandlerFunc, extraArgs ..
 		if r.Header.Get("Authorization") == "" {
 			t.Error("authorization header missing")
 		}
+		// Intercept the list endpoint (rotation check) — return no active keys by default.
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/auditEncryptionKeys") {
+			json.NewEncoder(w).Encode(auditKeyListResponse{Keys: []auditEncryptionKey{}})
+			return
+		}
 		handler(w, r)
 	}))
 	t.Cleanup(server.Close)
@@ -34,7 +40,7 @@ func runAuditKeysCreateTest(t *testing.T, handler http.HandlerFunc, extraArgs ..
 	store := &memoryCredentialStore{server: server.URL, token: testToken("org-1")}
 	var stdout, stderr bytes.Buffer
 	args := append([]string{}, extraArgs...)
-	code := runAuditKeysCreateCommand(args, &stdout, &stderr, server.Client(), store)
+	code := runAuditKeysCreateCommand(args, &stdout, &stderr, strings.NewReader("y\n"), server.Client(), store)
 	return code, stdout.String(), stderr.String()
 }
 
@@ -49,14 +55,14 @@ func runAuditKeysListTest(t *testing.T, handler http.HandlerFunc, extraArgs ...s
 	return code, stdout.String(), stderr.String()
 }
 
-func runAuditKeysDisableTest(t *testing.T, handler http.HandlerFunc, args []string) (int, string, string) {
+func runAuditKeysDisableTest(t *testing.T, handler http.HandlerFunc, args []string, stdin io.Reader) (int, string, string) {
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 	t.Setenv("KEI_WEB_URL", server.URL)
 	store := &memoryCredentialStore{server: server.URL, token: testToken("org-1")}
 	var stdout, stderr bytes.Buffer
-	code := runAuditKeysDisableCommand(args, &stdout, &stderr, server.Client(), store)
+	code := runAuditKeysDisableCommand(args, &stdout, &stderr, stdin, server.Client(), store)
 	return code, stdout.String(), stderr.String()
 }
 
@@ -310,18 +316,8 @@ func TestAuditKeysDisableWithConfirmation(t *testing.T) {
 	t.Setenv("KEI_WEB_URL", server.URL)
 	store := &memoryCredentialStore{server: server.URL, token: testToken("org-1")}
 
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	origStdin := os.Stdin
-	os.Stdin = r
-	_, _ = w.WriteString(keyID + "\n")
-	_ = w.Close()
-	defer func() { os.Stdin = origStdin }()
-
 	var stdout, stderr bytes.Buffer
-	code := runAuditKeysDisableCommand([]string{keyID}, &stdout, &stderr, server.Client(), store)
+	code := runAuditKeysDisableCommand([]string{"--yes", keyID}, &stdout, &stderr, strings.NewReader(""), server.Client(), store)
 	if code != 0 {
 		t.Fatalf("disable exit = %d, stderr = %s", code, stderr.String())
 	}
@@ -330,34 +326,51 @@ func TestAuditKeysDisableWithConfirmation(t *testing.T) {
 	}
 }
 
-func TestAuditKeysDisableRejectsWrongConfirmation(t *testing.T) {
-	keyID := "key-to-disable"
-	store := &memoryCredentialStore{}
-
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	origStdin := os.Stdin
-	os.Stdin = r
-	_, _ = w.WriteString("wrong-key\n")
-	_ = w.Close()
-	defer func() { os.Stdin = origStdin }()
-
-	var stdout, stderr bytes.Buffer
-	code := runAuditKeysDisableCommand([]string{keyID}, &stdout, &stderr, http.DefaultClient, store)
+func TestAuditKeysDisableDeclinesConfirmation(t *testing.T) {
+	code, _, stderr := runAuditKeysDisableTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("should not reach server when confirmation is declined")
+	}), []string{"key-to-disable"}, strings.NewReader("n\n"))
 	if code != 2 {
 		t.Fatalf("expected exit 2, got %d", code)
 	}
-	if !strings.Contains(stderr.String(), "confirmation does not match") {
-		t.Fatalf("expected confirmation error, got: %s", stderr.String())
+	if !strings.Contains(stderr, "Only future audit records") {
+		t.Fatalf("expected rotation warning, got: %s", stderr)
+	}
+}
+
+func TestAuditKeysDisableYesFlag(t *testing.T) {
+	code, stdout, stderr := runAuditKeysDisableTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(auditEncryptionKey{
+			KeyID:       "key-yes-flag",
+			PublicKey:   "age1test",
+			State:       "disabled",
+			Kind:        "customer",
+			DisableTime: timePtr(time.Now()),
+		})
+	}), []string{"--yes", "key-yes-flag"}, strings.NewReader(""))
+	if code != 0 {
+		t.Fatalf("disable exit = %d, stderr = %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "disabled") {
+		t.Fatalf("output missing disable confirmation: %s", stdout)
+	}
+}
+
+func TestAuditKeysDisableNonInteractiveRefuses(t *testing.T) {
+	code, _, stderr := runAuditKeysDisableTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("should not reach server when non-interactive without --yes")
+	}), []string{"key-to-disable"}, bytes.NewReader(nil))
+	if code != 2 {
+		t.Fatalf("expected exit 2, got %d", code)
+	}
+	if !strings.Contains(stderr, "Only future audit records") {
+		t.Fatalf("expected rotation warning, got: %s", stderr)
 	}
 }
 
 func TestAuditKeysCreateRejectsPositionalArgs(t *testing.T) {
-	store := &memoryCredentialStore{}
 	var stdout, stderr bytes.Buffer
-	code := runAuditKeysCreateCommand([]string{"extra-arg"}, &stdout, &stderr, http.DefaultClient, store)
+	code := runAuditKeysCreateCommand([]string{"extra-arg"}, &stdout, &stderr, strings.NewReader("y\n"), http.DefaultClient, &memoryCredentialStore{})
 	if code != 2 {
 		t.Fatalf("expected exit 2, got %d", code)
 	}
@@ -402,9 +415,8 @@ func TestAuditKeysCreateUsesDefaultIdentityPath(t *testing.T) {
 }
 
 func TestAuditKeysDisableRejectsNoArgs(t *testing.T) {
-	store := &memoryCredentialStore{}
 	var stdout, stderr bytes.Buffer
-	code := runAuditKeysDisableCommand([]string{}, &stdout, &stderr, http.DefaultClient, store)
+	code := runAuditKeysDisableCommand([]string{}, &stdout, &stderr, strings.NewReader("y\n"), http.DefaultClient, &memoryCredentialStore{})
 	if code != 2 {
 		t.Fatalf("expected exit 2, got %d", code)
 	}
@@ -466,5 +478,93 @@ func TestAuditKeysCreateNoName(t *testing.T) {
 
 	if code != 0 {
 		t.Fatalf("create exit = %d, stderr = %s", code, stderr)
+	}
+}
+
+func runAuditKeysCreateRotationTest(t *testing.T, handler http.HandlerFunc, stdin io.Reader, extraArgs ...string) (int, string, string) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == "" {
+			t.Error("authorization header missing")
+		}
+		// Return an active key so the rotation prompt is triggered.
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/auditEncryptionKeys") {
+			json.NewEncoder(w).Encode(auditKeyListResponse{
+				Keys: []auditEncryptionKey{
+					{KeyID: "existing-key", PublicKey: "age1existing", State: "active", Kind: "customer"},
+				},
+			})
+			return
+		}
+		handler(w, r)
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("KEI_WEB_URL", server.URL)
+	store := &memoryCredentialStore{server: server.URL, token: testToken("org-1")}
+	var stdout, stderr bytes.Buffer
+	args := append([]string{}, extraArgs...)
+	code := runAuditKeysCreateCommand(args, &stdout, &stderr, stdin, server.Client(), store)
+	return code, stdout.String(), stderr.String()
+}
+
+func TestAuditKeysCreateRotationYesFlag(t *testing.T) {
+	dir := t.TempDir()
+	identityPath := filepath.Join(dir, "identity.txt")
+
+	code, stdout, stderr := runAuditKeysCreateRotationTest(t, func(w http.ResponseWriter, r *http.Request) {
+		var req createAuditKeyRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		json.NewEncoder(w).Encode(auditEncryptionKey{
+			KeyID:     "key-yes",
+			PublicKey: req.PublicKey,
+			State:     "active",
+			Kind:      "customer",
+		})
+	}, strings.NewReader(""), "--yes", "--identity-out", identityPath)
+
+	if code != 0 {
+		t.Fatalf("create exit = %d, stderr = %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "key_id: key-yes") {
+		t.Fatalf("output missing key_id: %s", stdout)
+	}
+}
+
+func TestAuditKeysCreateRotationNonInteractiveRefuses(t *testing.T) {
+	code, _, stderr := runAuditKeysCreateRotationTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("should not reach server when non-interactive without --yes")
+	}), bytes.NewReader(nil))
+
+	if code != 2 {
+		t.Fatalf("expected exit 2, got %d", code)
+	}
+	if !strings.Contains(stderr, "Only future audit records") {
+		t.Fatalf("expected rotation warning, got: %s", stderr)
+	}
+}
+
+func TestAuditKeysCreateFirstKeyNoPrompt(t *testing.T) {
+	dir := t.TempDir()
+	identityPath := filepath.Join(dir, "identity.txt")
+
+	code, stdout, stderr := runAuditKeysCreateTest(t, func(w http.ResponseWriter, r *http.Request) {
+		var req createAuditKeyRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		json.NewEncoder(w).Encode(auditEncryptionKey{
+			KeyID:     "key-first",
+			PublicKey: req.PublicKey,
+			State:     "active",
+			Kind:      "customer",
+		})
+	}, "--identity-out", identityPath)
+
+	if code != 0 {
+		t.Fatalf("create exit = %d, stderr = %s", code, stderr)
+	}
+	if strings.Contains(stderr, "Only future audit records") {
+		t.Fatalf("should not show rotation warning for first key, got: %s", stderr)
+	}
+	if !strings.Contains(stdout, "key_id: key-first") {
+		t.Fatalf("output missing key_id: %s", stdout)
 	}
 }
