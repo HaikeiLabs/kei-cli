@@ -146,7 +146,17 @@ Logout only removes the local credential from the OS keychain; it does not
 revoke the token server-side. It is idempotent: running it while not logged
 in succeeds and reports that no session was stored.
 
-## Manage an installation
+## Manage installations
+
+List runtime installations for an organization (the CLI does not persist an org ID, so `--org` is required):
+
+```sh
+kei bot list --org ORGANIZATION_ID
+kei bot list --org ORGANIZATION_ID --all
+kei bot list --org ORGANIZATION_ID --json
+```
+
+The table includes installation ID, name, platform, status, workspace IDs, and relative last-heartbeat time. `--all` fetches all pages; otherwise the command fetches one page and indicates when more results are available. JSON output contains the safe installation items only.
 
 Create pending installation metadata for a bot:
 

@@ -127,7 +127,7 @@ func Main(version, command string, args []string, stdout, stderr io.Writer, stdi
 
 func PrintUsage(w io.Writer) {
 	fmt.Fprintln(w, "Kei CLI")
-	fmt.Fprintln(w, "\nUsage:\n  kei setup [--config PATH] [--control-plane-url URL] [--runtime-token TOKEN]\n  kei runtime bootstrap [--config PATH] [--proxy-path PATH]\n  kei login [--no-browser]\n  kei logout\n  kei upgrade [--version VERSION]\n  kei bot init --platform cli|teams|discord|slack --name NAME [--agent ID] [--workspace WORKSPACE]\n  kei bot credential --installation ID --workspace WORKSPACE [--rotate]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default]\n  kei bot status --installation ID\n  kei bot delete --installation ID --yes\n  kei workspaces list [--json]\n  kei connectors create|list|get|reconnect|delete --workspace WORKSPACE\n  kei policies list|get|create|update|delete|import --workspace WORKSPACE\n  kei model-profiles list|get|create|update|delete|test|set-default\n  kei credential-store get|put\n  kei --version")
+	fmt.Fprintln(w, "\nUsage:\n  kei setup [--config PATH] [--control-plane-url URL] [--runtime-token TOKEN]\n  kei runtime bootstrap [--config PATH] [--proxy-path PATH]\n  kei login [--no-browser]\n  kei logout\n  kei upgrade [--version VERSION]\n  kei bot list --org ID [--json] [--all]\n  kei bot init --platform cli|teams|discord|slack --name NAME [--agent ID] [--workspace WORKSPACE]\n  kei bot credential --installation ID --workspace WORKSPACE [--rotate]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default]\n  kei bot status --installation ID\n  kei bot delete --installation ID --yes\n  kei workspaces list [--json]\n  kei connectors create|list|get|reconnect|delete --workspace WORKSPACE\n  kei policies list|get|create|update|delete|import --workspace WORKSPACE\n  kei model-profiles list|get|create|update|delete|test|set-default\n  kei credential-store get|put\n  kei --version")
 	fmt.Fprintln(w, "  kei harness add|list|remove|sync [--installation ID] [--harness kind] [--dry-run]")
 	fmt.Fprintln(w, "users connect their own accounts through their chat harness")
 }
@@ -164,6 +164,8 @@ func runBotCommand(args []string, stdout, stderr io.Writer, client *http.Client,
 		return 2
 	}
 	switch args[0] {
+	case "list":
+		return runBotListCommand(args[1:], stdout, stderr, client, store)
 	case "init":
 		return runBotInitCommand(args[1:], stdout, stderr, client, store)
 	case "agents":
