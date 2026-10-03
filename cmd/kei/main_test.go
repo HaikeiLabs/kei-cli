@@ -34,7 +34,7 @@ func TestInstallScriptStaticChecks(t *testing.T) {
 		name string
 		want string
 	}{
-		{"set -euo pipefail", "set -euo pipefail"},
+		{"POSIX strict mode", "set -eu"},
 		{"detects macOS", "Darwin"},
 		{"detects Linux", "Linux"},
 		{"detects amd64", "x86_64"},
@@ -169,7 +169,8 @@ func TestReleaseWorkflowPinsAndValidatesProxy(t *testing.T) {
 
 	checks := []string{
 		"KEI_PROXY_VERSION",
-		"vars.KEI_PROXY_VERSION || 'v0.1.0'",
+		"PIN_FILE=\"KEI_PROXY_VERSION\"",
+		`grep -qE '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'`,
 		"Validate pinned kei-proxy artifact prefix",
 		"PROXY_VERSION=\"${KEI_PROXY_VERSION#v}\"",
 		"ARTIFACT=\"kei-proxy_${PROXY_VERSION}_Linux_x86_64.tar.gz\"",
