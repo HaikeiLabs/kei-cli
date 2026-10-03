@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/HaikeiLabs/kei-connector-contracts/harnessmatch"
 	"github.com/google/uuid"
 )
 
@@ -1001,19 +1002,6 @@ func (nativeHarnessRenderer) HookSpec(kind, harnessID string) (map[string][]byte
 func mustJSON(value any) []byte { data, _ := json.MarshalIndent(value, "", "  "); return data }
 
 func nativePermissionEntries(kind, harnessID string, harness *bundleHarness, policies []bundlePolicy) (allows, denies []string) {
-	blockedShell := []string{}
-	for _, policy := range policies {
-		if !policy.Enabled || !policyScopeApplies(policy, harness) {
-			continue
-		}
-		effect := policy.Effect
-		if effect == "" {
-			effect = policy.Action
-		}
-		if isShellPolicyTarget(policy.DstPattern) && ((effect == "deny" && harnessSourceApplies(policy.SrcPattern, kind, harnessID, harness)) || isNonRenderableSubjectSource(policy.SrcPattern, kind, harness)) {
-			blockedShell = append(blockedShell, policy.DstPattern)
-		}
-	}
 	for _, policy := range policies {
 		effect := policy.Effect
 		if effect == "" {
@@ -1022,13 +1010,20 @@ func nativePermissionEntries(kind, harnessID string, harness *bundleHarness, pol
 		if !policy.Enabled || (effect != "permit" && effect != "deny") {
 			continue
 		}
-		if !policyScopeApplies(policy, harness) {
-			continue
-		}
-		if !harnessSourceApplies(policy.SrcPattern, kind, harnessID, harness) {
-			continue
-		}
 		dst := policy.DstPattern
+		call := rendererCall(kind, harnessID, harness, dst)
+		scope := policy.Scope.AgentID
+		matchPolicy := harnessmatch.Policy{ID: policy.ID, Src: policy.SrcPattern, Dst: dst, Action: effect, Enabled: policy.Enabled, Scope: scope}
+		if applies, _ := harnessmatch.MatchSrc(matchPolicy.Src, call); !applies {
+			continue
+		}
+		result := harnessmatch.Evaluate(call, []harnessmatch.Policy{matchPolicy})
+		if result.Outcome != harnessmatch.OutcomePermit && result.Outcome != harnessmatch.OutcomeDeny {
+			continue
+		}
+		if result.Outcome == harnessmatch.OutcomePermit && effect != "permit" || result.Outcome == harnessmatch.OutcomeDeny && effect != "deny" {
+			continue
+		}
 		entry := ""
 		switch {
 		case strings.HasPrefix(dst, "shell:"):
@@ -1072,10 +1067,7 @@ func nativePermissionEntries(kind, harnessID string, harness *bundleHarness, pol
 		if effect == "permit" && strings.HasPrefix(dst, "shell:") && len(strings.Fields(strings.TrimPrefix(dst, "shell:"))) == 0 {
 			continue
 		}
-		if effect == "permit" && isShellPolicyTarget(dst) && overlapsShellPolicy(dst, blockedShell) {
-			continue
-		}
-		if effect == "permit" {
+		if result.Outcome == harnessmatch.OutcomePermit {
 			allows = append(allows, entry)
 		} else {
 			denies = append(denies, entry)
@@ -1086,8 +1078,30 @@ func nativePermissionEntries(kind, harnessID string, harness *bundleHarness, pol
 	return
 }
 
-func policyScopeApplies(policy bundlePolicy, harness *bundleHarness) bool {
-	return policy.Scope.AgentID == nil || harness != nil && policy.Scope.AgentID != nil && *policy.Scope.AgentID == harness.AgentID
+func rendererCall(kind, harnessID string, harness *bundleHarness, dst string) harnessmatch.Call {
+	call := harnessmatch.Call{Kind: kind, HarnessID: harnessID}
+	if harness != nil {
+		call.AgentID = harness.AgentID
+	}
+	switch {
+	case strings.HasPrefix(dst, "shell:"):
+		call.Argv = strings.Fields(strings.TrimPrefix(dst, "shell:"))
+		if len(call.Argv) == 0 || call.Argv[0] == "*" {
+			call.Argv = []string{"kei-proxy", "run"}
+		}
+	case strings.HasPrefix(dst, "skill:"):
+		call.Skill = strings.TrimPrefix(dst, "skill:")
+	case strings.HasPrefix(dst, "path:"):
+		call.Path = "/kei-render-path"
+	case strings.HasPrefix(dst, "mcp:"):
+		v := strings.TrimPrefix(dst, "mcp:")
+		call.MCPServer, call.MCPTool, _ = strings.Cut(v, "/")
+	case strings.HasPrefix(dst, "tool:"):
+		call.Tool = strings.TrimPrefix(dst, "tool:")
+	case dst == "*":
+		call.Tool = "kei.render"
+	}
+	return call
 }
 
 func shellNativeEntry(kind, prefix string) string {
@@ -1107,70 +1121,6 @@ func shellNativeEntry(kind, prefix string) string {
 		}
 		return "[" + strings.Join(quoted, ", ") + "]"
 	}
-}
-
-func harnessSourceApplies(source, kind, id string, h *bundleHarness) bool {
-	switch {
-	case source == "*", source == "harness:*":
-		return true
-	case source == "harness:"+kind, source == "harness:"+id:
-		return true
-	case source == "agent:*":
-		return h != nil && h.AgentID != ""
-	case h != nil && h.AgentID != "" && source == "agent:"+h.AgentID:
-		return true
-	}
-	return false
-}
-
-func isNonRenderableSubjectSource(source, kind string, h *bundleHarness) bool {
-	if strings.HasPrefix(source, "user:") || strings.HasPrefix(source, "email:") || strings.HasPrefix(source, "group:") || strings.HasPrefix(source, "org:") || strings.HasPrefix(source, "*@") {
-		return true
-	}
-	return strings.HasPrefix(source, "agent:") && !harnessSourceApplies(source, kind, "", h)
-}
-func isShellPolicyTarget(dst string) bool {
-	return strings.HasPrefix(dst, "shell:") || dst == "*" || strings.HasSuffix(dst, ".bash") || strings.HasSuffix(dst, ".shell")
-}
-func overlapsShellPolicy(candidate string, blocked []string) bool {
-	patternTokens := func(value string) []string {
-		if strings.HasPrefix(value, "shell:") {
-			v := strings.TrimPrefix(value, "shell:")
-			if v == "*" {
-				return []string{"*"}
-			}
-			return strings.Fields(v)
-		}
-		if value == "*" || strings.HasSuffix(value, ".bash") || strings.HasSuffix(value, ".shell") {
-			return []string{"*"}
-		}
-		return nil
-	}
-	a := patternTokens(candidate)
-	for _, value := range blocked {
-		b := patternTokens(value)
-		if len(a) == 0 || len(b) == 0 {
-			continue
-		}
-		if a[0] == "*" || b[0] == "*" {
-			return true
-		}
-		limit := len(a)
-		if len(b) < limit {
-			limit = len(b)
-		}
-		same := true
-		for i := 0; i < limit; i++ {
-			if a[i] != b[i] {
-				same = false
-				break
-			}
-		}
-		if same {
-			return true
-		}
-	}
-	return false
 }
 
 func newlyManagedEntries(kind string, cfg []byte, entries []string) []string {

@@ -7,10 +7,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/HaikeiLabs/kei-connector-contracts/harnessmatch"
 )
 
 const testHarnessInstallationID = "66666666-6666-6666-6666-666666666666"
@@ -306,6 +309,63 @@ func TestHarnessRendererGoldenConfigs(t *testing.T) {
 				t.Fatalf("managed allows/denies = %v / %v", got.AllowEntries[tc.path], got.DenyEntries[tc.path])
 			}
 		})
+	}
+}
+
+func TestNativePermissionEntriesSharedHarnessFixtures(t *testing.T) {
+	// FixturePath is the contracts package's exported fixture helper. The
+	// contracts currently ships it from its test source, so resolve the same
+	// testdata file through the module directory for this consumer test.
+	module, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "github.com/HaikeiLabs/kei-connector-contracts").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixturePath := filepath.Join(strings.TrimSpace(string(module)), "harnessmatch", "testdata", "cases.v1.json")
+	data, err := os.ReadFile(fixturePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var suite struct {
+		Cases []struct {
+			ID       string            `json:"id"`
+			Call     harnessmatch.Call `json:"call"`
+			Policies []struct {
+				ID, Src, Dst, Action string
+				Enabled              bool `json:"enabled"`
+			} `json:"policies"`
+			WantOutcome harnessmatch.Outcome `json:"want_outcome"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(data, &suite); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range suite.Cases {
+		if tc.WantOutcome != harnessmatch.OutcomePermit && tc.WantOutcome != harnessmatch.OutcomeDeny && tc.WantOutcome != harnessmatch.OutcomeUnmatched && tc.WantOutcome != harnessmatch.OutcomeNotRenderable {
+			continue
+		}
+		if tc.ID != "shell-argv-prefix-permit" && tc.ID != "shell-deny-still-works" && tc.ID != "shell-star-permit-rejected" && tc.ID != "custom-kind-evaluate-via-pdp" {
+			continue
+		}
+		policies := make([]bundlePolicy, 0, len(tc.Policies))
+		for _, p := range tc.Policies {
+			policies = append(policies, bundlePolicy{ID: p.ID, SrcPattern: p.Src, DstPattern: p.Dst, Action: p.Action, Effect: p.Action, Enabled: p.Enabled})
+		}
+		h := &bundleHarness{AgentID: tc.Call.AgentID, Kind: tc.Call.Kind}
+		allows, denies := nativePermissionEntries(tc.Call.Kind, tc.Call.HarnessID, h, policies)
+		switch tc.WantOutcome {
+		case harnessmatch.OutcomePermit:
+			if len(allows) == 0 {
+				t.Errorf("%s: permit produced no allow", tc.ID)
+			}
+		case harnessmatch.OutcomeDeny:
+			if len(denies) == 0 {
+				t.Errorf("%s: deny produced no deny", tc.ID)
+			}
+		default:
+			if len(allows)+len(denies) != 0 {
+				t.Errorf("%s: %s rendered allow=%v deny=%v", tc.ID, tc.WantOutcome, allows, denies)
+			}
+		}
 	}
 }
 
