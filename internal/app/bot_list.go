@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -32,7 +33,6 @@ type botInstallationPage struct {
 func runBotListCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("bot list", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	orgID := flags.String("org", "", "organization ID (required)")
 	jsonOutput := flags.Bool("json", false, "output as JSON")
 	all := flags.Bool("all", false, "fetch all pages")
 	if err := flags.Parse(args); err != nil {
@@ -40,10 +40,6 @@ func runBotListCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 	}
 	if flags.NArg() != 0 {
 		fmt.Fprintln(stderr, "bot list accepts no positional arguments")
-		return 2
-	}
-	if strings.TrimSpace(*orgID) == "" {
-		fmt.Fprintln(stderr, "bot list requires --org ID (the CLI does not store an organization ID)")
 		return 2
 	}
 	baseURL, err := normalizedKeiWebURL(keiWebURL())
@@ -56,12 +52,17 @@ func runBotListCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 		fmt.Fprintln(stderr, "bot list: not logged in; run kei login first")
 		return 1
 	}
-	items, next, err := listBotInstallations(context.Background(), client, baseURL, token, *orgID, *all)
+	orgID, err := organizationIDFromCLIToken(token)
+	if err != nil {
+		fmt.Fprintf(stderr, "bot list: cannot determine organization from login; run kei login again\n")
+		return 1
+	}
+	items, next, err := listBotInstallations(context.Background(), client, baseURL, token, orgID, *all)
 	if err != nil {
 		if err == errNotLoggedIn {
 			fmt.Fprintln(stderr, "bot list: not logged in; run kei login first")
 		} else if err == errNotOrganizationAdmin {
-			fmt.Fprintf(stderr, "bot list: you must be an organization admin for %s\n", *orgID)
+			fmt.Fprintln(stderr, "bot list: you must be an organization admin for your logged-in organization")
 		} else {
 			fmt.Fprintf(stderr, "bot list: %v\n", err)
 		}
@@ -98,6 +99,26 @@ func runBotListCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 		fmt.Fprintln(stderr, "More results available; use --all to fetch every page.")
 	}
 	return 0
+}
+
+// organizationIDFromCLIToken reads the tenant selector from the JWT payload. This is
+// not an authentication check: the server validates the bearer and enforces its org scope.
+func organizationIDFromCLIToken(token string) (string, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return "", fmt.Errorf("invalid login token")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("invalid login token")
+	}
+	var claims struct {
+		OrgID string `json:"org_id"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil || strings.TrimSpace(claims.OrgID) == "" {
+		return "", fmt.Errorf("organization claim missing")
+	}
+	return claims.OrgID, nil
 }
 
 var (
