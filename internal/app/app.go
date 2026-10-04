@@ -496,3 +496,32 @@ func hostname() string {
 	}
 	return "kei@" + host
 }
+
+// isJSONResponse checks whether an HTTP response has a JSON content type.
+func isJSONResponse(resp *http.Response) bool {
+	ct := resp.Header.Get("Content-Type")
+	return strings.Contains(ct, "application/json") || strings.Contains(ct, "application/problem+json")
+}
+
+// isHTMLBody checks whether a response body looks like HTML (starts with '<').
+func isHTMLBody(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	trimmed := bytes.TrimLeft(body, " \t\r\n")
+	return len(trimmed) > 0 && trimmed[0] == '<'
+}
+
+// checkHTMLFallthrough returns a user-facing error when an API endpoint
+// returns HTML instead of JSON, which indicates the route is not wired to
+// AIP in the console yet.
+func checkHTMLFallthrough(resp *http.Response, body []byte) error {
+	if !isJSONResponse(resp) && isHTMLBody(body) {
+		urlStr := "<unknown>"
+		if resp.Request != nil && resp.Request.URL != nil {
+			urlStr = resp.Request.URL.String()
+		}
+		return fmt.Errorf("endpoint %s returned HTML (status %d); this API is not available yet, check kei-policy-catalog for AIP migration status", urlStr, resp.StatusCode)
+	}
+	return nil
+}

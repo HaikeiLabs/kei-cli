@@ -14,6 +14,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// TODO: When the console allowlist (kei-console internal/http/proxy/aip/allowlist.go)
+// adds IsCLIResource: true for organizations/{org}/model-profiles (and optionally
+// /workspaces/{ws}/model-profiles), change these paths from /api/cli/ to
+// /api/v1/organizations/{org}/model-profiles[/{profile_id}] using the org ID
+// from organizationIDFromCLIToken (see bot_list.go).
+
 type modelProfile struct {
 	ProfileID          string         `json:"profile_id"`
 	OrgID              string         `json:"org_id"`
@@ -329,15 +335,19 @@ func doModelProfilesRequest(req *http.Request, stdout, stderr io.Writer, client 
 		return 1
 	}
 	defer response.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
+	if err := checkHTMLFallthrough(response, body); err != nil {
+		fmt.Fprintf(stderr, "model-profiles request: %v\n", err)
+		return 1
+	}
 	if response.StatusCode == http.StatusNoContent {
 		return 0
 	}
 	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
 		fmt.Fprintf(stderr, "model-profiles request returned %d: %s\n", response.StatusCode, bytes.TrimSpace(body))
 		return 1
 	}
-	_, _ = io.Copy(stdout, response.Body)
+	_, _ = stdout.Write(body)
 	return 0
 }
 
@@ -348,11 +358,15 @@ func doModelProfilesDeleteRequest(req *http.Request, stdout, stderr io.Writer, c
 		return 1
 	}
 	defer response.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
+	if err := checkHTMLFallthrough(response, body); err != nil {
+		fmt.Fprintf(stderr, "model-profiles request: %v\n", err)
+		return 1
+	}
 	if response.StatusCode == http.StatusNoContent || response.StatusCode == http.StatusOK {
 		fmt.Fprintln(stdout, "Model profile deleted.")
 		return 0
 	}
-	body, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
 	fmt.Fprintf(stderr, "model-profiles request returned %d: %s\n", response.StatusCode, bytes.TrimSpace(body))
 	return 1
 }
@@ -365,12 +379,16 @@ func doModelProfilesTestRequest(req *http.Request, stdout, stderr io.Writer, cli
 		return 1
 	}
 	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
-		fmt.Fprintf(stderr, "model-profiles test returned %d: %s\n", response.StatusCode, bytes.TrimSpace(body))
+	payload, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+	if err := checkHTMLFallthrough(response, payload); err != nil {
+		fmt.Fprintf(stderr, "model-profiles test: %v\n", err)
 		return 1
 	}
-	if err := json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&testResponse); err != nil {
+	if response.StatusCode != http.StatusOK {
+		fmt.Fprintf(stderr, "model-profiles test returned %d: %s\n", response.StatusCode, bytes.TrimSpace(payload))
+		return 1
+	}
+	if err := json.Unmarshal(payload, &testResponse); err != nil {
 		fmt.Fprintf(stderr, "model-profiles test: decode response: %v\n", err)
 		return 1
 	}

@@ -754,6 +754,140 @@ func TestBotCredentialWorkspaceNameMultipleMatches(t *testing.T) {
 	}
 }
 
+func TestIsJSONResponse(t *testing.T) {
+	tests := []struct {
+		ct   string
+		want bool
+	}{
+		{"application/json", true},
+		{"application/problem+json", true},
+		{"application/json; charset=utf-8", true},
+		{"text/html", false},
+		{"text/plain", false},
+		{"", false},
+	}
+	for _, tc := range tests {
+		resp := &http.Response{Header: http.Header{}}
+		if tc.ct != "" {
+			resp.Header.Set("Content-Type", tc.ct)
+		}
+		got := isJSONResponse(resp)
+		if got != tc.want {
+			t.Errorf("isJSONResponse(%q) = %v, want %v", tc.ct, got, tc.want)
+		}
+	}
+}
+
+func TestIsHTMLBody(t *testing.T) {
+	tests := []struct {
+		body []byte
+		want bool
+	}{
+		{[]byte("<html>"), true},
+		{[]byte("  \t\n<html>"), true},
+		{[]byte("<!DOCTYPE html>"), true},
+		{[]byte(`{"key": "value"}`), false},
+		{nil, false},
+		{[]byte{}, false},
+		{[]byte(""), false},
+	}
+	for _, tc := range tests {
+		got := isHTMLBody(tc.body)
+		if got != tc.want {
+			t.Errorf("isHTMLBody(%q) = %v, want %v", string(tc.body), got, tc.want)
+		}
+	}
+}
+
+func TestCheckHTMLFallthrough(t *testing.T) {
+	t.Run("json response returns nil", func(t *testing.T) {
+		resp := &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": {"application/json"}},
+		}
+		if err := checkHTMLFallthrough(resp, []byte(`{"ok":true}`)); err != nil {
+			t.Fatalf("expected nil, got %v", err)
+		}
+	})
+
+	t.Run("html body without json content type returns error", func(t *testing.T) {
+		resp := &http.Response{
+			StatusCode: 502,
+			Header:     http.Header{"Content-Type": {"text/html"}},
+		}
+		err := checkHTMLFallthrough(resp, []byte("<html>bad gateway</html>"))
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "returned HTML") {
+			t.Fatalf("error should mention HTML: %v", err)
+		}
+		if !strings.Contains(err.Error(), "502") {
+			t.Fatalf("error should mention status: %v", err)
+		}
+	})
+
+	t.Run("includes request URL in error when available", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", "https://example.com/api/v1/test", nil)
+		resp := &http.Response{
+			StatusCode: 404,
+			Header:     http.Header{"Content-Type": {"text/html"}},
+			Request:    req,
+		}
+		err := checkHTMLFallthrough(resp, []byte("<html>not found</html>"))
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "example.com") {
+			t.Fatalf("error should include request URL: %v", err)
+		}
+	})
+
+	t.Run("html body with nil request returns error without URL", func(t *testing.T) {
+		resp := &http.Response{
+			StatusCode: 500,
+			Header:     http.Header{"Content-Type": {"text/html"}},
+		}
+		err := checkHTMLFallthrough(resp, []byte("<html>error</html>"))
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "<unknown>") {
+			t.Fatalf("error should mention <unknown> URL: %v", err)
+		}
+	})
+
+	t.Run("non-html error response returns nil", func(t *testing.T) {
+		resp := &http.Response{
+			StatusCode: 500,
+			Header:     http.Header{"Content-Type": {"application/json"}},
+		}
+		if err := checkHTMLFallthrough(resp, []byte(`{"error":"internal"}`)); err != nil {
+			t.Fatalf("expected nil, got %v", err)
+		}
+	})
+
+	t.Run("html content type but empty body returns nil", func(t *testing.T) {
+		resp := &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": {"text/html"}},
+		}
+		if err := checkHTMLFallthrough(resp, nil); err != nil {
+			t.Fatalf("expected nil, got %v", err)
+		}
+	})
+
+	t.Run("problem+json content type returns nil even with HTML body", func(t *testing.T) {
+		resp := &http.Response{
+			StatusCode: 422,
+			Header:     http.Header{"Content-Type": {"application/problem+json"}},
+		}
+		if err := checkHTMLFallthrough(resp, []byte("<html>should not trigger</html>")); err != nil {
+			t.Fatalf("expected nil, got %v", err)
+		}
+	})
+}
+
 func TestBotCredentialWorkspaceByUUIDMakesNoDiscoveryCall(t *testing.T) {
 	installationID := "12345678-1234-1234-1234-123456789012"
 	workspaceUUID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
