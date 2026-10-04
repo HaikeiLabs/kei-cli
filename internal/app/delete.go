@@ -41,14 +41,13 @@ func runBotDeleteCommand(args []string, stdout, stderr io.Writer, client *http.C
 		return 1
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	response, err := client.Do(req)
+	statusCode, _, err := doRequest(client, req, 4<<10) // TODO(HAI-362): explicit oversize error, AIP pagination, request_id on creates
 	if err != nil {
 		fmt.Fprintf(stderr, "bot delete: request: %v\n", err)
 		return 1
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusNoContent {
-		fmt.Fprintf(stderr, "bot delete returned %d\n", response.StatusCode)
+	if statusCode != http.StatusNoContent {
+		fmt.Fprintf(stderr, "bot delete returned %d\n", statusCode)
 		return 1
 	}
 	fmt.Fprintf(stdout, "Deleted runtime installation %s and revoked its credential.\n", *installationID)

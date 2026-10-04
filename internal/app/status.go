@@ -88,16 +88,15 @@ func getRuntimeInstallationStatus(ctx context.Context, client *http.Client, base
 		return nil, fmt.Errorf("build runtime status request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+cliToken)
-	response, err := client.Do(req)
+	statusCode, body, err := doRequest(client, req, 32<<10) // TODO(HAI-362): explicit oversize error, AIP pagination, request_id on creates
 	if err != nil {
 		return nil, fmt.Errorf("get runtime status: %w", err)
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("runtime status returned %d", response.StatusCode)
+	if statusCode != http.StatusOK {
+		return nil, fmt.Errorf("runtime status returned %d", statusCode)
 	}
 	var status runtimeInstallationStatus
-	if err := json.NewDecoder(io.LimitReader(response.Body, 32<<10)).Decode(&status); err != nil {
+	if err := json.Unmarshal(body, &status); err != nil {
 		return nil, fmt.Errorf("decode runtime status: %w", err)
 	}
 	if status.ID == "" {

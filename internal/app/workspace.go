@@ -93,16 +93,15 @@ func listWorkspaces(ctx context.Context, client *http.Client, baseURL, cliToken 
 		return nil, fmt.Errorf("build workspaces request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+cliToken)
-	resp, err := client.Do(req)
+	statusCode, body, err := doRequest(client, req, 4<<10) // TODO(HAI-362): explicit oversize error, AIP pagination, request_id on creates
 	if err != nil {
 		return nil, fmt.Errorf("list workspaces: %w", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("list workspaces returned %d", resp.StatusCode)
+	if statusCode != http.StatusOK {
+		return nil, fmt.Errorf("list workspaces returned %d", statusCode)
 	}
 	var list workspaceListResponse
-	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+	if err := json.Unmarshal(body, &list); err != nil {
 		return nil, fmt.Errorf("decode workspaces response: %w", err)
 	}
 	return list.Workspaces, nil

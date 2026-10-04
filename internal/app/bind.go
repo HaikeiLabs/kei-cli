@@ -36,14 +36,13 @@ func runBotBindCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 		return 1
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := client.Do(req)
+	statusCode, _, err := doRequest(client, req, 4<<10) // TODO(HAI-362): explicit oversize error, AIP pagination, request_id on creates
 	if err != nil {
 		fmt.Fprintf(stderr, "bot bind failed: %v\n", err)
 		return 1
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNoContent {
-		fmt.Fprintf(stderr, "bot bind failed: returned status %d\n", resp.StatusCode)
+	if statusCode != http.StatusNoContent {
+		fmt.Fprintf(stderr, "bot bind failed: returned status %d\n", statusCode)
 		return 1
 	}
 	fmt.Fprintf(stdout, "Bound runtime installation %s.\n", *installationID)
