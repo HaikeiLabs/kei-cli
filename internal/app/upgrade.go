@@ -65,35 +65,15 @@ func runUpgradeCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 	defer os.RemoveAll(tmp)
 
 	if version == "latest" {
-		fmt.Fprintln(stdout, "Resolving latest kei release...")
-		data, err := fetchRelease(client, base+"/kei-cli/latest.txt", 4096)
+		version, err = resolveReleaseVersion(client, base, "kei-cli")
 		if err != nil {
-			fmt.Fprintf(stderr, "upgrade failed: resolve latest release: %v\n", err)
-			return 1
-		}
-		version = strings.TrimSpace(string(data))
-		if !releaseVersionPattern.MatchString(version) || strings.ContainsAny(version, "/\\") {
-			fmt.Fprintln(stderr, "upgrade failed: release endpoint returned an invalid version")
+			fmt.Fprintf(stderr, "upgrade failed: resolve latest kei release: %v\n", err)
 			return 1
 		}
 	}
-
-	archiveName := fmt.Sprintf("kei-cli_%s_%s_%s.tar.gz", version, osName, arch)
-	checksumsName := fmt.Sprintf("kei-cli_%s_checksums.txt", version)
-	prefix := base + "/kei-cli/" + version + "/"
-	fmt.Fprintf(stdout, "Downloading kei %s for %s/%s...\n", version, osName, arch)
-	archive, err := fetchRelease(client, prefix+archiveName, 512<<20)
+	proxyVersion, err := resolveReleaseVersion(client, base, "kei-proxy")
 	if err != nil {
-		fmt.Fprintf(stderr, "upgrade failed: download release archive: %v\n", err)
-		return 1
-	}
-	checksums, err := fetchRelease(client, prefix+checksumsName, 1<<20)
-	if err != nil {
-		fmt.Fprintf(stderr, "upgrade failed: download checksums: %v\n", err)
-		return 1
-	}
-	if err := verifyReleaseChecksum(archiveName, archive, checksums); err != nil {
-		fmt.Fprintf(stderr, "upgrade failed: %v\n", err)
+		fmt.Fprintf(stderr, "upgrade failed: resolve latest kei-proxy release: %v\n", err)
 		return 1
 	}
 
@@ -102,18 +82,40 @@ func runUpgradeCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 		fmt.Fprintf(stderr, "upgrade failed: locate current executable: %v\n", err)
 		return 1
 	}
-	staged, err := extractReleaseBinary(archive, filepath.Dir(current))
+	cliArchiveName := fmt.Sprintf("kei-cli_%s_%s_%s.tar.gz", version, osName, arch)
+	cliArchive, err := fetchVerifiedArchive(client, base, "kei-cli", version, cliArchiveName)
 	if err != nil {
-		fmt.Fprintf(stderr, "upgrade failed: extract release binary: %v\n", err)
+		fmt.Fprintf(stderr, "upgrade failed: kei release: %v\n", err)
 		return 1
 	}
-	defer os.Remove(staged)
-	if err := os.Rename(staged, current); err != nil {
+	proxyArchiveName := fmt.Sprintf("kei-proxy_%s_%s_%s.tar.gz", proxyVersion, osName, arch)
+	proxyArchive, err := fetchVerifiedArchive(client, base, "kei-proxy", proxyVersion, proxyArchiveName)
+	if err != nil {
+		fmt.Fprintf(stderr, "upgrade failed: kei-proxy release: %v\n", err)
+		return 1
+	}
+	cliStage, err := extractNamedReleaseBinary(cliArchive, "kei", filepath.Dir(current))
+	if err != nil {
+		fmt.Fprintf(stderr, "upgrade failed: extract kei binary: %v\n", err)
+		return 1
+	}
+	defer os.Remove(cliStage)
+	proxyPath := filepath.Join(filepath.Dir(current), "kei-proxy")
+	proxyStage, err := extractNamedReleaseBinary(proxyArchive, "kei-proxy", filepath.Dir(proxyPath))
+	if err != nil {
+		fmt.Fprintf(stderr, "upgrade failed: extract kei-proxy binary: %v\n", err)
+		return 1
+	}
+	defer os.Remove(proxyStage)
+	if err := os.Rename(cliStage, current); err != nil {
 		fmt.Fprintf(stderr, "upgrade failed: replace %s: %v\n", current, err)
-		fmt.Fprintf(stderr, "Verified new binary is staged at %s; copy it over manually if needed.\n", staged)
 		return 1
 	}
-	fmt.Fprintf(stdout, "Upgraded kei to %s at %s.\n", version, current)
+	if err := os.Rename(proxyStage, proxyPath); err != nil {
+		fmt.Fprintf(stderr, "upgrade failed: replace %s: %v\n", proxyPath, err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "Upgraded kei to %s and kei-proxy to %s in %s.\n", version, proxyVersion, filepath.Dir(current))
 	return 0
 }
 
@@ -137,6 +139,35 @@ func releasePlatform(goos, goarch string) (string, string, error) {
 		return "", "", fmt.Errorf("unsupported architecture %s (releases support amd64 and arm64)", goarch)
 	}
 	return osName, arch, nil
+}
+
+func resolveReleaseVersion(client *http.Client, base, project string) (string, error) {
+	data, err := fetchRelease(client, base+"/"+project+"/latest.txt", 4096)
+	if err != nil {
+		return "", err
+	}
+	version := strings.TrimSpace(string(data))
+	if !releaseVersionPattern.MatchString(version) || strings.ContainsAny(version, "/\\") {
+		return "", errors.New("release endpoint returned an invalid version")
+	}
+	return strings.TrimPrefix(version, "v"), nil
+}
+
+func fetchVerifiedArchive(client *http.Client, base, project, version, archiveName string) ([]byte, error) {
+	prefix := base + "/" + project + "/" + version + "/"
+	archive, err := fetchRelease(client, prefix+archiveName, 512<<20)
+	if err != nil {
+		return nil, fmt.Errorf("download archive: %w", err)
+	}
+	checksumsName := fmt.Sprintf("%s_%s_checksums.txt", project, version)
+	checksums, err := fetchRelease(client, prefix+checksumsName, 1<<20)
+	if err != nil {
+		return nil, fmt.Errorf("download checksums: %w", err)
+	}
+	if err := verifyReleaseChecksum(archiveName, archive, checksums); err != nil {
+		return nil, err
+	}
+	return archive, nil
 }
 
 func fetchRelease(client *http.Client, url string, limit int64) ([]byte, error) {
@@ -183,6 +214,10 @@ func verifyReleaseChecksum(name string, archive, checksums []byte) error {
 }
 
 func extractReleaseBinary(archive []byte, destination string) (string, error) {
+	return extractNamedReleaseBinary(archive, "kei", destination)
+}
+
+func extractNamedReleaseBinary(archive []byte, binaryName, destination string) (string, error) {
 	gz, err := gzip.NewReader(bytes.NewReader(archive))
 	if err != nil {
 		return "", err
@@ -197,11 +232,11 @@ func extractReleaseBinary(archive []byte, destination string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if header.Name != "kei" {
+		if header.Name != binaryName {
 			continue
 		}
 		if !header.FileInfo().Mode().IsRegular() || header.Size <= 0 || header.Size > 256<<20 {
-			return "", errors.New("archive contains an invalid kei binary")
+			return "", errors.New(fmt.Sprintf("archive contains an invalid %s binary", binaryName))
 		}
 		f, err := os.CreateTemp(destination, ".kei-upgrade-*")
 		if err != nil {
@@ -219,5 +254,5 @@ func extractReleaseBinary(archive []byte, destination string) (string, error) {
 		}
 		return f.Name(), nil
 	}
-	return "", errors.New("kei binary not found in release archive")
+	return "", fmt.Errorf("%s binary not found in release archive", binaryName)
 }
