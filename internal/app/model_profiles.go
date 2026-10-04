@@ -329,22 +329,16 @@ func runModelProfilesSetDefault(args []string, stdout, stderr io.Writer, client 
 }
 
 func doModelProfilesRequest(req *http.Request, stdout, stderr io.Writer, client *http.Client) int {
-	response, err := client.Do(req)
+	statusCode, body, err := doRequest(client, req, 4<<10) // TODO(HAI-362): explicit oversize error, AIP pagination, request_id on creates
 	if err != nil {
 		fmt.Fprintf(stderr, "model-profiles request: %v\n", err)
 		return 1
 	}
-	defer response.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
-	if err := checkHTMLFallthrough(response, body); err != nil {
-		fmt.Fprintf(stderr, "model-profiles request: %v\n", err)
-		return 1
-	}
-	if response.StatusCode == http.StatusNoContent {
+	if statusCode == http.StatusNoContent {
 		return 0
 	}
-	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusCreated {
-		fmt.Fprintf(stderr, "model-profiles request returned %d: %s\n", response.StatusCode, bytes.TrimSpace(body))
+	if statusCode != http.StatusOK && statusCode != http.StatusCreated {
+		fmt.Fprintf(stderr, "model-profiles request returned %d: %s\n", statusCode, bytes.TrimSpace(body))
 		return 1
 	}
 	_, _ = stdout.Write(body)
@@ -352,43 +346,31 @@ func doModelProfilesRequest(req *http.Request, stdout, stderr io.Writer, client 
 }
 
 func doModelProfilesDeleteRequest(req *http.Request, stdout, stderr io.Writer, client *http.Client) int {
-	response, err := client.Do(req)
+	statusCode, body, err := doRequest(client, req, 4<<10) // TODO(HAI-362): explicit oversize error, AIP pagination, request_id on creates
 	if err != nil {
 		fmt.Fprintf(stderr, "model-profiles request: %v\n", err)
 		return 1
 	}
-	defer response.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
-	if err := checkHTMLFallthrough(response, body); err != nil {
-		fmt.Fprintf(stderr, "model-profiles request: %v\n", err)
-		return 1
-	}
-	if response.StatusCode == http.StatusNoContent || response.StatusCode == http.StatusOK {
+	if statusCode == http.StatusNoContent || statusCode == http.StatusOK {
 		fmt.Fprintln(stdout, "Model profile deleted.")
 		return 0
 	}
-	fmt.Fprintf(stderr, "model-profiles request returned %d: %s\n", response.StatusCode, bytes.TrimSpace(body))
+	fmt.Fprintf(stderr, "model-profiles request returned %d: %s\n", statusCode, bytes.TrimSpace(body))
 	return 1
 }
 
 func doModelProfilesTestRequest(req *http.Request, stdout, stderr io.Writer, client *http.Client) int {
 	var testResponse testModelProfileResponse
-	response, err := client.Do(req)
+	statusCode, body, err := doRequest(client, req, 64<<10) // TODO(HAI-362): explicit oversize error, AIP pagination, request_id on creates
 	if err != nil {
 		fmt.Fprintf(stderr, "model-profiles test: %v\n", err)
 		return 1
 	}
-	defer response.Body.Close()
-	payload, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
-	if err := checkHTMLFallthrough(response, payload); err != nil {
-		fmt.Fprintf(stderr, "model-profiles test: %v\n", err)
+	if statusCode != http.StatusOK {
+		fmt.Fprintf(stderr, "model-profiles test returned %d: %s\n", statusCode, bytes.TrimSpace(body))
 		return 1
 	}
-	if response.StatusCode != http.StatusOK {
-		fmt.Fprintf(stderr, "model-profiles test returned %d: %s\n", response.StatusCode, bytes.TrimSpace(payload))
-		return 1
-	}
-	if err := json.Unmarshal(payload, &testResponse); err != nil {
+	if err := json.Unmarshal(body, &testResponse); err != nil {
 		fmt.Fprintf(stderr, "model-profiles test: decode response: %v\n", err)
 		return 1
 	}

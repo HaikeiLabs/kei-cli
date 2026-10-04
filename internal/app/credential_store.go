@@ -106,42 +106,43 @@ func runCredentialStorePut(args []string, stdout, stderr io.Writer, client *http
 	return doCredentialStorePutRequest(req, stdout, stderr, client)
 }
 
+// TODO: When the console allowlist (kei-console internal/http/proxy/aip/allowlist.go)
+// adds IsCLIResource: true for credential-store, change this path from /api/cli/ to
+// /api/v1/organizations/{org}/credential-store using the org ID from
+// organizationIDFromCLIToken (see bot_list.go).
+
 func doCredentialStoreGetRequest(req *http.Request, stdout, stderr io.Writer, client *http.Client) int {
-	response, err := client.Do(req)
+	statusCode, body, err := doRequest(client, req, 4<<10) // TODO(HAI-362): explicit oversize error, AIP pagination, request_id on creates
 	if err != nil {
 		fmt.Fprintf(stderr, "credential-store request: %v\n", err)
 		return 1
 	}
-	defer response.Body.Close()
-	if response.StatusCode == http.StatusNotFound {
+	if statusCode == http.StatusNotFound {
 		fmt.Fprintln(stderr, "No credential store configured.")
 		return 1
 	}
-	if response.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
-		fmt.Fprintf(stderr, "credential-store request returned %d: %s\n", response.StatusCode, bytes.TrimSpace(body))
+	if statusCode != http.StatusOK {
+		fmt.Fprintf(stderr, "credential-store request returned %d: %s\n", statusCode, bytes.TrimSpace(body))
 		return 1
 	}
-	_, _ = io.Copy(stdout, response.Body)
+	_, _ = stdout.Write(body)
 	return 0
 }
 
 func doCredentialStorePutRequest(req *http.Request, stdout, stderr io.Writer, client *http.Client) int {
-	response, err := client.Do(req)
+	statusCode, body, err := doRequest(client, req, 4<<10) // TODO(HAI-362): explicit oversize error, AIP pagination, request_id on creates
 	if err != nil {
 		fmt.Fprintf(stderr, "credential-store request: %v\n", err)
 		return 1
 	}
-	defer response.Body.Close()
-	if response.StatusCode == http.StatusNoContent {
+	if statusCode == http.StatusNoContent {
 		fmt.Fprintln(stdout, "Credential store updated.")
 		return 0
 	}
-	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
-		fmt.Fprintf(stderr, "credential-store request returned %d: %s\n", response.StatusCode, bytes.TrimSpace(body))
+	if statusCode != http.StatusOK && statusCode != http.StatusCreated {
+		fmt.Fprintf(stderr, "credential-store request returned %d: %s\n", statusCode, bytes.TrimSpace(body))
 		return 1
 	}
-	_, _ = io.Copy(stdout, response.Body)
+	_, _ = stdout.Write(body)
 	return 0
 }

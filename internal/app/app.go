@@ -352,16 +352,15 @@ func createBotInstallationWithOptions(ctx context.Context, apiURL, agentID, plat
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
-	response, err := client.Do(req)
+	statusCode, body, err := doRequest(client, req, 4<<10) // TODO(HAI-362): explicit oversize error, AIP pagination, request_id on creates
 	if err != nil {
 		return nil, fmt.Errorf("create installation: %w", err)
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("create installation returned %d", response.StatusCode)
+	if statusCode != http.StatusOK && statusCode != http.StatusCreated {
+		return nil, fmt.Errorf("create installation returned %d", statusCode)
 	}
 	var installation createRuntimeInstallationResponse
-	if err := json.NewDecoder(response.Body).Decode(&installation); err != nil {
+	if err := json.Unmarshal(body, &installation); err != nil {
 		return nil, fmt.Errorf("decode installation response: %w", err)
 	}
 	if installation.ID == "" {
@@ -524,4 +523,28 @@ func checkHTMLFallthrough(resp *http.Response, body []byte) error {
 		return fmt.Errorf("endpoint %s returned HTML (status %d); this API is not available yet, check kei-policy-catalog for AIP migration status", urlStr, resp.StatusCode)
 	}
 	return nil
+}
+
+// doRequest performs an HTTP request and reads the response body (up to
+// maxBody bytes). The cap exists for bounded memory: error bodies only feed
+// user-facing messages and needn't be large.
+//
+// Known risk: io.LimitReader truncates silently, so a 2xx body over maxBody
+// produces truncated JSON that fails to parse. For non-GET requests the server
+// may have already applied the change even if the response is discarded.
+// TODO(HAI-362): explicit oversize error, AIP pagination, request_id on creates.
+func doRequest(client *http.Client, req *http.Request, maxBody int64) (int, []byte, error) {
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
+	if err != nil {
+		return resp.StatusCode, body, fmt.Errorf("read response: %w", err)
+	}
+	if err := checkHTMLFallthrough(resp, body); err != nil {
+		return resp.StatusCode, body, err
+	}
+	return resp.StatusCode, body, nil
 }

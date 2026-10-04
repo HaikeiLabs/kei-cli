@@ -85,17 +85,16 @@ func runBotAgentsList(args []string, stdout, stderr io.Writer, client *http.Clie
 	}
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+"/api/cli/runtime-installations/"+url.PathEscape(installationID)+"/agents", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
-	response, err := client.Do(req)
+	statusCode, body, err := doRequest(client, req, 4<<10) // TODO(HAI-362): explicit oversize error, AIP pagination, request_id on creates
 	if err != nil {
 		fmt.Fprintf(stderr, "bot agents list: %v\n", err)
 		return 1
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		fmt.Fprintf(stderr, "bot agents list returned %d\n", response.StatusCode)
+	if statusCode != http.StatusOK {
+		fmt.Fprintf(stderr, "bot agents list returned %d\n", statusCode)
 		return 1
 	}
-	_, _ = io.Copy(stdout, response.Body)
+	_, _ = stdout.Write(body)
 	return 0
 }
 
@@ -132,18 +131,17 @@ func runBotAgentsRemove(args []string, stdout, stderr io.Writer, client *http.Cl
 }
 
 func doBotAgentMutation(req *http.Request, stdout, stderr io.Writer, client *http.Client) int {
-	response, err := client.Do(req)
+	statusCode, body, err := doRequest(client, req, 4<<10) // TODO(HAI-362): explicit oversize error, AIP pagination, request_id on creates
 	if err != nil {
 		fmt.Fprintf(stderr, "bot agents request: %v\n", err)
 		return 1
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusNoContent {
-		fmt.Fprintf(stderr, "bot agents request returned %d\n", response.StatusCode)
+	if statusCode != http.StatusOK && statusCode != http.StatusNoContent {
+		fmt.Fprintf(stderr, "bot agents request returned %d\n", statusCode)
 		return 1
 	}
-	if response.StatusCode == http.StatusOK {
-		_, _ = io.Copy(stdout, response.Body)
+	if statusCode == http.StatusOK {
+		_, _ = stdout.Write(body)
 	}
 	return 0
 }

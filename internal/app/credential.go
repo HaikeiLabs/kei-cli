@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 )
@@ -43,20 +42,19 @@ func requestRuntimeCredentialAction(ctx context.Context, client *http.Client, ba
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+cliToken)
-	resp, err := client.Do(req)
+	statusCode, body, err := doRequest(client, req, 8<<10) // TODO(HAI-362): explicit oversize error, AIP pagination, request_id on creates
 	if err != nil {
-		return "", 0, fmt.Errorf("request credential: %w", err)
+		return "", statusCode, fmt.Errorf("request credential: %w", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", resp.StatusCode, nil
+	if statusCode != http.StatusOK {
+		return "", statusCode, nil
 	}
 	var credential runtimeCredentialResponse
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<10)).Decode(&credential); err != nil {
-		return "", resp.StatusCode, fmt.Errorf("decode credential response: %w", err)
+	if err := json.Unmarshal(body, &credential); err != nil {
+		return "", statusCode, fmt.Errorf("decode credential response: %w", err)
 	}
 	if credential.RuntimeToken == "" {
-		return "", resp.StatusCode, fmt.Errorf("credential response is incomplete")
+		return "", statusCode, fmt.Errorf("credential response is incomplete")
 	}
-	return credential.RuntimeToken, resp.StatusCode, nil
+	return credential.RuntimeToken, statusCode, nil
 }
