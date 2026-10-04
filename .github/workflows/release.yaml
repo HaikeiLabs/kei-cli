@@ -146,7 +146,7 @@ jobs:
 
           # Must be a strict semver tag: vMAJOR.MINOR.PATCH with optional
           # pre-release suffix (e.g. v0.1.0, v1.0.0-rc.1).
-          if ! echo "$TAG" | grep -qE '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[a-zA-Z0-9._-]+)?$'; then
+          if ! echo "$TAG" | grep -qE '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[a-zA-Z0-9._-]+)?$'; then
             echo "ERROR: tag '$TAG' does not match semver pattern vX.Y.Z[-prerelease]"
             exit 1
           fi
