@@ -72,8 +72,11 @@ kei upgrade                         # latest stable release
 kei upgrade --version 0.2.0         # pin a release (optional leading v accepted)
 ```
 
-Upgrade downloads the matching macOS/Linux and amd64/arm64 archive, verifies
-its SHA-256 checksum, then atomically replaces the running executable. The
+Upgrade independently resolves the latest published kei and kei-proxy releases,
+downloads matching macOS/Linux and amd64/arm64 archives, verifies their SHA-256
+checksums, then replaces `kei` and the sibling `kei-proxy`. `--version` pins only
+the kei CLI; the proxy is still upgraded to its latest published version. Both
+artifacts are fetched and verified before either binary is replaced. The
 current executable's directory must be writable. To use a mirror or alternate
 endpoint, set `AWS_S3_RELEASES_URL_BASE`; otherwise `https://kei-cli-releases.s3.us-east-1.amazonaws.com`
 is used. GPG signature verification is not performed by this command; checksum
