@@ -208,14 +208,72 @@ func parsePolicyFlags(flags *flag.FlagSet, args []string) (string, error) {
 
 func requirePolicyID(command, id string, stderr io.Writer) bool {
 	if id == "" {
-		fmt.Fprintf(stderr, "policies %s requires a policy ID\n", command)
-		return false
-	}
-	if _, err := uuid.Parse(id); err != nil {
-		fmt.Fprintln(stderr, "policy ID must be a UUID")
+		fmt.Fprintf(stderr, "policies %s requires a policy ID or name\n", command)
 		return false
 	}
 	return true
+}
+
+// resolvePolicyID returns the resolved UUID for id. If id is already a valid
+// UUID it is returned as-is. Otherwise id is treated as a policy name and all
+// policies in the workspace are listed to find a matching name.
+func resolvePolicyID(session *policySession, id string) (string, error) {
+	if _, err := uuid.Parse(id); err == nil {
+		return id, nil
+	}
+	var allPolicies []policy
+	pageToken := ""
+	for {
+		extraQuery := url.Values{"page_size": {"200"}}
+		if pageToken != "" {
+			extraQuery.Set("page_token", pageToken)
+		}
+		payload, err := session.do(http.MethodGet, "", nil, extraQuery)
+		if err != nil {
+			return "", err
+		}
+		page, err := decodePoliciesPage(payload)
+		if err != nil {
+			return "", err
+		}
+		allPolicies = append(allPolicies, page.Policies...)
+		if page.NextPageToken == "" {
+			break
+		}
+		pageToken = page.NextPageToken
+	}
+	var matches []policy
+	for _, p := range allPolicies {
+		if p.Name == id {
+			matches = append(matches, p)
+		}
+	}
+	if len(matches) == 0 {
+		return "", fmt.Errorf("no policy found with name %q", id)
+	}
+	if len(matches) > 1 {
+		return "", fmt.Errorf("multiple policies found with name %q; use ID instead", id)
+	}
+	return matches[0].ID, nil
+}
+
+type policiesPage struct {
+	Policies      []policy `json:"policies"`
+	NextPageToken string   `json:"next_page_token"`
+}
+
+// decodePoliciesPage decodes a list-policies response that may be either the
+// standard AIP-wrapped object or a legacy bare JSON array.
+func decodePoliciesPage(payload []byte) (policiesPage, error) {
+	var page policiesPage
+	if err := json.Unmarshal(payload, &page); err == nil {
+		return page, nil
+	}
+	var policies []policy
+	if err := json.Unmarshal(payload, &policies); err != nil {
+		return policiesPage{}, err
+	}
+	return policiesPage{Policies: policies}, nil
 }
 
 func runPoliciesList(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
@@ -248,11 +306,8 @@ func runPoliciesList(args []string, stdout, stderr io.Writer, client *http.Clien
 			fmt.Fprintf(stderr, "policies list: %v\n", err)
 			return 1
 		}
-		var page struct {
-			Policies      []policy `json:"policies"`
-			NextPageToken string   `json:"next_page_token"`
-		}
-		if err := json.Unmarshal(payload, &page); err != nil {
+		page, err := decodePoliciesPage(payload)
+		if err != nil {
 			fmt.Fprintf(stderr, "policies list: decode response: %v\n", err)
 			return 1
 		}
@@ -306,7 +361,12 @@ func runPoliciesGet(args []string, stdout, stderr io.Writer, client *http.Client
 	if !ok {
 		return 1
 	}
-	payload, err := session.do(http.MethodGet, "/"+url.PathEscape(id), nil, nil)
+	resolvedID, err := resolvePolicyID(session, id)
+	if err != nil {
+		fmt.Fprintf(stderr, "policies get: %v\n", err)
+		return 1
+	}
+	payload, err := session.do(http.MethodGet, "/"+url.PathEscape(resolvedID), nil, nil)
 	if err != nil {
 		fmt.Fprintf(stderr, "policies get: %v\n", err)
 		return 1
@@ -463,6 +523,11 @@ func runPoliciesUpdate(args []string, stdout, stderr io.Writer, client *http.Cli
 	if !ok {
 		return 1
 	}
+	resolvedID, err := resolvePolicyID(session, id)
+	if err != nil {
+		fmt.Fprintf(stderr, "policies update: %v\n", err)
+		return 1
+	}
 	var maskFields []string
 	if set["name"] {
 		maskFields = append(maskFields, "name")
@@ -489,7 +554,7 @@ func runPoliciesUpdate(args []string, stdout, stderr io.Writer, client *http.Cli
 	if len(maskFields) > 0 {
 		extraQuery.Set("update_mask", strings.Join(maskFields, ","))
 	}
-	payload, err := session.do(http.MethodPatch, "/"+url.PathEscape(id), request, extraQuery)
+	payload, err := session.do(http.MethodPatch, "/"+url.PathEscape(resolvedID), request, extraQuery)
 	if err != nil {
 		fmt.Fprintf(stderr, "policies update: %v\n", err)
 		return 1
@@ -532,11 +597,16 @@ func runPoliciesDelete(args []string, stdout, stderr io.Writer, client *http.Cli
 	if !ok {
 		return 1
 	}
-	if _, err := session.do(http.MethodDelete, "/"+url.PathEscape(id), nil, nil); err != nil {
+	resolvedID, err := resolvePolicyID(session, id)
+	if err != nil {
 		fmt.Fprintf(stderr, "policies delete: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "Policy %s deleted.\n", id)
+	if _, err := session.do(http.MethodDelete, "/"+url.PathEscape(resolvedID), nil, nil); err != nil {
+		fmt.Fprintf(stderr, "policies delete: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "Policy %s deleted.\n", resolvedID)
 	return 0
 }
 
