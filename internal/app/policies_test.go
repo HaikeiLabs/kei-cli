@@ -111,6 +111,28 @@ func TestPoliciesListEmpty(t *testing.T) {
 	_ = fake
 }
 
+func TestPoliciesListBareArray(t *testing.T) {
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		_, _ = w.Write([]byte(`[
+			{"id":"` + testPolicyID + `","org_id":"org-1","workspace_id":"` + testWorkspaceID + `","name":"allow-git","src_pattern":"harness:claude","dst_pattern":"shell:git","effect":"permit","priority":100,"enabled":true,"approval_required":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"},
+			{"id":"55555555-5555-5555-5555-555555555555","org_id":"org-1","workspace_id":"` + testWorkspaceID + `","name":"deny-rm","src_pattern":"harness:claude","dst_pattern":"shell:rm","effect":"deny","priority":200,"enabled":true,"approval_required":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}
+		]`))
+	})
+	code, stdout, stderr := runPolicies(t, server, store, "", "list", "--workspace", testWorkspaceID)
+	if code != 0 {
+		t.Fatalf("exit = %d stderr=%s", code, stderr)
+	}
+	req := fake.only(t)
+	if req.Method != http.MethodGet || req.Path != "/api/v1/policies" {
+		t.Fatalf("request = %s %s", req.Method, req.Path)
+	}
+	for _, want := range []string{testPolicyID, "allow-git", "deny-rm"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("list output missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
 // --- Get ---
 
 func TestPoliciesGet(t *testing.T) {
@@ -149,10 +171,48 @@ func TestPoliciesGetJSON(t *testing.T) {
 	_ = fake
 }
 
-func TestPoliciesGetRequiresUUID(t *testing.T) {
-	fake, server, store := newFakeConsole(t, failOnRequest(t))
-	code, _, stderr := runPolicies(t, server, store, "", "get", "not-a-uuid", "--workspace", testWorkspaceID)
-	if code != 2 || !strings.Contains(stderr, "UUID") || fake.count() != 0 {
+func TestPoliciesGetByName(t *testing.T) {
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		if r.Path == "/api/v1/policies" && r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"policies":[{"id":"` + testPolicyID + `","name":"allow-git","effect":"permit","approval_required":false}],"next_page_token":""}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","name":"allow-git","effect":"permit","approval_required":false}`))
+	})
+	code, stdout, stderr := runPolicies(t, server, store, "", "get", "allow-git", "--workspace", testWorkspaceID)
+	if code != 0 {
+		t.Fatalf("exit = %d stderr=%s", code, stderr)
+	}
+	if fake.count() != 2 {
+		t.Fatalf("expected 2 requests (list + get), got %d", fake.count())
+	}
+	if !strings.Contains(fake.requests[1].Path, testPolicyID) {
+		t.Fatalf("second request should use resolved UUID, path=%s", fake.requests[1].Path)
+	}
+	if !strings.Contains(stdout, testPolicyID) {
+		t.Fatalf("output missing policy id:\n%s", stdout)
+	}
+}
+
+func TestPoliciesGetNameNotFound(t *testing.T) {
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		_, _ = w.Write([]byte(`{"policies":[],"next_page_token":""}`))
+	})
+	code, _, stderr := runPolicies(t, server, store, "", "get", "nonexistent", "--workspace", testWorkspaceID)
+	if code != 1 || !strings.Contains(stderr, "no policy found") || fake.count() != 1 {
+		t.Fatalf("exit = %d stderr=%q requests=%d", code, stderr, fake.count())
+	}
+}
+
+func TestPoliciesGetNameAmbiguous(t *testing.T) {
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		_, _ = w.Write([]byte(`{"policies":[
+			{"id":"` + testPolicyID + `","name":"duplicate","effect":"permit","approval_required":false},
+			{"id":"55555555-5555-5555-5555-555555555555","name":"duplicate","effect":"deny","approval_required":false}
+		],"next_page_token":""}`))
+	})
+	code, _, stderr := runPolicies(t, server, store, "", "get", "duplicate", "--workspace", testWorkspaceID)
+	if code != 1 || !strings.Contains(stderr, "multiple policies") || fake.count() != 1 {
 		t.Fatalf("exit = %d stderr=%q requests=%d", code, stderr, fake.count())
 	}
 }
@@ -275,11 +335,23 @@ func TestPoliciesUpdateRequiresAtLeastOneField(t *testing.T) {
 	}
 }
 
-func TestPoliciesUpdateRequiresUUID(t *testing.T) {
-	fake, server, store := newFakeConsole(t, failOnRequest(t))
-	code, _, stderr := runPolicies(t, server, store, "", "update", "not-a-uuid", "--workspace", testWorkspaceID, "--name", "x")
-	if code != 2 || !strings.Contains(stderr, "UUID") || fake.count() != 0 {
-		t.Fatalf("exit = %d stderr=%q requests=%d", code, stderr, fake.count())
+func TestPoliciesUpdateByName(t *testing.T) {
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		if r.Path == "/api/v1/policies" && r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"policies":[{"id":"` + testPolicyID + `","name":"allow-git","effect":"permit","approval_required":false}],"next_page_token":""}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","name":"renamed","effect":"deny","approval_required":false}`))
+	})
+	code, stdout, stderr := runPolicies(t, server, store, "", "update", "allow-git", "--workspace", testWorkspaceID, "--name", "renamed", "--effect", "deny")
+	if code != 0 {
+		t.Fatalf("exit = %d stderr=%s", code, stderr)
+	}
+	if fake.count() != 2 {
+		t.Fatalf("expected 2 requests (list + patch), got %d", fake.count())
+	}
+	if !strings.Contains(stdout, "renamed") {
+		t.Fatalf("update output missing new name: %q", stdout)
 	}
 }
 
@@ -316,11 +388,23 @@ func TestPoliciesDelete(t *testing.T) {
 	}
 }
 
-func TestPoliciesDeleteRequiresUUID(t *testing.T) {
-	fake, server, store := newFakeConsole(t, failOnRequest(t))
-	code, _, stderr := runPolicies(t, server, store, "", "delete", "not-a-uuid", "--workspace", testWorkspaceID, "--yes")
-	if code != 2 || !strings.Contains(stderr, "UUID") || fake.count() != 0 {
-		t.Fatalf("exit = %d stderr=%q requests=%d", code, stderr, fake.count())
+func TestPoliciesDeleteByName(t *testing.T) {
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		if r.Path == "/api/v1/policies" && r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"policies":[{"id":"` + testPolicyID + `","name":"allow-git","effect":"permit","approval_required":false}],"next_page_token":""}`))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	code, stdout, stderr := runPolicies(t, server, store, "", "delete", "allow-git", "--workspace", testWorkspaceID, "--yes")
+	if code != 0 {
+		t.Fatalf("exit = %d stderr=%s", code, stderr)
+	}
+	if fake.count() != 2 {
+		t.Fatalf("expected 2 requests (list + delete), got %d", fake.count())
+	}
+	if !strings.Contains(stdout, "deleted") {
+		t.Fatalf("delete output = %q", stdout)
 	}
 }
 
