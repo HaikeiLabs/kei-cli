@@ -39,6 +39,50 @@ type policy struct {
 	UpdatedAt        string  `json:"updated_at"`
 }
 
+// UnmarshalJSON supports both the AIP shape ("effect") and the legacy shape
+// ("action") returned when the console does not forward X-Kei-API-Shape.
+func (p *policy) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		ID               string  `json:"id"`
+		OrgID            string  `json:"org_id"`
+		WorkspaceID      string  `json:"workspace_id"`
+		AgentID          *string `json:"agent_id,omitempty"`
+		Name             string  `json:"name"`
+		Description      string  `json:"description,omitempty"`
+		SrcPattern       string  `json:"src_pattern"`
+		DstPattern       string  `json:"dst_pattern"`
+		Effect           string  `json:"effect"`
+		Action           string  `json:"action"`
+		Priority         int     `json:"priority"`
+		Enabled          bool    `json:"enabled"`
+		ApprovalRequired bool    `json:"approval_required"`
+		CreatedAt        string  `json:"created_at"`
+		UpdatedAt        string  `json:"updated_at"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	p.ID = raw.ID
+	p.OrgID = raw.OrgID
+	p.WorkspaceID = raw.WorkspaceID
+	p.AgentID = raw.AgentID
+	p.Name = raw.Name
+	p.Description = raw.Description
+	p.SrcPattern = raw.SrcPattern
+	p.DstPattern = raw.DstPattern
+	p.Priority = raw.Priority
+	p.Enabled = raw.Enabled
+	p.ApprovalRequired = raw.ApprovalRequired
+	p.CreatedAt = raw.CreatedAt
+	p.UpdatedAt = raw.UpdatedAt
+	if raw.Effect != "" {
+		p.Effect = raw.Effect
+	} else {
+		p.Effect = raw.Action
+	}
+	return nil
+}
+
 type createPolicyRequest struct {
 	Name        string  `json:"name"`
 	Description string  `json:"description,omitempty"`

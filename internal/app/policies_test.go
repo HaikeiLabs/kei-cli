@@ -714,6 +714,90 @@ func TestPoliciesImportMissingFile(t *testing.T) {
 
 // --- API error ---
 
+// --- Effect / Action field mapping ---
+
+func TestPolicyUnmarshalAcceptsEffect(t *testing.T) {
+	var p policy
+	if err := json.Unmarshal([]byte(`{"effect":"deny"}`), &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.Effect != "deny" {
+		t.Fatalf("Effect = %q, want deny", p.Effect)
+	}
+}
+
+func TestPolicyUnmarshalAcceptsAction(t *testing.T) {
+	var p policy
+	if err := json.Unmarshal([]byte(`{"action":"permit"}`), &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.Effect != "permit" {
+		t.Fatalf("Effect = %q, want permit (from action)", p.Effect)
+	}
+}
+
+func TestPolicyUnmarshalEffectTakesPriority(t *testing.T) {
+	var p policy
+	if err := json.Unmarshal([]byte(`{"effect":"deny","action":"permit"}`), &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.Effect != "deny" {
+		t.Fatalf("Effect = %q, want deny (effect takes priority)", p.Effect)
+	}
+}
+
+func TestPolicyMarshalUsesEffect(t *testing.T) {
+	p := policy{Effect: "deny"}
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"effect":"deny"`) {
+		t.Fatalf("JSON output missing effect field: %s", data)
+	}
+	if strings.Contains(string(data), `"action"`) {
+		t.Fatalf("JSON output should not contain action field: %s", data)
+	}
+}
+
+func TestPoliciesListLegacyActionShape(t *testing.T) {
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		_, _ = w.Write([]byte(`{"policies":[
+			{"id":"` + testPolicyID + `","org_id":"org-1","workspace_id":"` + testWorkspaceID + `","name":"allow-git","src_pattern":"harness:claude","dst_pattern":"shell:git","action":"permit","priority":100,"enabled":true,"approval_required":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"},
+			{"id":"55555555-5555-5555-5555-555555555555","org_id":"org-1","workspace_id":"` + testWorkspaceID + `","name":"deny-rm","src_pattern":"harness:claude","dst_pattern":"shell:rm","action":"deny","priority":200,"enabled":true,"approval_required":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}
+		],"next_page_token":""}`))
+	})
+	code, stdout, stderr := runPolicies(t, server, store, "", "list", "--workspace", testWorkspaceID)
+	if code != 0 {
+		t.Fatalf("exit = %d stderr=%s", code, stderr)
+	}
+	for _, want := range []string{"permit", "deny"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("list output missing effect %q (from action field):\n%s", want, stdout)
+		}
+	}
+	_ = fake
+}
+
+func TestPoliciesListLegacyBareArrayWithAction(t *testing.T) {
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		_, _ = w.Write([]byte(`[
+			{"id":"` + testPolicyID + `","name":"allow-git","action":"permit"},
+			{"id":"55555555-5555-5555-5555-555555555555","name":"deny-rm","action":"deny"}
+		]`))
+	})
+	code, stdout, stderr := runPolicies(t, server, store, "", "list", "--workspace", testWorkspaceID)
+	if code != 0 {
+		t.Fatalf("exit = %d stderr=%s", code, stderr)
+	}
+	for _, want := range []string{"permit", "deny"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("list output missing effect %q (from action in bare array):\n%s", want, stdout)
+		}
+	}
+	_ = fake
+}
+
 func TestPoliciesSurfacesAPIError(t *testing.T) {
 	_, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
 		w.WriteHeader(http.StatusBadRequest)
