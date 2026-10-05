@@ -426,6 +426,63 @@ func TestHarnessSyncCustomSkipsFilesAndReports(t *testing.T) {
 	}
 }
 
+func TestHarnessResponseErrorParsesReasonMessage(t *testing.T) {
+	got := harnessResponseError([]byte(`{"reason":"invalid_argument","message":"effect must be permit or deny"}`), 400, nil)
+	if got != "invalid_argument: effect must be permit or deny" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestHarnessResponseErrorParsesDetailSubject(t *testing.T) {
+	got := harnessResponseError([]byte(`{"detail":"bundle_version_conflict","subject":"workspace/installation"}`), 409, nil)
+	if !strings.Contains(got, "bundle_version_conflict") || !strings.Contains(got, "try 'kei harness sync' again") {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestHarnessResponseErrorDetailWithoutSubject(t *testing.T) {
+	got := harnessResponseError([]byte(`{"detail":"runtime_not_bound"}`), 409, nil)
+	if !strings.Contains(got, "run 'kei bot bind'") {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestHarnessResponseErrorDetailUnknown(t *testing.T) {
+	got := harnessResponseError([]byte(`{"detail":"unknown_code","subject":"some info"}`), 409, nil)
+	if got != "unknown_code: some info" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestHarnessResponseErrorDelegatesToResponseError(t *testing.T) {
+	got := harnessResponseError([]byte(`not json`), 500, nil)
+	if got != "not json" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestBundleFetchHintKnownCodes(t *testing.T) {
+	tests := []struct {
+		detail string
+		want   string
+	}{
+		{"bundle_version_conflict", "try 'kei harness sync' again"},
+		{"runtime_not_bound", "run 'kei bot bind'"},
+		{"token_revoked", "rotate the runtime credential"},
+		{"installation_not_found", "check that the runtime installation ID"},
+		{"unknown_code", ""},
+	}
+	for _, tc := range tests {
+		got := bundleFetchHint(tc.detail)
+		if !strings.Contains(got, tc.want) && tc.want != "" {
+			t.Errorf("bundleFetchHint(%q) = %q, want contains %q", tc.detail, got, tc.want)
+		}
+		if got == "" && tc.want != "" {
+			t.Errorf("bundleFetchHint(%q) = empty, want %q", tc.detail, tc.want)
+		}
+	}
+}
+
 type rendererMustNotRun struct{}
 
 func (rendererMustNotRun) Render(string, string, Bundle, map[string][]byte) (renderedHarness, error) {

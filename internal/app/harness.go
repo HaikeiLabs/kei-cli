@@ -304,14 +304,45 @@ func harnessResponseError(payload []byte, status int, err error) string {
 	var body struct {
 		Reason  string `json:"reason"`
 		Message string `json:"message"`
+		Detail  string `json:"detail"`
+		Subject string `json:"subject"`
 	}
-	if json.Unmarshal(payload, &body) == nil && body.Message != "" {
-		if body.Reason != "" {
+	if json.Unmarshal(payload, &body) == nil {
+		if body.Reason != "" && body.Message != "" {
 			return body.Reason + ": " + body.Message
 		}
-		return body.Message
+		if body.Message != "" {
+			return body.Message
+		}
+		if body.Detail != "" {
+			hint := bundleFetchHint(body.Detail)
+			if hint != "" {
+				return body.Detail + ": " + body.Subject + " (" + hint + ")"
+			}
+			if body.Subject != "" {
+				return body.Detail + ": " + body.Subject
+			}
+			return body.Detail
+		}
 	}
 	return responseError(payload, status, nil)
+}
+
+// bundleFetchHint maps known catalog bundle-fetch detail reason codes to
+// one-line user-facing hints that are appended to the error message.
+func bundleFetchHint(detail string) string {
+	switch detail {
+	case "bundle_version_conflict":
+		return "try 'kei harness sync' again"
+	case "runtime_not_bound":
+		return "run 'kei bot bind' to assign a workspace"
+	case "token_revoked":
+		return "rotate the runtime credential with 'kei bot credential --rotate'"
+	case "installation_not_found":
+		return "check that the runtime installation ID is correct"
+	default:
+		return ""
+	}
 }
 
 func runHarnessSync(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore, renderer harnessRenderer) int {
