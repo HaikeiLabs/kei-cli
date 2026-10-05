@@ -1,8 +1,6 @@
 package app
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -23,14 +21,33 @@ type credentialStoreInstallation struct {
 }
 
 type putCredentialStoreRequest struct {
-	SecretBackend    string         `json:"secret_backend"`
-	BackendConfig    map[string]any `json:"backend_config,omitempty"`
-	SecretNamePrefix string         `json:"secret_name_prefix,omitempty"`
+	SecretBackend    string            `json:"secret_backend"`
+	BackendConfig    map[string]string `json:"backend_config,omitempty"`
+	SecretNamePrefix string            `json:"secret_name_prefix,omitempty"`
 }
+
+// fieldMask is an AIP-134 update mask.
+type fieldMask struct {
+	Paths []string `json:"paths"`
+}
+
+// patchCredentialStoreRequest is the body of PATCH …/credential-store: only
+// the fields named in update_mask change.
+type patchCredentialStoreRequest struct {
+	SecretBackend    *string           `json:"secret_backend,omitempty"`
+	BackendConfig    map[string]string `json:"backend_config,omitempty"`
+	SecretNamePrefix *string           `json:"secret_name_prefix,omitempty"`
+	Status           *string           `json:"status,omitempty"`
+	UpdateMask       fieldMask         `json:"update_mask"`
+}
+
+// The credential store is the organization AIP resource
+// /api/v1/organizations/{org}/credential-store, reached through the console
+// proxy with the CLI bearer. The organization comes from the CLI token.
 
 func runCredentialStoreCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "credential-store requires a subcommand: get or put")
+		fmt.Fprintln(stderr, "credential-store requires a subcommand: get, put, or update")
 		return 2
 	}
 	switch args[0] {
@@ -38,10 +55,21 @@ func runCredentialStoreCommand(args []string, stdout, stderr io.Writer, client *
 		return runCredentialStoreGet(args[1:], stdout, stderr, client, store)
 	case "put":
 		return runCredentialStorePut(args[1:], stdout, stderr, client, store)
+	case "update":
+		return runCredentialStoreUpdate(args[1:], stdout, stderr, client, store)
 	default:
 		fmt.Fprintf(stderr, "unknown credential-store command %q\n", args[0])
 		return 2
 	}
+}
+
+func parseBackendConfig(command, raw string, stderr io.Writer) (map[string]string, bool) {
+	var backendConfig map[string]string
+	if err := json.Unmarshal([]byte(raw), &backendConfig); err != nil {
+		fmt.Fprintf(stderr, "credential-store %s: --backend-config must be valid JSON with string values: %v\n", command, err)
+		return nil, false
+	}
+	return backendConfig, true
 }
 
 func runCredentialStoreGet(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
@@ -51,24 +79,31 @@ func runCredentialStoreGet(args []string, stdout, stderr io.Writer, client *http
 		fmt.Fprintln(stderr, "credential-store get takes no positional arguments")
 		return 2
 	}
-	baseURL, token, ok := loadCLIWebTokenAndBaseURL(store, stderr)
+	session, ok := openOrgSession("credential-store get", "", stderr, client, store)
 	if !ok {
 		return 1
 	}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+"/api/cli/credential-store", nil)
+	status, payload, err := session.do(http.MethodGet, session.orgPath("/credential-store"), nil, nil)
+	if status == http.StatusNotFound {
+		fmt.Fprintln(stderr, "No credential store configured.")
+		return 1
+	}
 	if err != nil {
 		fmt.Fprintf(stderr, "credential-store get: %v\n", err)
 		return 1
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	return doCredentialStoreGetRequest(req, stdout, stderr, client)
+	_, _ = stdout.Write(payload)
+	return 0
 }
 
+// runCredentialStorePut creates or replaces the credential store with PUT. The
+// catalog marks PUT deprecated in favour of PATCH, but PATCH cannot create a
+// store, so put remains the way to configure one the first time.
 func runCredentialStorePut(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("credential-store put", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	secretBackend := flags.String("secret-backend", "", "secret backend type (e.g. aws_secrets_manager, azure_key_vault, hashicorp_vault)")
-	backendConfigRaw := flags.String("backend-config", "{}", "backend configuration as JSON")
+	secretBackend := flags.String("secret-backend", "", "secret backend (aws-secrets-manager, azure-key-vault, or gcp-secret-manager)")
+	backendConfigRaw := flags.String("backend-config", "{}", "backend configuration as a JSON object of strings")
 	secretNamePrefix := flags.String("secret-name-prefix", "", "prefix for secret names")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		fmt.Fprintln(stderr, "credential-store put takes no positional arguments")
@@ -78,12 +113,15 @@ func runCredentialStorePut(args []string, stdout, stderr io.Writer, client *http
 		fmt.Fprintln(stderr, "credential-store put requires --secret-backend")
 		return 2
 	}
-	var backendConfig map[string]any
-	if err := json.Unmarshal([]byte(*backendConfigRaw), &backendConfig); err != nil {
-		fmt.Fprintf(stderr, "credential-store put: --backend-config must be valid JSON: %v\n", err)
+	backendConfig, ok := parseBackendConfig("put", *backendConfigRaw, stderr)
+	if !ok {
 		return 2
 	}
-	body, err := json.Marshal(putCredentialStoreRequest{
+	session, ok := openOrgSession("credential-store put", "", stderr, client, store)
+	if !ok {
+		return 1
+	}
+	_, payload, err := session.do(http.MethodPut, session.orgPath("/credential-store"), nil, putCredentialStoreRequest{
 		SecretBackend:    *secretBackend,
 		BackendConfig:    backendConfig,
 		SecretNamePrefix: *secretNamePrefix,
@@ -92,57 +130,60 @@ func runCredentialStorePut(args []string, stdout, stderr io.Writer, client *http
 		fmt.Fprintf(stderr, "credential-store put: %v\n", err)
 		return 1
 	}
-	baseURL, token, ok := loadCLIWebTokenAndBaseURL(store, stderr)
-	if !ok {
-		return 1
-	}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, baseURL+"/api/cli/credential-store", bytes.NewReader(body))
-	if err != nil {
-		fmt.Fprintf(stderr, "credential-store put: %v\n", err)
-		return 1
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-	return doCredentialStorePutRequest(req, stdout, stderr, client)
-}
-
-// TODO: When the console allowlist (kei-console internal/http/proxy/aip/allowlist.go)
-// adds IsCLIResource: true for credential-store, change this path from /api/cli/ to
-// /api/v1/organizations/{org}/credential-store using the org ID from
-// organizationIDFromCLIToken (see bot_list.go).
-
-func doCredentialStoreGetRequest(req *http.Request, stdout, stderr io.Writer, client *http.Client) int {
-	statusCode, body, err := doRequest(client, req, 4<<10) // TODO(HAI-362): explicit oversize error, AIP pagination, request_id on creates
-	if err != nil {
-		fmt.Fprintf(stderr, "credential-store request: %v\n", err)
-		return 1
-	}
-	if statusCode == http.StatusNotFound {
-		fmt.Fprintln(stderr, "No credential store configured.")
-		return 1
-	}
-	if statusCode != http.StatusOK {
-		fmt.Fprintf(stderr, "credential-store request returned %d: %s\n", statusCode, bytes.TrimSpace(body))
-		return 1
-	}
-	_, _ = stdout.Write(body)
+	_, _ = stdout.Write(payload)
 	return 0
 }
 
-func doCredentialStorePutRequest(req *http.Request, stdout, stderr io.Writer, client *http.Client) int {
-	statusCode, body, err := doRequest(client, req, 4<<10) // TODO(HAI-362): explicit oversize error, AIP pagination, request_id on creates
+// runCredentialStoreUpdate changes an existing credential store with PATCH;
+// update_mask names exactly the flags given.
+func runCredentialStoreUpdate(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
+	flags := flag.NewFlagSet("credential-store update", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	flags.String("secret-backend", "", "secret backend (aws-secrets-manager, azure-key-vault, or gcp-secret-manager)")
+	flags.String("backend-config", "", "backend configuration as a JSON object of strings")
+	flags.String("secret-name-prefix", "", "prefix for secret names")
+	flags.String("status", "", "store status (for example active or disabled)")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+		fmt.Fprintln(stderr, "credential-store update takes no positional arguments")
+		return 2
+	}
+	var req patchCredentialStoreRequest
+	valid := true
+	flags.Visit(func(f *flag.Flag) {
+		value := f.Value.String()
+		switch f.Name {
+		case "secret-backend":
+			req.SecretBackend = &value
+			req.UpdateMask.Paths = append(req.UpdateMask.Paths, "secret_backend")
+		case "backend-config":
+			config, ok := parseBackendConfig("update", value, stderr)
+			valid = valid && ok
+			req.BackendConfig = config
+			req.UpdateMask.Paths = append(req.UpdateMask.Paths, "backend_config")
+		case "secret-name-prefix":
+			req.SecretNamePrefix = &value
+			req.UpdateMask.Paths = append(req.UpdateMask.Paths, "secret_name_prefix")
+		case "status":
+			req.Status = &value
+			req.UpdateMask.Paths = append(req.UpdateMask.Paths, "status")
+		}
+	})
+	if !valid {
+		return 2
+	}
+	if len(req.UpdateMask.Paths) == 0 {
+		fmt.Fprintln(stderr, "credential-store update requires at least one of --secret-backend, --backend-config, --secret-name-prefix, or --status")
+		return 2
+	}
+	session, ok := openOrgSession("credential-store update", "", stderr, client, store)
+	if !ok {
+		return 1
+	}
+	_, payload, err := session.do(http.MethodPatch, session.orgPath("/credential-store"), nil, req)
 	if err != nil {
-		fmt.Fprintf(stderr, "credential-store request: %v\n", err)
+		fmt.Fprintf(stderr, "credential-store update: %v\n", err)
 		return 1
 	}
-	if statusCode == http.StatusNoContent {
-		fmt.Fprintln(stdout, "Credential store updated.")
-		return 0
-	}
-	if statusCode != http.StatusOK && statusCode != http.StatusCreated {
-		fmt.Fprintf(stderr, "credential-store request returned %d: %s\n", statusCode, bytes.TrimSpace(body))
-		return 1
-	}
-	_, _ = stdout.Write(body)
+	_, _ = stdout.Write(payload)
 	return 0
 }
