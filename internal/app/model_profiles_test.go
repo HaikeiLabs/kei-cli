@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,13 +10,18 @@ import (
 	"testing"
 )
 
+func modelProfilesTestToken() string {
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"org_id":"org-1"}`))
+	return "header." + payload + ".signature"
+}
+
 func TestModelProfilesList(t *testing.T) {
-	store := &memoryCredentialStore{token: "cli-session-token"}
+	store := &memoryCredentialStore{token: modelProfilesTestToken()}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/cli/model-profiles" || r.Method != http.MethodGet {
+		if r.URL.Path != "/api/v1/organizations/org-1/model-profiles" || r.Method != http.MethodGet {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		if got := r.Header.Get("Authorization"); got != "Bearer cli-session-token" {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+modelProfilesTestToken() {
 			t.Fatalf("Authorization = %q", got)
 		}
 		_, _ = w.Write([]byte(`[{"profile_id":"11111111-1111-1111-1111-111111111111","org_id":"org-1","display_name":"test-profile","endpoint":"https://api.example.com/v1","auth_type":"bearer","status":"active","version":1}]`))
@@ -34,13 +40,13 @@ func TestModelProfilesList(t *testing.T) {
 
 func TestModelProfilesGet(t *testing.T) {
 	profileID := "11111111-1111-1111-1111-111111111111"
-	store := &memoryCredentialStore{token: "cli-session-token"}
+	store := &memoryCredentialStore{token: modelProfilesTestToken()}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		wantPath := "/api/cli/model-profiles/" + profileID
+		wantPath := "/api/v1/organizations/org-1/model-profiles/" + profileID
 		if r.URL.Path != wantPath || r.Method != http.MethodGet {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		if got := r.Header.Get("Authorization"); got != "Bearer cli-session-token" {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+modelProfilesTestToken() {
 			t.Fatalf("Authorization = %q", got)
 		}
 		_, _ = w.Write([]byte(`{"profile_id":"` + profileID + `","org_id":"org-1","display_name":"test-profile","endpoint":"https://api.example.com/v1","auth_type":"bearer","status":"active","version":1}`))
@@ -69,12 +75,12 @@ func TestModelProfilesGetRequiresUUID(t *testing.T) {
 }
 
 func TestModelProfilesCreate(t *testing.T) {
-	store := &memoryCredentialStore{token: "cli-session-token"}
+	store := &memoryCredentialStore{token: modelProfilesTestToken()}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/cli/model-profiles" || r.Method != http.MethodPost {
+		if r.URL.Path != "/api/v1/organizations/org-1/model-profiles" || r.Method != http.MethodPost {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		if got := r.Header.Get("Authorization"); got != "Bearer cli-session-token" {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+modelProfilesTestToken() {
 			t.Fatalf("Authorization = %q", got)
 		}
 		var req createModelProfileRequest
@@ -112,13 +118,13 @@ func TestModelProfilesCreateRequiresFields(t *testing.T) {
 
 func TestModelProfilesUpdate(t *testing.T) {
 	profileID := "11111111-1111-1111-1111-111111111111"
-	store := &memoryCredentialStore{token: "cli-session-token"}
+	store := &memoryCredentialStore{token: modelProfilesTestToken()}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		wantPath := "/api/cli/model-profiles/" + profileID
+		wantPath := "/api/v1/organizations/org-1/model-profiles/" + profileID
 		if r.URL.Path != wantPath || r.Method != http.MethodPut {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		if got := r.Header.Get("Authorization"); got != "Bearer cli-session-token" {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+modelProfilesTestToken() {
 			t.Fatalf("Authorization = %q", got)
 		}
 		var req updateModelProfileRequest
@@ -156,13 +162,13 @@ func TestModelProfilesDeleteRequiresConfirmation(t *testing.T) {
 
 func TestModelProfilesDelete(t *testing.T) {
 	profileID := "11111111-1111-1111-1111-111111111111"
-	store := &memoryCredentialStore{token: "cli-session-token"}
+	store := &memoryCredentialStore{token: modelProfilesTestToken()}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		wantPath := "/api/cli/model-profiles/" + profileID
+		wantPath := "/api/v1/organizations/org-1/model-profiles/" + profileID
 		if r.URL.Path != wantPath || r.Method != http.MethodDelete {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		if got := r.Header.Get("Authorization"); got != "Bearer cli-session-token" {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+modelProfilesTestToken() {
 			t.Fatalf("Authorization = %q", got)
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -222,14 +228,21 @@ func TestModelProfilesTestRequiresEndpoint(t *testing.T) {
 
 func TestModelProfilesSetDefault(t *testing.T) {
 	profileID := "11111111-1111-1111-1111-111111111111"
-	store := &memoryCredentialStore{token: "cli-session-token"}
+	store := &memoryCredentialStore{token: modelProfilesTestToken()}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		wantPath := "/api/cli/model-profiles/" + profileID + "/default"
+		wantPath := "/api/v1/organizations/org-1/model-profiles:setDefault"
 		if r.URL.Path != wantPath || r.Method != http.MethodPost {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		if got := r.Header.Get("Authorization"); got != "Bearer cli-session-token" {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+modelProfilesTestToken() {
 			t.Fatalf("Authorization = %q", got)
+		}
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["profile_id"] != profileID {
+			t.Fatalf("unexpected profile_id in body: %q", body["profile_id"])
 		}
 		_, _ = w.Write([]byte(`{"profile_id":"` + profileID + `","is_workspace_default":true}`))
 	}))

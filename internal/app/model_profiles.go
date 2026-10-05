@@ -14,11 +14,24 @@ import (
 	"github.com/google/uuid"
 )
 
-// TODO: When the console allowlist (kei-console internal/http/proxy/aip/allowlist.go)
-// adds IsCLIResource: true for organizations/{org}/model-profiles (and optionally
-// /workspaces/{ws}/model-profiles), change these paths from /api/cli/ to
-// /api/v1/organizations/{org}/model-profiles[/{profile_id}] using the org ID
-// from organizationIDFromCLIToken (see bot_list.go).
+func loadCLIWebTokenAndOrgID(store credentialStore, stderr io.Writer) (baseURL, orgID, token string) {
+	baseURL, err := normalizedKeiWebURL(keiWebURL())
+	if err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return "", "", ""
+	}
+	token, err = store.Load(baseURL)
+	if err != nil {
+		fmt.Fprintln(stderr, "not logged in; run kei login first")
+		return "", "", ""
+	}
+	orgID, err = organizationIDFromCLIToken(token)
+	if err != nil {
+		fmt.Fprintln(stderr, "cannot determine organization from login; run kei login again")
+		return "", "", ""
+	}
+	return baseURL, orgID, token
+}
 
 type modelProfile struct {
 	ProfileID          string         `json:"profile_id"`
@@ -109,11 +122,11 @@ func runModelProfilesList(args []string, stdout, stderr io.Writer, client *http.
 		fmt.Fprintln(stderr, "model-profiles list takes no positional arguments")
 		return 2
 	}
-	baseURL, token, ok := loadCLIWebTokenAndBaseURL(store, stderr)
-	if !ok {
+	baseURL, orgID, token := loadCLIWebTokenAndOrgID(store, stderr)
+	if token == "" {
 		return 1
 	}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+"/api/cli/model-profiles", nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+"/api/v1/organizations/"+url.PathEscape(orgID)+"/model-profiles", nil)
 	if err != nil {
 		fmt.Fprintf(stderr, "model-profiles list: %v\n", err)
 		return 1
@@ -137,11 +150,11 @@ func runModelProfilesGet(args []string, stdout, stderr io.Writer, client *http.C
 		fmt.Fprintln(stderr, "profile ID must be a UUID")
 		return 2
 	}
-	baseURL, token, ok := loadCLIWebTokenAndBaseURL(store, stderr)
-	if !ok {
+	baseURL, orgID, token := loadCLIWebTokenAndOrgID(store, stderr)
+	if token == "" {
 		return 1
 	}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+"/api/cli/model-profiles/"+url.PathEscape(profileID), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+"/api/v1/organizations/"+url.PathEscape(orgID)+"/model-profiles/"+url.PathEscape(profileID), nil)
 	if err != nil {
 		fmt.Fprintf(stderr, "model-profiles get: %v\n", err)
 		return 1
@@ -175,11 +188,11 @@ func runModelProfilesCreate(args []string, stdout, stderr io.Writer, client *htt
 		fmt.Fprintf(stderr, "model-profiles create: %v\n", err)
 		return 1
 	}
-	baseURL, token, ok := loadCLIWebTokenAndBaseURL(store, stderr)
-	if !ok {
+	baseURL, orgID, token := loadCLIWebTokenAndOrgID(store, stderr)
+	if token == "" {
 		return 1
 	}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, baseURL+"/api/cli/model-profiles", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, baseURL+"/api/v1/organizations/"+url.PathEscape(orgID)+"/model-profiles", bytes.NewReader(body))
 	if err != nil {
 		fmt.Fprintf(stderr, "model-profiles create: %v\n", err)
 		return 1
@@ -218,11 +231,11 @@ func runModelProfilesUpdate(args []string, stdout, stderr io.Writer, client *htt
 		fmt.Fprintf(stderr, "model-profiles update: %v\n", err)
 		return 1
 	}
-	baseURL, token, ok := loadCLIWebTokenAndBaseURL(store, stderr)
-	if !ok {
+	baseURL, orgID, token := loadCLIWebTokenAndOrgID(store, stderr)
+	if token == "" {
 		return 1
 	}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, baseURL+"/api/cli/model-profiles/"+url.PathEscape(profileID), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, baseURL+"/api/v1/organizations/"+url.PathEscape(orgID)+"/model-profiles/"+url.PathEscape(profileID), bytes.NewReader(body))
 	if err != nil {
 		fmt.Fprintf(stderr, "model-profiles update: %v\n", err)
 		return 1
@@ -252,11 +265,11 @@ func runModelProfilesDelete(args []string, stdout, stderr io.Writer, client *htt
 		fmt.Fprintln(stderr, "model-profiles delete requires --yes to confirm")
 		return 2
 	}
-	baseURL, token, ok := loadCLIWebTokenAndBaseURL(store, stderr)
-	if !ok {
+	baseURL, orgID, token := loadCLIWebTokenAndOrgID(store, stderr)
+	if token == "" {
 		return 1
 	}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, baseURL+"/api/cli/model-profiles/"+url.PathEscape(profileID), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, baseURL+"/api/v1/organizations/"+url.PathEscape(orgID)+"/model-profiles/"+url.PathEscape(profileID), nil)
 	if err != nil {
 		fmt.Fprintf(stderr, "model-profiles delete: %v\n", err)
 		return 1
@@ -315,16 +328,22 @@ func runModelProfilesSetDefault(args []string, stdout, stderr io.Writer, client 
 		fmt.Fprintln(stderr, "profile ID must be a UUID")
 		return 2
 	}
-	baseURL, token, ok := loadCLIWebTokenAndBaseURL(store, stderr)
-	if !ok {
+	baseURL, orgID, token := loadCLIWebTokenAndOrgID(store, stderr)
+	if token == "" {
 		return 1
 	}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, baseURL+"/api/cli/model-profiles/"+url.PathEscape(profileID)+"/default", nil)
+	setDefaultBody, err := json.Marshal(map[string]string{"profile_id": profileID})
+	if err != nil {
+		fmt.Fprintf(stderr, "model-profiles set-default: %v\n", err)
+		return 1
+	}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, baseURL+"/api/v1/organizations/"+url.PathEscape(orgID)+"/model-profiles:setDefault", bytes.NewReader(setDefaultBody))
 	if err != nil {
 		fmt.Fprintf(stderr, "model-profiles set-default: %v\n", err)
 		return 1
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
 	return doModelProfilesRequest(req, stdout, stderr, client)
 }
 
