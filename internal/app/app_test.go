@@ -151,10 +151,10 @@ func TestBotCredentialSendsWorkspaceIDInBody(t *testing.T) {
 	installationID := "12345678-1234-1234-1234-123456789012"
 	workspaceID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/cli/runtime-installations/"+installationID+"/credential" || r.Method != http.MethodPost {
+		if r.URL.Path != "/api/v1/organizations/org-1/runtime-installations/"+installationID+":issueCredential" || r.Method != http.MethodPost {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		if r.Header.Get("Authorization") != "Bearer cli-session-token" {
+		if r.Header.Get("Authorization") != "Bearer "+testCLIToken {
 			t.Fatalf("missing CLI authorization")
 		}
 		if r.Header.Get("Content-Type") != "application/json" {
@@ -171,7 +171,7 @@ func TestBotCredentialSendsWorkspaceIDInBody(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("KEI_WEB_URL", server.URL)
-	store := &memoryCredentialStore{server: server.URL, token: "cli-session-token"}
+	store := &memoryCredentialStore{server: server.URL, token: testCLIToken}
 	var stdout, stderr bytes.Buffer
 	if code := runBotCredentialCommand([]string{"--installation", installationID, "--workspace", workspaceID}, &stdout, &stderr, server.Client(), store); code != 0 {
 		t.Fatalf("credential command exit = %d, stderr = %s", code, stderr.String())
@@ -185,7 +185,7 @@ func TestBotCredentialRotateSendsWorkspaceIDInBody(t *testing.T) {
 	installationID := "12345678-1234-1234-1234-123456789012"
 	workspaceID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/cli/runtime-installations/"+installationID+"/rotate" || r.Method != http.MethodPost {
+		if r.URL.Path != "/api/v1/organizations/org-1/runtime-installations/"+installationID+":rotateCredential" || r.Method != http.MethodPost {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
 		var body runtimeCredentialRequest
@@ -199,7 +199,7 @@ func TestBotCredentialRotateSendsWorkspaceIDInBody(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("KEI_WEB_URL", server.URL)
-	store := &memoryCredentialStore{server: server.URL, token: "cli-session-token"}
+	store := &memoryCredentialStore{server: server.URL, token: testCLIToken}
 	var stdout, stderr bytes.Buffer
 	if code := runBotCredentialCommand([]string{"--installation", installationID, "--workspace", workspaceID, "--rotate"}, &stdout, &stderr, server.Client(), store); code != 0 {
 		t.Fatalf("credential rotate command exit = %d, stderr = %s", code, stderr.String())
@@ -211,7 +211,7 @@ func TestBotCredentialRotateSendsWorkspaceIDInBody(t *testing.T) {
 
 func TestBotCredentialMissingWorkspaceExitsNonZero(t *testing.T) {
 	installationID := "12345678-1234-1234-1234-123456789012"
-	store := &memoryCredentialStore{token: "cli-session-token"}
+	store := &memoryCredentialStore{token: testCLIToken}
 	var stdout, stderr bytes.Buffer
 	if code := runBotCredentialCommand([]string{"--installation", installationID}, &stdout, &stderr, http.DefaultClient, store); code != 2 {
 		t.Fatalf("credential command exit = %d, want 2", code)
@@ -229,7 +229,7 @@ func TestBotCredentialMissingWorkspaceMakesNoRequest(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("KEI_WEB_URL", server.URL)
-	store := &memoryCredentialStore{server: server.URL, token: "cli-session-token"}
+	store := &memoryCredentialStore{server: server.URL, token: testCLIToken}
 	var stdout, stderr bytes.Buffer
 	runBotCredentialCommand([]string{"--installation", installationID}, &stdout, &stderr, server.Client(), store)
 	if hitServer {
@@ -253,7 +253,7 @@ func TestBotCredentialWorkspaceFromEnv(t *testing.T) {
 	defer server.Close()
 	t.Setenv("KEI_WEB_URL", server.URL)
 	t.Setenv("KEI_WORKSPACE_ID", workspaceID)
-	store := &memoryCredentialStore{server: server.URL, token: "cli-session-token"}
+	store := &memoryCredentialStore{server: server.URL, token: testCLIToken}
 	var stdout, stderr bytes.Buffer
 	if code := runBotCredentialCommand([]string{"--installation", installationID}, &stdout, &stderr, server.Client(), store); code != 0 {
 		t.Fatalf("credential command exit = %d, stderr = %s", code, stderr.String())
@@ -264,13 +264,13 @@ func TestBotCredentialWorkspaceFromEnv(t *testing.T) {
 }
 
 func TestInitCreatesPublicInstallationWithoutExposingCredential(t *testing.T) {
-	store := &memoryCredentialStore{token: "cli-session-token"}
+	store := &memoryCredentialStore{token: testCLIToken}
 	var received createRuntimeInstallationRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/cli/runtime-installations" || r.Method != http.MethodPost {
+		if r.URL.Path != "/api/v1/organizations/org-1/runtime-installations" || r.Method != http.MethodPost {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		if got := r.Header.Get("Authorization"); got != "Bearer cli-session-token" {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+testCLIToken {
 			t.Fatalf("Authorization = %q", got)
 		}
 		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
@@ -295,12 +295,12 @@ func TestInitCreatesPublicInstallationWithoutExposingCredential(t *testing.T) {
 
 func TestBotStatusPrintsSafeInstallationMetadata(t *testing.T) {
 	installationID := "12345678-1234-1234-1234-123456789012"
-	store := &memoryCredentialStore{token: "cli-session-token"}
+	store := &memoryCredentialStore{token: testCLIToken}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/cli/runtime-installations/"+installationID || r.Method != http.MethodGet {
+		if r.URL.Path != "/api/v1/organizations/org-1/runtime-installations/"+installationID || r.Method != http.MethodGet {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		if got := r.Header.Get("Authorization"); got != "Bearer cli-session-token" {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+testCLIToken {
 			t.Fatalf("Authorization = %q", got)
 		}
 		_, _ = w.Write([]byte(`{"id":"12345678-1234-1234-1234-123456789012","platform":"teams","status":"active","binding_status":"verified","deployment":{"key_vault_name":"customerkeivault","runtime_secret_name":"kei-runtime-123"}}`))
@@ -372,12 +372,12 @@ func TestBotStatusRendersApprovedPolicyBundleHealth(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			store := &memoryCredentialStore{server: "", token: "cli-session-token"}
+			store := &memoryCredentialStore{server: "", token: testCLIToken}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodGet || r.URL.Path != "/api/cli/runtime-installations/"+installationID {
+				if r.Method != http.MethodGet || r.URL.Path != "/api/v1/organizations/org-1/runtime-installations/"+installationID {
 					t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 				}
-				if got := r.Header.Get("Authorization"); got != "Bearer cli-session-token" {
+				if got := r.Header.Get("Authorization"); got != "Bearer "+testCLIToken {
 					t.Fatalf("Authorization = %q", got)
 				}
 				_, _ = w.Write(response)
@@ -423,7 +423,7 @@ func TestBotStatusRendersApprovedPolicyBundleHealth(t *testing.T) {
 					t.Errorf("policy_bundle missing approved field %q", field)
 				}
 			}
-			if strings.Contains(stdout.String(), "cli-session-token") || strings.Contains(stdout.String(), "runtime_token") {
+			if strings.Contains(stdout.String(), testCLIToken) || strings.Contains(stdout.String(), "runtime_token") {
 				t.Fatalf("status output exposed a credential: %s", stdout.String())
 			}
 		})
@@ -432,7 +432,7 @@ func TestBotStatusRendersApprovedPolicyBundleHealth(t *testing.T) {
 
 func TestBotStatusRendersNullWhenNoPolicyBundleReport(t *testing.T) {
 	installationID := "12345678-1234-1234-1234-123456789012"
-	store := &memoryCredentialStore{token: "cli-session-token"}
+	store := &memoryCredentialStore{token: testCLIToken}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"id":"` + installationID + `","status":"active","binding_status":"verified","policy_bundle":null}`))
 	}))
@@ -448,9 +448,27 @@ func TestBotStatusRendersNullWhenNoPolicyBundleReport(t *testing.T) {
 	}
 }
 
+func TestBotStatusNotFound(t *testing.T) {
+	installationID := "12345678-1234-1234-1234-123456789012"
+	store := &memoryCredentialStore{token: testCLIToken}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+	t.Setenv("KEI_WEB_URL", server.URL)
+	store.server = server.URL
+	var stdout, stderr bytes.Buffer
+	if code := runBotStatusCommand([]string{"--installation", installationID}, &stdout, &stderr, server.Client(), store); code != 1 {
+		t.Fatalf("status command exit = %d, want 1, stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "404") {
+		t.Fatalf("expected 404 in stderr, got: %s", stderr.String())
+	}
+}
+
 func TestBotDeleteRequiresExplicitConfirmation(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	store := &memoryCredentialStore{token: "cli-session-token"}
+	store := &memoryCredentialStore{token: testCLIToken}
 	if code := runBotDeleteCommand([]string{"--installation", "12345678-1234-1234-1234-123456789012"}, &stdout, &stderr, http.DefaultClient, store); code != 2 {
 		t.Fatalf("delete command exit = %d, want 2", code)
 	}
@@ -461,12 +479,12 @@ func TestBotDeleteRequiresExplicitConfirmation(t *testing.T) {
 
 func TestBotDeleteRevokesInstallation(t *testing.T) {
 	installationID := "12345678-1234-1234-1234-123456789012"
-	store := &memoryCredentialStore{token: "cli-session-token"}
+	store := &memoryCredentialStore{token: testCLIToken}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/cli/runtime-installations/"+installationID || r.Method != http.MethodDelete {
+		if r.URL.Path != "/api/v1/organizations/org-1/runtime-installations/"+installationID || r.Method != http.MethodDelete {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		if got := r.Header.Get("Authorization"); got != "Bearer cli-session-token" {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+testCLIToken {
 			t.Fatalf("Authorization = %q", got)
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -486,13 +504,13 @@ func TestBotDeleteRevokesInstallation(t *testing.T) {
 func TestBotAgentsAddUsesCLIOrganizationScopedEndpoint(t *testing.T) {
 	installationID := "12345678-1234-1234-1234-123456789012"
 	agentID := "22345678-1234-1234-1234-123456789012"
-	store := &memoryCredentialStore{token: "cli-session-token"}
+	store := &memoryCredentialStore{token: testCLIToken}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		wantPath := "/api/cli/runtime-installations/" + installationID + "/agents"
+		wantPath := "/api/v1/organizations/org-1/runtime-installations/" + installationID + "/agents"
 		if r.URL.Path != wantPath || r.Method != http.MethodPost {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		if got := r.Header.Get("Authorization"); got != "Bearer cli-session-token" {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+testCLIToken {
 			t.Fatalf("Authorization = %q", got)
 		}
 		var body map[string]any
@@ -620,7 +638,7 @@ func TestBotCredentialResolvesWorkspaceByName(t *testing.T) {
 		case "/api/v1/organizations/org-1/workspaces":
 			workspaceHits++
 			_, _ = w.Write([]byte(`[{"id":"` + workspaceUUID + `","name":"` + workspaceName + `"},{"id":"ffffffff-gggg-hhhh-iiii-jjjjjjjjjjjj","name":"other"}]`))
-		case "/api/cli/runtime-installations/" + installationID + "/credential":
+		case "/api/v1/organizations/org-1/runtime-installations/" + installationID + ":issueCredential":
 			var body runtimeCredentialRequest
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatalf("decode body: %v", err)
@@ -656,7 +674,7 @@ func TestBotInitResolvesWorkspaceByName(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/organizations/org-1/workspaces":
 			_, _ = w.Write([]byte(`[{"id":"` + workspaceUUID + `","name":"` + workspaceName + `"}]`))
-		case "/api/cli/runtime-installations":
+		case "/api/v1/organizations/org-1/runtime-installations":
 			if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
 				t.Fatal(err)
 			}
@@ -680,7 +698,7 @@ func TestBotInitResolvesWorkspaceByName(t *testing.T) {
 func TestBotInitWorkspaceNotRequired(t *testing.T) {
 	var received createRuntimeInstallationRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/cli/runtime-installations" {
+		if r.URL.Path == "/api/v1/organizations/org-1/runtime-installations" {
 			if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
 				t.Fatal(err)
 			}
@@ -689,7 +707,7 @@ func TestBotInitWorkspaceNotRequired(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("KEI_WEB_URL", server.URL)
-	store := &memoryCredentialStore{server: server.URL, token: "cli-session-token"}
+	store := &memoryCredentialStore{server: server.URL, token: testCLIToken}
 	var stdout, stderr bytes.Buffer
 	if code := runBotInitCommand([]string{"--platform", "cli", "--name", "test"}, &stdout, &stderr, server.Client(), store); code != 0 {
 		t.Fatalf("bot init exit = %d, stderr = %s", code, stderr.String())
@@ -875,7 +893,7 @@ func TestBotCredentialWorkspaceByUUIDMakesNoDiscoveryCall(t *testing.T) {
 		if r.URL.Path == "/api/v1/organizations/org-1/workspaces" {
 			workspaceAPICalled = true
 		}
-		if r.URL.Path == "/api/cli/runtime-installations/"+installationID+"/credential" {
+		if r.URL.Path == "/api/v1/organizations/org-1/runtime-installations/"+installationID+":issueCredential" {
 			var body runtimeCredentialRequest
 			json.NewDecoder(r.Body).Decode(&body)
 			if body.WorkspaceID != workspaceUUID {
@@ -886,7 +904,7 @@ func TestBotCredentialWorkspaceByUUIDMakesNoDiscoveryCall(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("KEI_WEB_URL", server.URL)
-	store := &memoryCredentialStore{server: server.URL, token: "cli-session-token"}
+	store := &memoryCredentialStore{server: server.URL, token: testCLIToken}
 	var stdout, stderr bytes.Buffer
 	if code := runBotCredentialCommand([]string{"--installation", installationID, "--workspace", workspaceUUID}, &stdout, &stderr, server.Client(), store); code != 0 {
 		t.Fatalf("credential command exit = %d, stderr = %s", code, stderr.String())
@@ -898,6 +916,8 @@ func TestBotCredentialWorkspaceByUUIDMakesNoDiscoveryCall(t *testing.T) {
 		t.Fatalf("credential output = %q", stdout.String())
 	}
 }
+
+var testCLIToken = workspaceTestToken()
 
 func workspaceTestToken() string {
 	// JWT with {"org_id":"org-1"} – base64-encoded header.payload, no signature needed

@@ -342,11 +342,15 @@ func createBotInstallationWithOptions(ctx context.Context, apiURL, agentID, plat
 	if err != nil {
 		return nil, errors.New("not logged in; run kei login first")
 	}
+	orgID, err := organizationIDFromCLIToken(token)
+	if err != nil {
+		return nil, fmt.Errorf("determine organization from login: %w", err)
+	}
 	body, err := json.Marshal(createRuntimeInstallationRequest{AgentID: agentID, Platform: platform, DisplayName: displayName, WorkspaceID: workspaceID})
 	if err != nil {
 		return nil, fmt.Errorf("encode installation request: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/cli/runtime-installations", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/v1/organizations/"+url.PathEscape(orgID)+"/runtime-installations", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("build installation request: %w", err)
 	}

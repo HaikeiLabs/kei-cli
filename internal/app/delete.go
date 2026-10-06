@@ -35,7 +35,12 @@ func runBotDeleteCommand(args []string, stdout, stderr io.Writer, client *http.C
 	if !ok {
 		return 1
 	}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, baseURL+"/api/cli/runtime-installations/"+url.PathEscape(*installationID), nil)
+	orgID, err := organizationIDFromCLIToken(token)
+	if err != nil {
+		fmt.Fprintf(stderr, "bot delete: %v\n", err)
+		return 1
+	}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, baseURL+"/api/v1/organizations/"+url.PathEscape(orgID)+"/runtime-installations/"+url.PathEscape(*installationID), nil)
 	if err != nil {
 		fmt.Fprintf(stderr, "bot delete: build request: %v\n", err)
 		return 1

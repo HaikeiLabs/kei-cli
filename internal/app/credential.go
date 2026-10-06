@@ -29,14 +29,24 @@ func requestRuntimeCredential(ctx context.Context, client *http.Client, baseURL,
 }
 
 func requestRuntimeCredentialAction(ctx context.Context, client *http.Client, baseURL, cliToken, installationID, workspaceID, action string) (string, int, error) {
-	if action != "credential" && action != "rotate" {
+	var aipAction string
+	switch action {
+	case "credential":
+		aipAction = "issueCredential"
+	case "rotate":
+		aipAction = "rotateCredential"
+	default:
 		return "", 0, fmt.Errorf("invalid credential action %q", action)
+	}
+	orgID, err := organizationIDFromCLIToken(cliToken)
+	if err != nil {
+		return "", 0, fmt.Errorf("determine organization from login: %w", err)
 	}
 	body, err := json.Marshal(runtimeCredentialRequest{WorkspaceID: workspaceID})
 	if err != nil {
 		return "", 0, fmt.Errorf("encode credential request body: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/cli/runtime-installations/"+url.PathEscape(installationID)+"/"+action, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/v1/organizations/"+url.PathEscape(orgID)+"/runtime-installations/"+url.PathEscape(installationID)+":"+aipAction, bytes.NewReader(body))
 	if err != nil {
 		return "", 0, fmt.Errorf("build credential request: %w", err)
 	}
