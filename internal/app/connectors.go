@@ -167,6 +167,7 @@ type connectorSession struct {
 	client      *http.Client
 	baseURL     string
 	token       string
+	orgID       string
 	workspaceID string
 }
 
@@ -175,15 +176,20 @@ func openConnectorSession(command, workspace string, stderr io.Writer, client *h
 	if !ok {
 		return nil, false
 	}
+	orgID, err := organizationIDFromCLIToken(token)
+	if err != nil {
+		fmt.Fprintf(stderr, "connectors %s: %v; run kei login again\n", command, err)
+		return nil, false
+	}
 	workspaceID, err := resolveWorkspaceID(context.Background(), client, baseURL, token, workspace)
 	if err != nil {
 		fmt.Fprintf(stderr, "connectors %s: %v\n", command, err)
 		return nil, false
 	}
-	return &connectorSession{client: client, baseURL: baseURL, token: token, workspaceID: workspaceID}, true
+	return &connectorSession{client: client, baseURL: baseURL, token: token, orgID: orgID, workspaceID: workspaceID}, true
 }
 
-// do sends one request to /api/cli/connectors<path>.
+// do sends one request to /api/v1/data-connectors<path>.
 func (s *connectorSession) do(method, path string, body any) ([]byte, error) {
 	return s.doPath(method, "/api/v1/data-connectors"+path, body)
 }
@@ -577,11 +583,15 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 		return fail(err)
 	}
 
+	orgID, err := organizationIDFromCLIToken(token)
+	if err != nil {
+		return fail(fmt.Errorf("%w; run kei login again", err))
+	}
 	workspaceID, err := resolveWorkspaceID(context.Background(), client, baseURL, token, ws)
 	if err != nil {
 		return fail(err)
 	}
-	session := &connectorSession{client: client, baseURL: baseURL, token: token, workspaceID: workspaceID}
+	session := &connectorSession{client: client, baseURL: baseURL, token: token, orgID: orgID, workspaceID: workspaceID}
 	var sealed setSecretRequest
 	if secret != "" {
 		if sealed, err = session.sealForWorkspace(secretField.Name, secret); err != nil {
