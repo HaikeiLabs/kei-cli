@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/google/uuid"
 	"golang.org/x/term"
@@ -403,6 +404,7 @@ func runModelProfilesList(args []string, stdout, stderr io.Writer, client *http.
 	flags := flag.NewFlagSet("model-profiles list", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	workspace := profileWorkspaceFlag(flags)
+	jsonOutput := flags.Bool("json", false, "output as JSON")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -415,7 +417,34 @@ func runModelProfilesList(args []string, stdout, stderr io.Writer, client *http.
 		return 1
 	}
 	_, payload, err := session.do(http.MethodGet, session.profilesPath(), nil, nil)
-	return writeProfileResult("list", stdout, stderr, payload, err)
+	if err != nil {
+		fmt.Fprintf(stderr, "model-profiles list: %v\n", err)
+		return 1
+	}
+	if *jsonOutput {
+		_, _ = stdout.Write(payload)
+		return 0
+	}
+	var profiles []modelProfile
+	if err := json.Unmarshal(payload, &profiles); err != nil {
+		fmt.Fprintf(stderr, "model-profiles list: decode response: %v\n", err)
+		return 1
+	}
+	if len(profiles) == 0 {
+		fmt.Fprintln(stdout, "No model profiles found.")
+		return 0
+	}
+	table := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(table, "NAME\tID\tMODEL\tAUTH\tSTATUS\tDEFAULT\tENDPOINT")
+	for _, p := range profiles {
+		defaultProfile := "no"
+		if p.IsWorkspaceDefault {
+			defaultProfile = "yes"
+		}
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", p.DisplayName, p.ProfileID, p.DefaultModel, p.AuthType, p.Status, defaultProfile, p.Endpoint)
+	}
+	_ = table.Flush()
+	return 0
 }
 
 func runModelProfilesGet(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
@@ -463,6 +492,10 @@ func runModelProfilesCreate(args []string, stdout, stderr io.Writer, stdin io.Re
 	if *displayName == "" || *endpoint == "" || *authType == "" || *defaultModel == "" {
 		fmt.Fprintln(stderr, "model-profiles create requires --display-name, --endpoint, --auth-type, and --default-model")
 		return 2
+	}
+	if err := validateModelProfileEndpoint(*endpoint); err != nil {
+		fmt.Fprintf(stderr, "model-profiles create: %v\n", err)
+		return 1
 	}
 	if !validProfileAuthType(*authType) {
 		fmt.Fprintln(stderr, "--auth-type must be none or api_key")
@@ -555,6 +588,12 @@ func runModelProfilesUpdate(args []string, stdout, stderr io.Writer, stdin io.Re
 	if req.DisplayName == nil && req.Endpoint == nil && req.AuthType == nil && req.DefaultModel == nil && !needsKey {
 		fmt.Fprintln(stderr, "model-profiles update requires at least one of --display-name, --endpoint, --auth-type, --default-model, or --rotate-key")
 		return 2
+	}
+	if req.Endpoint != nil {
+		if err := validateModelProfileEndpoint(*req.Endpoint); err != nil {
+			fmt.Fprintf(stderr, "model-profiles update: %v\n", err)
+			return 1
+		}
 	}
 	apiKey := ""
 	if needsKey {

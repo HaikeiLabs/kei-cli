@@ -60,15 +60,61 @@ func assertRequest(t *testing.T, got consoleRequest, method, path string) {
 
 func TestModelProfilesListOrg(t *testing.T) {
 	fake, store := newProfileConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		_, _ = w.Write([]byte(`[` + testProfileJSON + `]`))
+		_, _ = w.Write([]byte(`[` + testProfileJSON + `,{"profile_id":"44444444-4444-4444-4444-444444444444","display_name":"old","endpoint":"https://old.example/v1","default_model":"gpt-old","auth_type":"api_key","status":"revoked"}]`))
 	})
 	var stdout, stderr bytes.Buffer
 	if code := runModelProfilesList(nil, &stdout, &stderr, http.DefaultClient, store); code != 0 {
 		t.Fatalf("list exit = %d, stderr=%s", code, stderr.String())
 	}
 	assertRequest(t, fake.only(t), http.MethodGet, orgProfilesPath)
-	if !strings.Contains(stdout.String(), "primary") {
-		t.Fatalf("list output = %s", stdout.String())
+	want := "NAME     ID                                    MODEL    AUTH     STATUS   DEFAULT  ENDPOINT\nprimary  " + testProfileID + "  gpt-x    none     active   no       https://api.example.com/v1\nold      44444444-4444-4444-4444-444444444444  gpt-old  api_key  revoked  no       https://old.example/v1\n"
+	if stdout.String() != want {
+		t.Fatalf("list output = %q, want %q", stdout.String(), want)
+	}
+}
+
+func TestModelProfilesListJSONPassthrough(t *testing.T) {
+	const response = `[{"profile_id":"` + testProfileID + `","display_name":"primary"}]`
+	_, store := newProfileConsole(t, func(w http.ResponseWriter, r consoleRequest) { _, _ = w.Write([]byte(response)) })
+	var stdout, stderr bytes.Buffer
+	if code := runModelProfilesList([]string{"--json"}, &stdout, &stderr, http.DefaultClient, store); code != 0 {
+		t.Fatalf("list exit = %d, stderr=%s", code, stderr.String())
+	}
+	if stdout.String() != response {
+		t.Fatalf("JSON output = %q, want exact response %q", stdout.String(), response)
+	}
+}
+
+func TestModelProfilesListEmpty(t *testing.T) {
+	_, store := newProfileConsole(t, func(w http.ResponseWriter, r consoleRequest) { _, _ = w.Write([]byte(`[]`)) })
+	var stdout, stderr bytes.Buffer
+	if code := runModelProfilesList(nil, &stdout, &stderr, http.DefaultClient, store); code != 0 || stdout.String() != "No model profiles found.\n" {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestModelProfilesInvalidWriteEndpointMakesNoRequest(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		args   []string
+		prefix string
+	}{
+		{"create", []string{"create", "--display-name", "p", "--endpoint", "http://bad.example/v1", "--auth-type", "none", "--default-model", "m"}, "model-profiles create: "},
+		{"update", []string{"update", testProfileID, "--endpoint", "https://u:p@bad.example/v1"}, "model-profiles update: "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake, store := newProfileConsole(t, failOnRequest(t))
+			var stdout, stderr bytes.Buffer
+			if code := runModelProfilesCommand(tc.args, &stdout, &stderr, strings.NewReader(""), http.DefaultClient, store); code != 1 {
+				t.Fatalf("exit = %d, want 1 (stderr=%s)", code, stderr.String())
+			}
+			if fake.count() != 0 || stdout.Len() != 0 {
+				t.Fatalf("requests=%d stdout=%q", fake.count(), stdout.String())
+			}
+			if !strings.HasPrefix(stderr.String(), tc.prefix) || !strings.Contains(stderr.String(), modelProfileEndpointRule) {
+				t.Fatalf("stderr = %q", stderr.String())
+			}
+		})
 	}
 }
 

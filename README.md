@@ -278,7 +278,7 @@ kei model-profiles create --workspace Main --display-name local --endpoint https
   --display-name openai --endpoint https://api.openai.com/v1 --default-model gpt-4.1 --auth-type api_key
 <secret-manager read> | kei model-profiles update openai --workspace Main --rotate-key
 
-kei model-profiles list [--workspace Main]
+kei model-profiles list [--workspace Main] [--json]
 kei model-profiles get openai --workspace Main
 kei model-profiles update openai --workspace Main --default-model gpt-4.1-mini
 kei model-profiles set-default PROFILE                    # organization default (org-level profile)
@@ -292,10 +292,18 @@ kei model-profiles test openai --workspace Main           # validate a stored pr
 kei model-profiles delete openai --workspace Main --yes
 ```
 
+`kei model-profiles list` displays NAME, ID, MODEL, AUTH, STATUS, DEFAULT,
+and ENDPOINT in a table. Revoked profiles remain visible and are marked in
+STATUS. Use `--json` to print the API response as JSON.
+
 An API key is never accepted as a flag and is never printed. The CLI seals it
 to the credential-sync keys of the runtimes in the profile's scope (the
 agent's runtimes, or the workspace's for a workspace default) with the same
 KMP1 envelope used for connector secrets; only the sealed copies are sent.
+
+Create and update validate `--endpoint` locally with the same rule as the
+console and API, before making a request. Invalid endpoints print the specific
+failed rule and exit 1.
 
 `kei model-profiles test` does what the console's model-profile **Test**
 button does: it checks the endpoint and does not contact the provider. The
