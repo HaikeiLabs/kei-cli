@@ -430,13 +430,14 @@ func TestPoliciesRequireWorkspace(t *testing.T) {
 }
 
 func TestPoliciesResolveWorkspaceByName(t *testing.T) {
-	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		if r.Path == "/api/cli/workspaces" {
-			_, _ = w.Write([]byte(`{"workspaces":[{"id":"` + testWorkspaceID + `","name":"Main"}]}`))
+	fake, server, _ := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		if r.Path == "/api/v1/organizations/org-1/workspaces" {
+			_, _ = w.Write([]byte(`[{"id":"` + testWorkspaceID + `","name":"Main"}]`))
 			return
 		}
 		_, _ = w.Write([]byte(`{"policies":[],"next_page_token":""}`))
 	})
+	store := &memoryCredentialStore{server: server.URL, token: workspaceTestToken()}
 	code, stdout, stderr := runPolicies(t, server, store, "", "list", "--workspace", "Main")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
