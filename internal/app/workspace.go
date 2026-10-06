@@ -7,19 +7,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/google/uuid"
 )
 
 type workspaceInfo struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	IsAdmin bool   `json:"is_admin"`
-}
-
-type workspaceListResponse struct {
-	Workspaces []workspaceInfo `json:"workspaces"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 func runWorkspaceCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
@@ -68,7 +64,7 @@ func runWorkspaceListCommand(args []string, stdout, stderr io.Writer, client *ht
 	if *jsonOutput {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		_ = enc.Encode(workspaceListResponse{Workspaces: workspaces})
+		_ = enc.Encode(workspaces)
 		return 0
 	}
 
@@ -78,17 +74,18 @@ func runWorkspaceListCommand(args []string, stdout, stderr io.Writer, client *ht
 	}
 
 	for _, w := range workspaces {
-		admin := ""
-		if w.IsAdmin {
-			admin = " (admin)"
-		}
-		fmt.Fprintf(stdout, "  %s  %s%s\n", w.ID, w.Name, admin)
+		fmt.Fprintf(stdout, "  %s  %s\n", w.ID, w.Name)
 	}
 	return 0
 }
 
 func listWorkspaces(ctx context.Context, client *http.Client, baseURL, cliToken string) ([]workspaceInfo, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/cli/workspaces", nil)
+	orgID, err := organizationIDFromCLIToken(cliToken)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/v1/organizations/"+url.PathEscape(orgID)+"/workspaces", nil)
 	if err != nil {
 		return nil, fmt.Errorf("build workspaces request: %w", err)
 	}
@@ -100,11 +97,11 @@ func listWorkspaces(ctx context.Context, client *http.Client, baseURL, cliToken 
 	if statusCode != http.StatusOK {
 		return nil, fmt.Errorf("list workspaces returned %d", statusCode)
 	}
-	var list workspaceListResponse
+	var list []workspaceInfo
 	if err := json.Unmarshal(body, &list); err != nil {
 		return nil, fmt.Errorf("decode workspaces response: %w", err)
 	}
-	return list.Workspaces, nil
+	return list, nil
 }
 
 func resolveWorkspaceID(ctx context.Context, client *http.Client, baseURL, cliToken, workspace string) (string, error) {

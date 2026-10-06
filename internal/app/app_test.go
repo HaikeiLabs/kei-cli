@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -542,18 +543,15 @@ func TestApiURLFlagRejected(t *testing.T) {
 }
 
 func TestWorkspacesListJSON(t *testing.T) {
-	store := &memoryCredentialStore{token: "cli-session-token"}
+	store := &memoryCredentialStore{token: workspaceTestToken()}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/cli/workspaces" || r.Method != http.MethodGet {
+		if r.URL.Path != "/api/v1/organizations/org-1/workspaces" || r.Method != http.MethodGet {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		if got := r.Header.Get("Authorization"); got != "Bearer cli-session-token" {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+workspaceTestToken() {
 			t.Fatalf("Authorization = %q", got)
 		}
-		json.NewEncoder(w).Encode(workspaceListResponse{Workspaces: []workspaceInfo{
-			{ID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", Name: "prod", IsAdmin: true},
-			{ID: "ffffffff-gggg-hhhh-iiii-jjjjjjjjjjjj", Name: "staging", IsAdmin: false},
-		}})
+		_, _ = w.Write([]byte(`[{"id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","name":"prod"},{"id":"ffffffff-gggg-hhhh-iiii-jjjjjjjjjjjj","name":"staging"}]`))
 	}))
 	defer server.Close()
 	t.Setenv("KEI_WEB_URL", server.URL)
@@ -565,17 +563,12 @@ func TestWorkspacesListJSON(t *testing.T) {
 	if !strings.Contains(stdout.String(), `"id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"`) {
 		t.Fatalf("JSON output missing workspace id:\n%s", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), `"is_admin": true`) {
-		t.Fatalf("JSON output missing is_admin:\n%s", stdout.String())
-	}
 }
 
 func TestWorkspacesListTable(t *testing.T) {
-	store := &memoryCredentialStore{token: "cli-session-token"}
+	store := &memoryCredentialStore{token: workspaceTestToken()}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(workspaceListResponse{Workspaces: []workspaceInfo{
-			{ID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", Name: "prod", IsAdmin: true},
-		}})
+		_, _ = w.Write([]byte(`[{"id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","name":"prod"}]`))
 	}))
 	defer server.Close()
 	t.Setenv("KEI_WEB_URL", server.URL)
@@ -587,15 +580,12 @@ func TestWorkspacesListTable(t *testing.T) {
 	if !strings.Contains(stdout.String(), "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee") {
 		t.Fatalf("table output missing workspace id:\n%s", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "(admin)") {
-		t.Fatalf("table output missing admin marker:\n%s", stdout.String())
-	}
 }
 
 func TestWorkspacesListEmpty(t *testing.T) {
-	store := &memoryCredentialStore{token: "cli-session-token"}
+	store := &memoryCredentialStore{token: workspaceTestToken()}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(workspaceListResponse{Workspaces: []workspaceInfo{}})
+		_, _ = w.Write([]byte(`[]`))
 	}))
 	defer server.Close()
 	t.Setenv("KEI_WEB_URL", server.URL)
@@ -627,12 +617,9 @@ func TestBotCredentialResolvesWorkspaceByName(t *testing.T) {
 	workspaceHits := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/cli/workspaces":
+		case "/api/v1/organizations/org-1/workspaces":
 			workspaceHits++
-			json.NewEncoder(w).Encode(workspaceListResponse{Workspaces: []workspaceInfo{
-				{ID: workspaceUUID, Name: workspaceName, IsAdmin: true},
-				{ID: "ffffffff-gggg-hhhh-iiii-jjjjjjjjjjjj", Name: "other", IsAdmin: false},
-			}})
+			_, _ = w.Write([]byte(`[{"id":"` + workspaceUUID + `","name":"` + workspaceName + `"},{"id":"ffffffff-gggg-hhhh-iiii-jjjjjjjjjjjj","name":"other"}]`))
 		case "/api/cli/runtime-installations/" + installationID + "/credential":
 			var body runtimeCredentialRequest
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -648,7 +635,7 @@ func TestBotCredentialResolvesWorkspaceByName(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("KEI_WEB_URL", server.URL)
-	store := &memoryCredentialStore{server: server.URL, token: "cli-session-token"}
+	store := &memoryCredentialStore{server: server.URL, token: workspaceTestToken()}
 	var stdout, stderr bytes.Buffer
 	if code := runBotCredentialCommand([]string{"--installation", installationID, "--workspace", workspaceName}, &stdout, &stderr, server.Client(), store); code != 0 {
 		t.Fatalf("credential command exit = %d, stderr = %s", code, stderr.String())
@@ -667,10 +654,8 @@ func TestBotInitResolvesWorkspaceByName(t *testing.T) {
 	var received createRuntimeInstallationRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/cli/workspaces":
-			json.NewEncoder(w).Encode(workspaceListResponse{Workspaces: []workspaceInfo{
-				{ID: workspaceUUID, Name: workspaceName, IsAdmin: true},
-			}})
+		case "/api/v1/organizations/org-1/workspaces":
+			_, _ = w.Write([]byte(`[{"id":"` + workspaceUUID + `","name":"` + workspaceName + `"}]`))
 		case "/api/cli/runtime-installations":
 			if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
 				t.Fatal(err)
@@ -682,7 +667,7 @@ func TestBotInitResolvesWorkspaceByName(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("KEI_WEB_URL", server.URL)
-	store := &memoryCredentialStore{server: server.URL, token: "cli-session-token"}
+	store := &memoryCredentialStore{server: server.URL, token: workspaceTestToken()}
 	var stdout, stderr bytes.Buffer
 	if code := runBotInitCommand([]string{"--platform", "cli", "--name", "test", "--workspace", workspaceName}, &stdout, &stderr, server.Client(), store); code != 0 {
 		t.Fatalf("bot init exit = %d, stderr = %s", code, stderr.String())
@@ -717,14 +702,11 @@ func TestBotInitWorkspaceNotRequired(t *testing.T) {
 func TestBotCredentialWorkspaceNameNoMatch(t *testing.T) {
 	installationID := "12345678-1234-1234-1234-123456789012"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(workspaceListResponse{Workspaces: []workspaceInfo{
-			{ID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", Name: "prod", IsAdmin: true},
-			{ID: "ffffffff-gggg-hhhh-iiii-jjjjjjjjjjjj", Name: "staging", IsAdmin: false},
-		}})
+		_, _ = w.Write([]byte(`[{"id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","name":"prod"},{"id":"ffffffff-gggg-hhhh-iiii-jjjjjjjjjjjj","name":"staging"}]`))
 	}))
 	defer server.Close()
 	t.Setenv("KEI_WEB_URL", server.URL)
-	store := &memoryCredentialStore{server: server.URL, token: "cli-session-token"}
+	store := &memoryCredentialStore{server: server.URL, token: workspaceTestToken()}
 	var stdout, stderr bytes.Buffer
 	if code := runBotCredentialCommand([]string{"--installation", installationID, "--workspace", "nonexistent"}, &stdout, &stderr, server.Client(), store); code != 1 {
 		t.Fatalf("expected exit 1, got %d", code)
@@ -737,14 +719,11 @@ func TestBotCredentialWorkspaceNameNoMatch(t *testing.T) {
 func TestBotCredentialWorkspaceNameMultipleMatches(t *testing.T) {
 	installationID := "12345678-1234-1234-1234-123456789012"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(workspaceListResponse{Workspaces: []workspaceInfo{
-			{ID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", Name: "dup-name", IsAdmin: true},
-			{ID: "ffffffff-gggg-hhhh-iiii-jjjjjjjjjjjj", Name: "dup-name", IsAdmin: false},
-		}})
+		_, _ = w.Write([]byte(`[{"id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","name":"dup-name"},{"id":"ffffffff-gggg-hhhh-iiii-jjjjjjjjjjjj","name":"dup-name"}]`))
 	}))
 	defer server.Close()
 	t.Setenv("KEI_WEB_URL", server.URL)
-	store := &memoryCredentialStore{server: server.URL, token: "cli-session-token"}
+	store := &memoryCredentialStore{server: server.URL, token: workspaceTestToken()}
 	var stdout, stderr bytes.Buffer
 	if code := runBotCredentialCommand([]string{"--installation", installationID, "--workspace", "dup-name"}, &stdout, &stderr, server.Client(), store); code != 1 {
 		t.Fatalf("expected exit 1, got %d", code)
@@ -893,7 +872,7 @@ func TestBotCredentialWorkspaceByUUIDMakesNoDiscoveryCall(t *testing.T) {
 	workspaceUUID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 	workspaceAPICalled := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/cli/workspaces" {
+		if r.URL.Path == "/api/v1/organizations/org-1/workspaces" {
 			workspaceAPICalled = true
 		}
 		if r.URL.Path == "/api/cli/runtime-installations/"+installationID+"/credential" {
@@ -918,4 +897,11 @@ func TestBotCredentialWorkspaceByUUIDMakesNoDiscoveryCall(t *testing.T) {
 	if stdout.String() != "kh_live_uuid_token\n" {
 		t.Fatalf("credential output = %q", stdout.String())
 	}
+}
+
+func workspaceTestToken() string {
+	// JWT with {"org_id":"org-1"} – base64-encoded header.payload, no signature needed
+	hdr := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
+	pld := base64.RawURLEncoding.EncodeToString([]byte(`{"org_id":"org-1"}`))
+	return hdr + "." + pld + "."
 }
