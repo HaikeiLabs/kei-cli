@@ -89,6 +89,7 @@ type createPolicyRequest struct {
 	SrcPattern  string  `json:"src_pattern"`
 	DstPattern  string  `json:"dst_pattern"`
 	Effect      string  `json:"effect"`
+	Action      string  `json:"action"`
 	Priority    int     `json:"priority"`
 	Enabled     bool    `json:"enabled"`
 	AgentID     *string `json:"agent_id,omitempty"`
@@ -100,6 +101,7 @@ type updatePolicyRequest struct {
 	SrcPattern  *string `json:"src_pattern,omitempty"`
 	DstPattern  *string `json:"dst_pattern,omitempty"`
 	Effect      *string `json:"effect,omitempty"`
+	Action      *string `json:"action,omitempty"`
 	Priority    *int    `json:"priority,omitempty"`
 	Enabled     *bool   `json:"enabled,omitempty"`
 }
@@ -485,6 +487,7 @@ func runPoliciesCreate(args []string, stdout, stderr io.Writer, client *http.Cli
 		SrcPattern:  *srcPattern,
 		DstPattern:  *dstPattern,
 		Effect:      *effect,
+		Action:      *effect,
 		Priority:    *priority,
 		Enabled:     true,
 		AgentID:     agent,
@@ -549,6 +552,7 @@ func runPoliciesUpdate(args []string, stdout, stderr io.Writer, client *http.Cli
 	}
 	if set["effect"] {
 		request.Effect = effect
+		request.Action = effect
 	}
 	if set["priority"] {
 		request.Priority = priority
@@ -743,6 +747,7 @@ func runPoliciesImport(args []string, stdout, stderr io.Writer, stdin io.Reader,
 			SrcPattern: p.SrcPattern,
 			DstPattern: p.DstPattern,
 			Effect:     p.Effect,
+			Action:     p.Effect,
 			Enabled:    true,
 		}
 		if _, err := session.do(http.MethodPost, "", request, nil); err != nil {

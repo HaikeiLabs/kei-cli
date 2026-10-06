@@ -236,7 +236,7 @@ func TestPoliciesCreate(t *testing.T) {
 	if req.Headers["X-Kei-API-Shape"] != "aip" {
 		t.Fatalf("X-Kei-API-Shape header = %q, want aip", req.Headers["X-Kei-API-Shape"])
 	}
-	if req.Body["name"] != "allow-git" || req.Body["src_pattern"] != "harness:claude" || req.Body["dst_pattern"] != "shell:git" || req.Body["effect"] != "permit" {
+	if req.Body["name"] != "allow-git" || req.Body["src_pattern"] != "harness:claude" || req.Body["dst_pattern"] != "shell:git" || req.Body["effect"] != "permit" || req.Body["action"] != "permit" {
 		t.Fatalf("body = %v", req.Body)
 	}
 	if req.Body["priority"] != float64(100) {
@@ -294,7 +294,7 @@ func TestPoliciesUpdate(t *testing.T) {
 	if req.Headers["X-Kei-API-Shape"] != "aip" {
 		t.Fatalf("X-Kei-API-Shape header = %q, want aip", req.Headers["X-Kei-API-Shape"])
 	}
-	if req.Body["name"] != "renamed" || req.Body["effect"] != "deny" {
+	if req.Body["name"] != "renamed" || req.Body["effect"] != "deny" || req.Body["action"] != "deny" {
 		t.Fatalf("body = %v", req.Body)
 	}
 	if _, present := req.Body["src_pattern"]; present {
@@ -320,7 +320,7 @@ func TestPoliciesUpdateSendsOnlySetFlags(t *testing.T) {
 	if req.Body["priority"] != float64(50) {
 		t.Fatalf("priority = %v, want 50", req.Body["priority"])
 	}
-	for _, field := range []string{"name", "src_pattern", "dst_pattern", "effect", "enabled", "description"} {
+	for _, field := range []string{"name", "src_pattern", "dst_pattern", "effect", "action", "enabled", "description"} {
 		if _, present := req.Body[field]; present {
 			t.Fatalf("body contains %q, but only --priority was set", field)
 		}
@@ -644,6 +644,10 @@ func TestPoliciesImportApplyCreatesPolicies(t *testing.T) {
 			created++
 			name, _ := r.Body["name"].(string)
 			eff, _ := r.Body["effect"].(string)
+			act, _ := r.Body["action"].(string)
+			if act != eff {
+				t.Errorf("action = %q, want %q", act, eff)
+			}
 			src, _ := r.Body["src_pattern"].(string)
 			dst, _ := r.Body["dst_pattern"].(string)
 			w.WriteHeader(http.StatusCreated)
@@ -797,6 +801,54 @@ func TestPoliciesListLegacyBareArrayWithAction(t *testing.T) {
 		}
 	}
 	_ = fake
+}
+
+func TestPoliciesCreateSendsActionField(t *testing.T) {
+	// The kei-policy-catalog legacy route reads "action" when the console
+	// does not forward X-Kei-API-Shape. This test verifies the CLI sends
+	// both "action" and "effect" so both code paths work.
+	var gotBody map[string]any
+	_, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		if r.Body["action"] == nil || r.Body["action"] != r.Body["effect"] {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"reason":"invalid_argument","message":"action must be 'permit' or 'deny'"}`))
+			return
+		}
+		gotBody = r.Body
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","name":"test","effect":"permit","approval_required":false}`))
+	})
+	code, stdout, stderr := runPolicies(t, server, store, "", "create", "--workspace", testWorkspaceID,
+		"--name", "test", "--src-pattern", "harness:claude", "--dst-pattern", "shell:git", "--effect", "permit")
+	if code != 0 {
+		t.Fatalf("exit = %d stderr=%s", code, stderr)
+	}
+	if gotBody == nil || gotBody["action"] != "permit" || gotBody["effect"] != "permit" {
+		t.Fatalf("body missing action or effect fields: %v", gotBody)
+	}
+	if !strings.Contains(stdout, testPolicyID) {
+		t.Fatalf("create output missing policy id: %q", stdout)
+	}
+}
+
+func TestPoliciesUpdateSendsActionField(t *testing.T) {
+	var gotBody map[string]any
+	_, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		if r.Body["action"] == nil || r.Body["action"] != r.Body["effect"] {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"reason":"invalid_argument","message":"action must be 'permit' or 'deny'"}`))
+			return
+		}
+		gotBody = r.Body
+		_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","name":"test","effect":"deny","approval_required":false}`))
+	})
+	code, _, stderr := runPolicies(t, server, store, "", "update", testPolicyID, "--workspace", testWorkspaceID, "--effect", "deny")
+	if code != 0 {
+		t.Fatalf("exit = %d stderr=%s", code, stderr)
+	}
+	if gotBody == nil || gotBody["action"] != "deny" || gotBody["effect"] != "deny" {
+		t.Fatalf("body missing action or effect fields: %v", gotBody)
+	}
 }
 
 func TestPoliciesSurfacesAPIError(t *testing.T) {
