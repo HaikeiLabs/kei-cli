@@ -70,7 +70,12 @@ func runBotStatusCommand(args []string, stdout, stderr io.Writer, client *http.C
 		fmt.Fprintln(stderr, "bot status: not logged in; run kei login first")
 		return 1
 	}
-	status, err := getRuntimeInstallationStatus(context.Background(), client, baseURL, cliToken, *installationID)
+	orgID, err := organizationIDFromCLIToken(cliToken)
+	if err != nil {
+		fmt.Fprintf(stderr, "bot status: %v\n", err)
+		return 1
+	}
+	status, err := getRuntimeInstallationStatus(context.Background(), client, baseURL, cliToken, orgID, *installationID)
 	if err != nil {
 		fmt.Fprintf(stderr, "bot status: %v\n", err)
 		return 1
@@ -82,8 +87,8 @@ func runBotStatusCommand(args []string, stdout, stderr io.Writer, client *http.C
 	return 0
 }
 
-func getRuntimeInstallationStatus(ctx context.Context, client *http.Client, baseURL, cliToken, installationID string) (*runtimeInstallationStatus, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/cli/runtime-installations/"+url.PathEscape(installationID), nil)
+func getRuntimeInstallationStatus(ctx context.Context, client *http.Client, baseURL, cliToken, orgID, installationID string) (*runtimeInstallationStatus, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/v1/organizations/"+url.PathEscape(orgID)+"/runtime-installations/"+url.PathEscape(installationID), nil)
 	if err != nil {
 		return nil, fmt.Errorf("build runtime status request: %w", err)
 	}

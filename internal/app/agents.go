@@ -83,7 +83,12 @@ func runBotAgentsList(args []string, stdout, stderr io.Writer, client *http.Clie
 	if !ok {
 		return 1
 	}
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+"/api/cli/runtime-installations/"+url.PathEscape(installationID)+"/agents", nil)
+	orgID, err := organizationIDFromCLIToken(token)
+	if err != nil {
+		fmt.Fprintf(stderr, "bot agents list: %v\n", err)
+		return 1
+	}
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+"/api/v1/organizations/"+url.PathEscape(orgID)+"/runtime-installations/"+url.PathEscape(installationID)+"/agents", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	statusCode, body, err := doRequest(client, req, 4<<10) // TODO(HAI-362): explicit oversize error, AIP pagination, request_id on creates
 	if err != nil {
@@ -108,8 +113,13 @@ func runBotAgentsAdd(args []string, stdout, stderr io.Writer, client *http.Clien
 	if !ok {
 		return 1
 	}
+	orgID, err := organizationIDFromCLIToken(token)
+	if err != nil {
+		fmt.Fprintf(stderr, "bot agents add: %v\n", err)
+		return 1
+	}
 	body, _ := json.Marshal(map[string]any{"agent_id": agentID, "default": makeDefault})
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, baseURL+"/api/cli/runtime-installations/"+url.PathEscape(installationID)+"/agents", bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, baseURL+"/api/v1/organizations/"+url.PathEscape(orgID)+"/runtime-installations/"+url.PathEscape(installationID)+"/agents", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	return doBotAgentMutation(req, stdout, stderr, client)
@@ -125,7 +135,12 @@ func runBotAgentsRemove(args []string, stdout, stderr io.Writer, client *http.Cl
 	if !ok {
 		return 1
 	}
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodDelete, baseURL+"/api/cli/runtime-installations/"+url.PathEscape(installationID)+"/agents/"+url.PathEscape(agentID), nil)
+	orgID, err := organizationIDFromCLIToken(token)
+	if err != nil {
+		fmt.Fprintf(stderr, "bot agents remove: %v\n", err)
+		return 1
+	}
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodDelete, baseURL+"/api/v1/organizations/"+url.PathEscape(orgID)+"/runtime-installations/"+url.PathEscape(installationID)+"/agents/"+url.PathEscape(agentID), nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	return doBotAgentMutation(req, stdout, stderr, client)
 }

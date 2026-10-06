@@ -30,7 +30,12 @@ func runBotBindCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 	if !ok {
 		return 1
 	}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, baseURL+"/api/cli/runtime-installations/"+url.PathEscape(*installationID)+"/bind", nil)
+	orgID, err := organizationIDFromCLIToken(token)
+	if err != nil {
+		fmt.Fprintf(stderr, "bot bind: %v\n", err)
+		return 1
+	}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, baseURL+"/api/v1/organizations/"+url.PathEscape(orgID)+"/runtime-installations/"+url.PathEscape(*installationID)+":bind", nil)
 	if err != nil {
 		fmt.Fprintf(stderr, "bot bind: %v\n", err)
 		return 1
