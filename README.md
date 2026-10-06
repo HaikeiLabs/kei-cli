@@ -287,6 +287,8 @@ kei model-profiles assign openai --workspace Main --agent AGENT_ID
 kei model-profiles assignment --workspace Main --agent AGENT_ID
 kei model-profiles unassign --workspace Main --agent AGENT_ID
 kei model-profiles readiness openai --workspace Main      # can runtimes reach the provider?
+kei model-profiles test --endpoint https://api.openai.com/v1   # validate an endpoint, offline
+kei model-profiles test openai --workspace Main           # validate a stored profile's endpoint
 kei model-profiles delete openai --workspace Main --yes
 ```
 
@@ -295,9 +297,16 @@ to the credential-sync keys of the runtimes in the profile's scope (the
 agent's runtimes, or the workspace's for a workspace default) with the same
 KMP1 envelope used for connector secrets; only the sealed copies are sent.
 
-`kei model-profiles test` is not available yet: the Kei API has no test
-endpoint, so the command exits with an error without contacting the server.
-Use `readiness` instead.
+`kei model-profiles test` does what the console's model-profile **Test**
+button does: it checks the endpoint and does not contact the provider. The
+endpoint must be an `https` URL with a host and no embedded credentials, query,
+or fragment (the console's and the API's rules; the CLI always applies the
+production rule, so `http` is rejected). On success it prints
+`Configuration is valid; provider credentials will be verified by credential
+sync.` and exits 0; otherwise it names the failed rule and exits 1, without
+printing the URL. `--endpoint` makes no network request and needs no login;
+`test PROFILE` reads the stored profile and checks its endpoint. To see whether
+runtimes can actually reach the provider, use `readiness`.
 
 ## Rotating a runtime credential into AWS Secrets Manager
 
