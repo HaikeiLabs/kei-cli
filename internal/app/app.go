@@ -97,7 +97,10 @@ func Main(version, command string, args []string, stdout, stderr io.Writer, stdi
 	case "bot":
 		return runBotCommand(args, stdout, stderr, &http.Client{Timeout: 15 * time.Second}, osKeychainStore{})
 	case "runtime":
-		return runRuntimeCommand(args, stdout, stderr)
+		return runRuntimeCommand(args, stdout, stderr, &http.Client{Timeout: 15 * time.Second}, osKeychainStore{})
+	case "service":
+		// "kei service" is a hidden alias for "kei runtime service"
+		return runRuntimeCommand(append([]string{"service"}, args...), stdout, stderr, &http.Client{Timeout: 30 * time.Second}, osKeychainStore{})
 	case "model-profiles":
 		return runModelProfilesCommand(args, stdout, stderr, stdin, &http.Client{Timeout: 30 * time.Second}, osKeychainStore{})
 	case "credential-store":
@@ -136,6 +139,10 @@ func PrintUsage(w io.Writer) {
 	fmt.Fprintln(w, "  kei audit decrypt --record ID --identity PATH (--out FILE | --stdout)")
 	fmt.Fprintln(w, "  See https://github.com/HaikeiLabs/kei/blob/main/docs/adr/030-audit-args-encryption.md")
 	fmt.Fprintln(w, "  kei harness add|list|remove|sync [--installation ID] [--harness kind] [--dry-run]")
+	fmt.Fprintln(w, "  kei runtime heartbeat")
+	fmt.Fprintln(w, "  kei runtime service install [--config PATH]")
+	fmt.Fprintln(w, "  kei runtime service uninstall")
+	fmt.Fprintln(w, "  kei runtime service status")
 	fmt.Fprintln(w, "users connect their own accounts through their chat harness")
 }
 
