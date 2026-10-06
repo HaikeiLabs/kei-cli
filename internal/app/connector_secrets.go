@@ -18,7 +18,7 @@ import (
 )
 
 // credentialRecipient is a runtime credential-sync key a connector secret is
-// sealed to, as listed by GET /api/cli/credential-store/recipients.
+// sealed to, as listed by GET /api/v1/organizations/{org}/credential-store/recipients.
 type credentialRecipient struct {
 	RuntimeInstallationID string `json:"runtime_installation_id"`
 	KeyID                 string `json:"key_id"`
@@ -118,7 +118,7 @@ func connectorSecretField(provider contract.Provider, model contract.AccountMode
 // secrets for the session's workspace. It fails when there is none, before
 // anything is created.
 func (s *connectorSession) sealForWorkspace(field, secret string) (setSecretRequest, error) {
-	payload, err := s.doPath(http.MethodGet, "/api/cli/credential-store/recipients", nil)
+	payload, err := s.doPath(http.MethodGet, "/api/v1/organizations/"+url.PathEscape(s.orgID)+"/credential-store/recipients", nil)
 	if err != nil {
 		return setSecretRequest{}, fmt.Errorf("list credential delivery recipients: %w", err)
 	}
