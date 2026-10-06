@@ -253,6 +253,52 @@ tenant secret manager, and the connector becomes connected when it does. To
 use a secret that is already in your secret manager, pass `--credential-ref
 REF` instead.
 
+## Manage model profiles and the credential store
+
+Model profiles and the credential store are organization resources in the
+Kei API (`/api/v1/organizations/{org}/...`). The organization is the one your
+`kei login` token is bound to. Pass `--workspace` (a name or ID) to work with a
+workspace's profiles; omit it for organization-level profiles. Profile
+arguments accept an ID or a display name; `--agent` takes an agent ID. Writes
+require an organization admin.
+
+```sh
+# Configure the credential store once (PUT creates it), then change it (PATCH).
+kei credential-store put --secret-backend aws-secrets-manager \
+  --backend-config '{"region":"us-east-1","account_id":"123456789012"}' --secret-name-prefix kei
+kei credential-store update --secret-name-prefix kei-prod
+kei credential-store get
+
+# A profile with no credential.
+kei model-profiles create --workspace Main --display-name local --endpoint https://llm.internal/v1 \
+  --default-model llama-3 --auth-type none --workspace-default
+
+# An API-key profile: the key is read from stdin (or typed without echo).
+<secret-manager read> | kei model-profiles create --workspace Main --agent AGENT_ID \
+  --display-name openai --endpoint https://api.openai.com/v1 --default-model gpt-4.1 --auth-type api_key
+<secret-manager read> | kei model-profiles update openai --workspace Main --rotate-key
+
+kei model-profiles list [--workspace Main]
+kei model-profiles get openai --workspace Main
+kei model-profiles update openai --workspace Main --default-model gpt-4.1-mini
+kei model-profiles set-default PROFILE                    # organization default (org-level profile)
+kei model-profiles set-default openai --workspace Main    # workspace default
+kei model-profiles assign openai --workspace Main --agent AGENT_ID
+kei model-profiles assignment --workspace Main --agent AGENT_ID
+kei model-profiles unassign --workspace Main --agent AGENT_ID
+kei model-profiles readiness openai --workspace Main      # can runtimes reach the provider?
+kei model-profiles delete openai --workspace Main --yes
+```
+
+An API key is never accepted as a flag and is never printed. The CLI seals it
+to the credential-sync keys of the runtimes in the profile's scope (the
+agent's runtimes, or the workspace's for a workspace default) with the same
+KMP1 envelope used for connector secrets; only the sealed copies are sent.
+
+`kei model-profiles test` is not available yet: the Kei API has no test
+endpoint, so the command exits with an error without contacting the server.
+Use `readiness` instead.
+
 ## Rotating a runtime credential into AWS Secrets Manager
 
 When a runtime's Kubernetes secret is owned by an ExternalSecret that syncs
