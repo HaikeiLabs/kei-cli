@@ -440,20 +440,202 @@ func TestModelProfilesReadiness(t *testing.T) {
 	}
 }
 
-func TestModelProfilesTestFailsWithoutARequest(t *testing.T) {
+func TestValidateModelProfileEndpoint(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+		rule     string // "" means valid
+	}{
+		{"https", "https://api.openai.com/v1", ""},
+		{"https with port and path", "https://llm.internal:8443/v1/chat", ""},
+		{"https bare host", "https://llm.internal", ""},
+		{"http rejected", "http://llm.internal/v1", "scheme \"http\" is not https"},
+		{"other scheme rejected", "ftp://llm.internal/v1", "scheme \"ftp\" is not https"},
+		{"no scheme or host", "llm.internal/v1", "has no host"},
+		{"empty host", "https:///v1", "has no host"},
+		{"userinfo", "https://user:pass@llm.internal/v1", "embedded credentials"},
+		{"user only", "https://user@llm.internal/v1", "embedded credentials"},
+		{"query", "https://llm.internal/v1?key=abc", "query"},
+		{"empty query marker is allowed like the console", "https://llm.internal/v1?", ""},
+		{"fragment", "https://llm.internal/v1#frag", "fragment"},
+		{"unparsable", "https://llm internal/%zz", "not a valid URL"},
+		{"control character", "https://llm.internal/\x7f", "not a valid URL"},
+		{"empty", "", "has no host"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateModelProfileEndpoint(tt.endpoint)
+			if tt.rule == "" {
+				if err != nil {
+					t.Fatalf("validate(%q) = %v, want valid", tt.endpoint, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("validate(%q) = nil, want error naming %q", tt.endpoint, tt.rule)
+			}
+			if !strings.Contains(err.Error(), tt.rule) {
+				t.Fatalf("validate(%q) = %q, want it to name %q", tt.endpoint, err, tt.rule)
+			}
+			if !strings.HasPrefix(err.Error(), "endpoint must be an https URL without embedded credentials, query, or fragment") {
+				t.Fatalf("validate(%q) = %q, want the console's rule sentence", tt.endpoint, err)
+			}
+		})
+	}
+}
+
+// TestModelProfilesTestEndpointIsLocal matches the console's Test button
+// (POST /api/model-profiles/test), which validates the endpoint and never
+// contacts the provider: the CLI makes no request at all.
+func TestModelProfilesTestEndpointIsLocal(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+		code     int
+		stdout   string
+		stderr   string
+	}{
+		{"valid", "https://api.openai.com/v1", 0, modelProfileTestOK + "\n", ""},
+		{"http", "http://llm.internal/v1", 1, "", "scheme \"http\" is not https"},
+		{"userinfo", "https://u:p@llm.internal/v1", 1, "", "embedded credentials"},
+		{"query", "https://llm.internal/v1?a=b", 1, "", "query string"},
+		{"fragment", "https://llm.internal/v1#x", 1, "", "fragment"},
+		{"no host", "llm.internal", 1, "", "has no host"},
+		{"unparsable", "https://llm internal/%zz", 1, "", "not a valid URL"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake, store := newProfileConsole(t, failOnRequest(t))
+			var stdout, stderr bytes.Buffer
+			code := runModelProfilesCommand([]string{"test", "--endpoint", tt.endpoint}, &stdout, &stderr, nil, http.DefaultClient, store)
+			if code != tt.code {
+				t.Fatalf("exit = %d, want %d (stderr=%s)", code, tt.code, stderr.String())
+			}
+			if fake.count() != 0 {
+				t.Fatalf("test made %d requests, want none", fake.count())
+			}
+			if stdout.String() != tt.stdout {
+				t.Fatalf("stdout = %q, want %q", stdout.String(), tt.stdout)
+			}
+			if tt.stderr == "" && stderr.Len() != 0 {
+				t.Fatalf("stderr = %q, want empty", stderr.String())
+			}
+			if tt.stderr != "" && (!strings.HasPrefix(stderr.String(), "model-profiles test: ") || !strings.Contains(stderr.String(), tt.stderr)) {
+				t.Fatalf("stderr = %q, want it to name %q", stderr.String(), tt.stderr)
+			}
+		})
+	}
+}
+
+// TestModelProfilesTestNeedsNoLogin: --endpoint validation works logged out.
+// TestModelProfilesTestNeverEchoesEndpoint: userinfo or a query may hold a
+// secret, so a rejected endpoint is never printed.
+func TestModelProfilesTestNeverEchoesEndpoint(t *testing.T) {
+	for _, endpoint := range []string{"https://u:sekret@llm.internal/v1", "https://llm.internal/v1?api_key=sekret", "https://llm.internal/v1#sekret", "https://u:sekret@llm internal/"} {
+		var stdout, stderr bytes.Buffer
+		if code := runModelProfilesCommand([]string{"test", "--endpoint", endpoint}, &stdout, &stderr, nil, http.DefaultClient, &memoryCredentialStore{}); code != 1 {
+			t.Fatalf("%s exit = %d, want 1", endpoint, code)
+		}
+		if strings.Contains(stdout.String()+stderr.String(), "sekret") {
+			t.Fatalf("echoed the secret: %q", stderr.String())
+		}
+	}
+}
+
+func TestModelProfilesTestNeedsNoLogin(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runModelProfilesCommand([]string{"test", "--endpoint", "https://api.openai.com/v1"}, &stdout, &stderr, nil, http.DefaultClient, &memoryCredentialStore{})
+	if code != 0 || stdout.String() != modelProfileTestOK+"\n" {
+		t.Fatalf("exit = %d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestModelProfilesTestSuccessMessageMatchesConsole(t *testing.T) {
+	const console = "Configuration is valid; provider credentials will be verified by credential sync."
+	if modelProfileTestOK != console {
+		t.Fatalf("message = %q, want the console's %q", modelProfileTestOK, console)
+	}
+}
+
+func TestModelProfilesTestUsage(t *testing.T) {
+	t.Setenv("KEI_WORKSPACE_ID", "")
+	cases := map[string][]string{
+		"nothing":              {"test"},
+		"empty endpoint":       {"test", "--endpoint", ""},
+		"profile and endpoint": {"test", testProfileID, "--endpoint", "https://api.openai.com/v1"},
+		"workspace no profile": {"test", "--workspace", testWorkspaceID, "--endpoint", "https://api.openai.com/v1"},
+		"extra argument":       {"test", testProfileID, "extra"},
+		"unknown flag":         {"test", "--model", "m", "--endpoint", "https://api.openai.com/v1"},
+	}
+	for name, args := range cases {
+		t.Run(name, func(t *testing.T) {
+			fake, store := newProfileConsole(t, failOnRequest(t))
+			var stdout, stderr bytes.Buffer
+			if code := runModelProfilesCommand(args, &stdout, &stderr, nil, http.DefaultClient, store); code != 2 {
+				t.Fatalf("exit = %d, want 2 (stderr=%s)", code, stderr.String())
+			}
+			if fake.count() != 0 || stdout.Len() != 0 {
+				t.Fatalf("requests=%d stdout=%q", fake.count(), stdout.String())
+			}
+		})
+	}
+}
+
+// TestModelProfilesTestStoredProfile fetches a profile and validates its
+// stored endpoint, pointing at readiness for provider reachability.
+func TestModelProfilesTestStoredProfile(t *testing.T) {
 	fake, store := newProfileConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected %s %s", r.Method, r.Path)
+		}
+		_, _ = w.Write([]byte(testProfileJSON))
 	})
 	var stdout, stderr bytes.Buffer
-	code := runModelProfilesCommand([]string{"test", "--endpoint", "https://api.example.com/v1", "--model", "m"}, &stdout, &stderr, nil, http.DefaultClient, store)
-	if code == 0 {
-		t.Fatal("test exit = 0, want non-zero")
+	code := runModelProfilesCommand([]string{"test", testProfileID, "--workspace", testWorkspaceID}, &stdout, &stderr, nil, http.DefaultClient, store)
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, stderr.String())
 	}
-	if fake.count() != 0 {
-		t.Fatalf("test made %d requests, want none", fake.count())
+	assertRequest(t, fake.only(t), http.MethodGet, wsProfilesPath+"/"+testProfileID)
+	want := modelProfileTestOK + "\nTo check that runtimes can reach the provider: kei model-profiles readiness " + testProfileID + " --workspace " + testWorkspaceID + "\n"
+	if stdout.String() != want {
+		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
 	}
-	if !strings.Contains(stderr.String(), "not available yet") || stdout.Len() != 0 {
+}
+
+func TestModelProfilesTestStoredProfileOrgLevel(t *testing.T) {
+	fake, store := newProfileConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		_, _ = w.Write([]byte(testProfileJSON))
+	})
+	var stdout, stderr bytes.Buffer
+	if code := runModelProfilesCommand([]string{"test", testProfileID}, &stdout, &stderr, nil, http.DefaultClient, store); code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, stderr.String())
+	}
+	assertRequest(t, fake.only(t), http.MethodGet, orgProfilesPath+"/"+testProfileID)
+	if !strings.Contains(stdout.String(), "kei model-profiles readiness "+testProfileID+" --workspace WORKSPACE") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestModelProfilesTestStoredProfileInvalidEndpoint(t *testing.T) {
+	_, store := newProfileConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		_, _ = w.Write([]byte(strings.Replace(testProfileJSON, "https://api.example.com/v1", "http://api.example.com/v1", 1)))
+	})
+	var stdout, stderr bytes.Buffer
+	if code := runModelProfilesCommand([]string{"test", testProfileID, "--workspace", testWorkspaceID}, &stdout, &stderr, nil, http.DefaultClient, store); code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	if stdout.Len() != 0 || !strings.Contains(stderr.String(), "scheme \"http\" is not https") {
 		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
+func TestModelProfilesTestStoredProfileNotLoggedIn(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := runModelProfilesCommand([]string{"test", testProfileID}, &stdout, &stderr, nil, http.DefaultClient, &memoryCredentialStore{}); code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "kei login") {
+		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
 
@@ -500,7 +682,7 @@ func TestModelProfilesCommandDispatch(t *testing.T) {
 		{[]string{"get"}, 2},            // no profile
 		{[]string{"delete", "x"}, 2},    // no --yes
 		{[]string{"readiness", "x"}, 2}, // no workspace
-		{[]string{"test"}, 1},           // not available
+		{[]string{"test"}, 2},           // no --endpoint or profile
 	}
 	t.Setenv("KEI_WORKSPACE_ID", "")
 	for _, tt := range tests {

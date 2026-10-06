@@ -80,7 +80,39 @@ type profileIDRequest struct {
 	ProfileID string `json:"profile_id"`
 }
 
-var errModelProfileTestUnavailable = errors.New("model-profiles test is not available yet: the Kei API has no model-profile test endpoint. Use `kei model-profiles readiness PROFILE --workspace WORKSPACE` to see whether runtimes can reach the provider")
+// modelProfileTestOK is the console's Test-button message
+// (kei-console modelProfileTestHandler, POST /api/model-profiles/test).
+const modelProfileTestOK = "Configuration is valid; provider credentials will be verified by credential sync."
+
+// modelProfileEndpointRule is the console's and catalog's error sentence for
+// an endpoint that fails validateModelProfileEndpoint.
+const modelProfileEndpointRule = "endpoint must be an https URL without embedded credentials, query, or fragment"
+
+// validateModelProfileEndpoint applies the console's (and catalog's)
+// validateModelProfileEndpoint rules: the URL must parse, have a host, and
+// carry no userinfo, query, or fragment, and its scheme must be https. Those
+// services also allow http outside production/staging; the CLI only talks to
+// the production console, so it treats every endpoint as production. The
+// error names the rule that failed and never echoes the URL, whose userinfo
+// or query may hold a secret.
+func validateModelProfileEndpoint(raw string) error {
+	u, err := url.Parse(raw)
+	switch {
+	case err != nil:
+		return fmt.Errorf("%s: it is not a valid URL", modelProfileEndpointRule)
+	case u.Host == "":
+		return fmt.Errorf("%s: it has no host; use a full https:// URL", modelProfileEndpointRule)
+	case u.User != nil:
+		return fmt.Errorf("%s: it has embedded credentials (user info); send API keys with --auth-type api_key", modelProfileEndpointRule)
+	case u.RawQuery != "":
+		return fmt.Errorf("%s: it has a query string", modelProfileEndpointRule)
+	case u.Fragment != "":
+		return fmt.Errorf("%s: it has a fragment", modelProfileEndpointRule)
+	case u.Scheme != "https":
+		return fmt.Errorf("%s: scheme %q is not https", modelProfileEndpointRule, u.Scheme)
+	}
+	return nil
+}
 
 func runModelProfilesCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
 	if len(args) == 0 {
@@ -109,7 +141,7 @@ func runModelProfilesCommand(args []string, stdout, stderr io.Writer, stdin io.R
 	case "readiness":
 		return runModelProfilesReadiness(args[1:], stdout, stderr, client, store)
 	case "test":
-		return runModelProfilesTest(args[1:], stderr)
+		return runModelProfilesTest(args[1:], stdout, stderr, client, store)
 	default:
 		fmt.Fprintf(stderr, "unknown model-profiles command %q\n", args[0])
 		return 2
@@ -752,9 +784,68 @@ func runModelProfilesReadiness(args []string, stdout, stderr io.Writer, client *
 	return writeProfileResult("readiness", stdout, stderr, payload, err)
 }
 
-// runModelProfilesTest fails without a request: the catalog has no test
-// endpoint, and the console no longer serves /api/cli/model-profiles/test.
-func runModelProfilesTest(_ []string, stderr io.Writer) int {
-	fmt.Fprintf(stderr, "%v\n", errModelProfileTestUnavailable)
-	return 1
+// runModelProfilesTest is the console's model-profile Test button: it checks
+// the endpoint with the console's rules and does not contact the provider.
+// With --endpoint it makes no request at all. With PROFILE it reads the
+// profile and checks its stored endpoint; provider reachability is what
+// readiness reports.
+func runModelProfilesTest(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
+	flags := flag.NewFlagSet("model-profiles test", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	workspace := profileWorkspaceFlag(flags)
+	endpoint := flags.String("endpoint", "", "model API endpoint URL to validate (https)")
+	id, err := parsePolicyFlags(flags, args)
+	if err != nil {
+		fmt.Fprintf(stderr, "model-profiles test: %v\n", err)
+		return 2
+	}
+	switch {
+	case id != "" && *endpoint != "":
+		fmt.Fprintln(stderr, "model-profiles test takes PROFILE or --endpoint, not both")
+		return 2
+	case id == "" && *endpoint == "":
+		fmt.Fprintln(stderr, "model-profiles test requires --endpoint URL or a profile ID or name")
+		return 2
+	case id == "" && *workspace != "":
+		fmt.Fprintln(stderr, "--workspace applies only when testing a stored profile")
+		return 2
+	}
+	if id == "" {
+		if err := validateModelProfileEndpoint(*endpoint); err != nil {
+			fmt.Fprintf(stderr, "model-profiles test: %v\n", err)
+			return 1
+		}
+		fmt.Fprintln(stdout, modelProfileTestOK)
+		return 0
+	}
+	session, ok := openOrgSession("model-profiles test", *workspace, stderr, client, store)
+	if !ok {
+		return 1
+	}
+	profileID, err := session.resolveProfileID(id)
+	if err != nil {
+		fmt.Fprintf(stderr, "model-profiles test: %v\n", err)
+		return 1
+	}
+	_, payload, err := session.do(http.MethodGet, session.profilePath(profileID), nil, nil)
+	if err != nil {
+		fmt.Fprintf(stderr, "model-profiles test: %v\n", err)
+		return 1
+	}
+	var profile modelProfile
+	if err := json.Unmarshal(payload, &profile); err != nil {
+		fmt.Fprintf(stderr, "model-profiles test: decode model profile: %v\n", err)
+		return 1
+	}
+	if err := validateModelProfileEndpoint(profile.Endpoint); err != nil {
+		fmt.Fprintf(stderr, "model-profiles test: %v\n", err)
+		return 1
+	}
+	readinessWorkspace := *workspace
+	if readinessWorkspace == "" {
+		readinessWorkspace = "WORKSPACE"
+	}
+	fmt.Fprintln(stdout, modelProfileTestOK)
+	fmt.Fprintf(stdout, "To check that runtimes can reach the provider: kei model-profiles readiness %s --workspace %s\n", id, readinessWorkspace)
+	return 0
 }
