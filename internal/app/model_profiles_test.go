@@ -74,8 +74,8 @@ func TestModelProfilesListOrg(t *testing.T) {
 
 func TestModelProfilesListWorkspaceByName(t *testing.T) {
 	fake, store := newProfileConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		if r.Path == "/api/cli/workspaces" {
-			_, _ = w.Write([]byte(`{"workspaces":[{"id":"` + testWorkspaceID + `","name":"Main"}]}`))
+		if r.Path == "/api/v1/organizations/"+testProfileOrgID+"/workspaces" {
+			_, _ = w.Write([]byte(`[{"id":"` + testWorkspaceID + `","name":"Main"}]`))
 			return
 		}
 		_, _ = w.Write([]byte(`[]`))
@@ -159,8 +159,8 @@ func TestModelProfilesCreateAPIKeyFromStdinIsSealed(t *testing.T) {
 	}
 	fake, store := newProfileConsole(t, func(w http.ResponseWriter, r consoleRequest) {
 		switch r.Path {
-		case "/api/cli/workspaces":
-			_, _ = w.Write([]byte(`{"workspaces":[{"id":"` + testWorkspaceID + `","name":"Main"}]}`))
+		case "/api/v1/organizations/" + testProfileOrgID + "/workspaces":
+			_, _ = w.Write([]byte(`[{"id":"` + testWorkspaceID + `","name":"Main"}]`))
 		case recipientsPath:
 			_, _ = w.Write([]byte(`{"credential_store_installation_id":"` + testStoreID + `","recipients":[{"runtime_installation_id":"` + testRuntimeID + `","key_id":"k1","public_key":"` + base64.RawStdEncoding.EncodeToString(private.PublicKey().Bytes()) + `"}]}`))
 		default:
