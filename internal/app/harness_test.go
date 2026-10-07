@@ -189,8 +189,28 @@ func TestHarnessAddAlreadyExistsPrintsHint(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("add exit=%d, want 1 stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "one harness per agent") {
-		t.Fatalf("stderr missing one-harness-per-agent hint: %q", stderr.String())
+	if !strings.Contains(stderr.String(), "don't need kei harness add; run kei harness sync") {
+		t.Fatalf("stderr missing harness-sync hint: %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "custom (SDK) harness") {
+		t.Fatalf("stderr missing custom-harness hint: %q", stderr.String())
+	}
+}
+
+// 'kei harness add --help' says it is for custom/SDK harnesses and points
+// desktop users to 'kei harness sync'.
+func TestHarnessAddUsagePointsDesktopToSync(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runHarnessCommand([]string{"add", "--help"}, &stdout, &stderr, nil, nil)
+	if code != 2 {
+		t.Fatalf("add --help exit=%d, want 2 stderr=%s", code, stderr.String())
+	}
+	out := stderr.String()
+	if !strings.Contains(out, "custom (SDK) harness") {
+		t.Fatalf("usage missing custom/SDK note: %q", out)
+	}
+	if !strings.Contains(out, "kei harness sync") {
+		t.Fatalf("usage missing pointer to kei harness sync: %q", out)
 	}
 }
 
