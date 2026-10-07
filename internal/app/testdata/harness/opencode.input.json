@@ -1,1 +1,8 @@
-{"permission":{"bash":{"npm":"allow"}}}
+{
+  "model": "anthropic/claude-sonnet",
+  "permission": {
+    "bash": {
+      "npm": "allow"
+    }
+  }
+}

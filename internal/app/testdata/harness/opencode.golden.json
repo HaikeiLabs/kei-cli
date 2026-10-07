@@ -1,10 +1,16 @@
 {
+  "model": "anthropic/claude-sonnet",
   "permission": {
     "bash": {
+      "npm": "allow",
       "*": "ask",
       "git status": "allow",
       "git status *": "allow",
-      "npm": "allow"
+      "rm": "deny",
+      "rm *": "deny"
+    },
+    "skill": {
+      "my-skill": "allow"
     }
   }
 }
