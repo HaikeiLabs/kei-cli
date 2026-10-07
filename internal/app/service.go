@@ -13,6 +13,20 @@ import (
 	"strings"
 )
 
+// sysCommand is the entry point for all launchctl/systemctl invocations.
+// Tests override it to avoid touching the real system. The default
+// implementation panics under test when KEI_SERVICE_TEST_GUARD is set,
+// ensuring no test accidentally execs a real service manager.
+var sysCommand = func(name string, args ...string) *exec.Cmd {
+	if os.Getenv("KEI_SERVICE_TEST_GUARD") != "" {
+		panic(fmt.Sprintf("service: exec %q %v prohibited without sysCommand override", name, args))
+	}
+	return exec.Command(name, args...)
+}
+
+// userHomeDirFn is injectable for tests. Its default is os.UserHomeDir.
+var userHomeDirFn = os.UserHomeDir
+
 func runServiceCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "service requires a subcommand (install|uninstall|status)")
@@ -34,7 +48,7 @@ func runServiceCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 // serviceDefinitionPath returns the canonical service definition file path
 // for the current platform.
 func serviceDefinitionPath() string {
-	home, err := os.UserHomeDir()
+	home, err := userHomeDirFn()
 	if err != nil {
 		return ""
 	}
@@ -128,13 +142,13 @@ func execUserID() string {
 }
 
 func isLaunchdServiceLoaded(name string) bool {
-	cmd := exec.Command("launchctl", "print", "gui/"+execUserID()+"/"+name)
+	cmd := sysCommand("launchctl", "print", "gui/"+execUserID()+"/"+name)
 	return cmd.Run() == nil
 }
 
 func installLaunchdService(path, keiBinary, configPath string, stdout io.Writer) error {
 	name := serviceName()
-	home, err := os.UserHomeDir()
+	home, err := userHomeDirFn()
 	if err != nil {
 		return fmt.Errorf("determine home directory: %w", err)
 	}
@@ -147,7 +161,7 @@ func installLaunchdService(path, keiBinary, configPath string, stdout io.Writer)
 	// If already loaded, bootout first so the new plist takes effect
 	if isLaunchdServiceLoaded(name) {
 		fmt.Fprintf(stdout, "Service %s is already loaded; reloading.\n", name)
-		bootout := exec.Command("launchctl", "bootout", "gui/"+execUserID()+"/"+name)
+		bootout := sysCommand("launchctl", "bootout", "gui/"+execUserID()+"/"+name)
 		bootout.Stdout = stdout
 		bootout.Stderr = io.Discard
 		if err := bootout.Run(); err != nil {
@@ -194,12 +208,12 @@ func installLaunchdService(path, keiBinary, configPath string, stdout io.Writer)
 	}
 
 	// Load the service with launchctl
-	cmd := exec.Command("launchctl", "load", path)
+	cmd := sysCommand("launchctl", "load", path)
 	cmd.Stdout = stdout
 	cmd.Stderr = io.Discard
 	if err := cmd.Run(); err != nil {
 		// If load fails, try bootstrap (macOS newer versions)
-		cmd2 := exec.Command("launchctl", "bootstrap", "gui/"+execUserID(), path)
+		cmd2 := sysCommand("launchctl", "bootstrap", "gui/"+execUserID(), path)
 		cmd2.Stdout = stdout
 		cmd2.Stderr = io.Discard
 		if err2 := cmd2.Run(); err2 != nil {
@@ -234,15 +248,15 @@ WantedBy=default.target
 		return fmt.Errorf("write systemd unit: %w", err)
 	}
 
-	cmd := exec.Command("systemctl", "--user", "daemon-reload")
+	cmd := sysCommand("systemctl", "--user", "daemon-reload")
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("systemctl daemon-reload: %w", err)
 	}
-	cmd2 := exec.Command("systemctl", "--user", "enable", serviceName())
+	cmd2 := sysCommand("systemctl", "--user", "enable", serviceName())
 	if err := cmd2.Run(); err != nil {
 		return fmt.Errorf("systemctl enable: %w", err)
 	}
-	cmd3 := exec.Command("systemctl", "--user", "start", serviceName())
+	cmd3 := sysCommand("systemctl", "--user", "start", serviceName())
 	if err := cmd3.Run(); err != nil {
 		return fmt.Errorf("systemctl start: %w", err)
 	}
@@ -297,12 +311,12 @@ func runServiceUninstallCommand(args []string, stdout, stderr io.Writer) int {
 func uninstallLaunchdService(path string, stdout io.Writer) error {
 	name := serviceName()
 	// Unload with launchctl
-	cmd := exec.Command("launchctl", "unload", path)
+	cmd := sysCommand("launchctl", "unload", path)
 	cmd.Stdout = stdout
 	cmd.Stderr = io.Discard
 	if err := cmd.Run(); err != nil {
 		// Try bootout on newer macOS
-		cmd2 := exec.Command("launchctl", "bootout", "gui/"+execUserID()+"/"+name)
+		cmd2 := sysCommand("launchctl", "bootout", "gui/"+execUserID()+"/"+name)
 		cmd2.Stdout = stdout
 		cmd2.Stderr = io.Discard
 		if err2 := cmd2.Run(); err2 != nil {
@@ -313,12 +327,12 @@ func uninstallLaunchdService(path string, stdout io.Writer) error {
 }
 
 func uninstallSystemdService(stdout io.Writer) error {
-	cmd := exec.Command("systemctl", "--user", "stop", serviceName())
+	cmd := sysCommand("systemctl", "--user", "stop", serviceName())
 	cmd.Stdout = stdout
 	cmd.Stderr = io.Discard
 	_ = cmd.Run() // Best effort stop
 
-	cmd2 := exec.Command("systemctl", "--user", "disable", serviceName())
+	cmd2 := sysCommand("systemctl", "--user", "disable", serviceName())
 	cmd2.Stdout = stdout
 	cmd2.Stderr = io.Discard
 	_ = cmd2.Run() // Best effort disable
@@ -361,12 +375,12 @@ func runServiceStatusCommand(args []string, stdout, stderr io.Writer) int {
 
 func statusLaunchdService(stdout, stderr io.Writer) int {
 	name := serviceName()
-	cmd := exec.Command("launchctl", "print", "gui/"+execUserID()+"/"+name)
+	cmd := sysCommand("launchctl", "print", "gui/"+execUserID()+"/"+name)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
 		// Fallback to older launchctl
-		out, _ := exec.Command("launchctl", "list", name).Output()
+		out, _ := sysCommand("launchctl", "list", name).Output()
 		if strings.Contains(string(out), name) {
 			fmt.Fprintf(stdout, "Service %s is loaded.\n", name)
 			return 0
@@ -378,7 +392,7 @@ func statusLaunchdService(stdout, stderr io.Writer) int {
 }
 
 func statusSystemdService(stdout, stderr io.Writer) int {
-	cmd := exec.Command("systemctl", "--user", "status", serviceName())
+	cmd := sysCommand("systemctl", "--user", "status", serviceName())
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
