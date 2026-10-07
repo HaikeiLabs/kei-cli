@@ -322,6 +322,106 @@ func TestHarnessRendererGoldenConfigs(t *testing.T) {
 	}
 }
 
+// No Kei-managed entries: the OpenCode config is left byte-for-byte untouched
+// (no permission block is created), and a non-existent config renders to
+// nothing so sync does not create the file.
+func TestOpencodeRenderNoEntriesLeavesConfigUntouched(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	bundle := Bundle{PolicySet: json.RawMessage(`{"policies":[]}`), Harnesses: []bundleHarness{{AgentID: "99999999-9999-9999-9999-999999999999", Kind: "opencode"}}}
+	id := "99999999-9999-9999-9999-999999999999"
+
+	userCfg := []byte(`{"model":"anthropic/claude-sonnet","permission":{"bash":{"npm":"allow"}}}`)
+	path := filepath.Join(t.TempDir(), ".config", "opencode", "opencode.json")
+	got, err := (nativeHarnessRenderer{}).Render("opencode", id, bundle, map[string][]byte{path: userCfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got.Files[path], userCfg) {
+		t.Fatalf("config changed with no entries:\n%s", got.Files[path])
+	}
+
+	emptyPath := filepath.Join(t.TempDir(), ".config", "opencode", "opencode.json")
+	got2, err := (nativeHarnessRenderer{}).Render("opencode", id, bundle, map[string][]byte{emptyPath: nil})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got2.Files[emptyPath]) != 0 {
+		t.Fatalf("created config with no entries:\n%s", got2.Files[emptyPath])
+	}
+}
+
+// A user-defined "*" catch-all is preserved (never overridden); Kei-managed
+// entries are still added alongside it.
+func TestOpencodeRenderPreservesUserCatchAll(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	policySet := json.RawMessage(`{"policies":[{"id":"p1","src_pattern":"*","dst_pattern":"shell:git status","action":"permit","enabled":true}]}`)
+	bundle := Bundle{PolicySet: policySet, Harnesses: []bundleHarness{{AgentID: "99999999-9999-9999-9999-999999999999", Kind: "opencode"}}}
+	id := "99999999-9999-9999-9999-999999999999"
+	userCfg := []byte(`{"permission":{"bash":{"*":"allow"}}}`)
+	path := filepath.Join(t.TempDir(), ".config", "opencode", "opencode.json")
+	got, err := (nativeHarnessRenderer{}).Render("opencode", id, bundle, map[string][]byte{path: userCfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(got.Files[path])
+	if !strings.Contains(out, `"*": "allow"`) {
+		t.Fatalf("user catch-all not preserved:\n%s", out)
+	}
+	if !strings.Contains(out, `"git status": "allow"`) {
+		t.Fatalf("managed entry missing:\n%s", out)
+	}
+}
+
+// When no OpenCode config exists, sync installs the audit plugin only, does
+// not create a config file, and prints a hint.
+func TestHarnessSyncOpencodeNoConfigInstallsPluginOnly(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("OPENCODE_CONFIG", "")
+	t.Chdir(t.TempDir())
+	// The global opencode dir exists (so the kind is detected) but no config file.
+	if err := os.MkdirAll(filepath.Join(home, ".config", "opencode"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/runtime/whoami" {
+			_, _ = w.Write([]byte(`{"id":"runtime-id","org_id":"org-id","platform":"cli"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v1","bundle_id":"b","bundle_version":1,"policy_revision":1,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harnesses":[],"policy_set":{"policies":[]}}`))
+	}))
+	defer server.Close()
+	var stdout, stderr bytes.Buffer
+	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "t"}, "opencode", false, &stdout, &stderr, server.Client(), nativeHarnessRenderer{}, time.Now)
+	if code != 0 {
+		t.Fatalf("sync exit=%d stderr=%s", code, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(home, ".config", "opencode", "opencode.json")); !os.IsNotExist(err) {
+		t.Fatalf("config was created where none existed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".config", "opencode", "plugins", "kei-audit.js")); err != nil {
+		t.Fatalf("audit plugin not installed: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "no existing config") {
+		t.Fatalf("missing no-config hint: %q", stdout.String())
+	}
+}
+
+// No rules: Render does not emit a kei.rules file at all.
+func TestCodexRenderNoRulesSkipsKeiRules(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	bundle := Bundle{PolicySet: json.RawMessage(`{"policies":[]}`), Harnesses: []bundleHarness{{AgentID: "88888888-8888-8888-8888-888888888888", Kind: "codex"}}}
+	id := "88888888-8888-8888-8888-888888888888"
+	rulesPath := filepath.Join(t.TempDir(), ".codex", "rules", "kei.rules")
+	got, err := (nativeHarnessRenderer{}).Render("codex", id, bundle, map[string][]byte{rulesPath: []byte("# user-owned rules stay in default.rules")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got.Files[rulesPath]; ok {
+		t.Fatalf("wrote kei.rules with no rules:\n%s", got.Files[rulesPath])
+	}
+}
+
 func TestNativePermissionEntriesSharedHarnessFixtures(t *testing.T) {
 	// FixturePath is the contracts package's exported fixture helper. The
 	// contracts currently ships it from its test source, so resolve the same
