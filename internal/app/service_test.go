@@ -4,11 +4,17 @@ import (
 	"bytes"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 )
+
+func TestMain(m *testing.M) {
+	os.Setenv("KEI_SERVICE_TEST_GUARD", "1")
+	os.Exit(m.Run())
+}
 
 func TestServiceDefinitionPath(t *testing.T) {
 	t.Setenv("HOME", "/testhome")
@@ -166,6 +172,15 @@ func TestServiceUninstallFailsUnsupportedPlatform(t *testing.T) {
 }
 
 func TestServiceDispatch(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	oldSysCommand := sysCommand
+	sysCommand = func(name string, args ...string) *exec.Cmd {
+		return exec.Command("true")
+	}
+	defer func() { sysCommand = oldSysCommand }()
+
 	// Test that runServiceCommand dispatches to the correct subcommand
 	tests := []struct {
 		name    string
