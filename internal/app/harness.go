@@ -471,6 +471,11 @@ func syncHarnessBundle(ctx context.Context, config runtimeConfig, kindFilter str
 		if kind == "codex" {
 			fmt.Fprintln(stdout, "Codex may skip the reporting hook until you trust it with /hooks.")
 		}
+		if kind == "opencode" {
+			if _, exists := opencodeConfigPath(); !exists {
+				fmt.Fprintln(stdout, "OpenCode: no existing config found; set OPENCODE_CONFIG or create opencode.json to manage permission entries. Installed the audit plugin only.")
+			}
+		}
 	}
 	return 0
 }
@@ -490,7 +495,11 @@ func detectLocalKinds() []string {
 	if dirExists(filepath.Join(home, ".codex")) {
 		kinds = append(kinds, "codex")
 	}
+	// OpenCode counts as installed when its global config dir exists or a
+	// config file is resolvable (OPENCODE_CONFIG / project / global).
 	if dirExists(filepath.Join(home, ".config", "opencode")) {
+		kinds = append(kinds, "opencode")
+	} else if _, exists := opencodeConfigPath(); exists {
 		kinds = append(kinds, "opencode")
 	}
 	return kinds
@@ -499,6 +508,42 @@ func detectLocalKinds() []string {
 func dirExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+// opencodeConfigPath resolves the OpenCode config file the way OpenCode does:
+// the OPENCODE_CONFIG env var, then the project opencode.json (current
+// directory, traversing up to the nearest git root), then the global
+// ~/.config/opencode/opencode.json. It returns the path and whether that file
+// exists. Only an existing config is ever edited; when none exists the caller
+// should hint rather than create one.
+func opencodeConfigPath() (string, bool) {
+	if env := os.Getenv("OPENCODE_CONFIG"); env != "" {
+		return env, fileExists(env)
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		dir := cwd
+		for {
+			if p := filepath.Join(dir, "opencode.json"); fileExists(p) {
+				return p, true
+			}
+			if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+				break
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+	}
+	home, _ := os.UserHomeDir()
+	g := filepath.Join(home, ".config", "opencode", "opencode.json")
+	return g, fileExists(g)
 }
 
 // findRegisteredHarness returns the bundle's registered harness for a kind, or
@@ -622,6 +667,22 @@ func syncOneHarness(bundle Bundle, h bundleHarness, dryRun bool, stdout io.Write
 			}
 		}
 	}
+	// If codex has no rules, remove a previously-managed kei.rules so we don't
+	// leave a stale or empty file behind (Render skips writing one).
+	if h.Kind == "codex" {
+		home, _ := os.UserHomeDir()
+		rulesPath := filepath.Join(home, ".codex", "rules", "kei.rules")
+		if _, ok := outputs[rulesPath]; !ok {
+			if cfg, err := os.ReadFile(rulesPath); err == nil && bytes.Contains(cfg, []byte("managed by kei harness sync")) {
+				fmt.Fprintf(stdout, "%s: removed (no Kei-managed rules)\n", rulesPath)
+				if !dryRun {
+					if err := os.Remove(rulesPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+						return err
+					}
+				}
+			}
+		}
+	}
 	if !dryRun {
 		if err := writeLedger(ledgerPath, ledger); err != nil {
 			return err
@@ -669,7 +730,13 @@ func harnessFiles(kind, id string) ([]string, error) {
 	case "codex":
 		return []string{filepath.Join(home, ".codex", "rules", "kei.rules"), filepath.Join(home, ".codex", "hooks.json")}, nil
 	case "opencode":
-		return []string{filepath.Join(home, ".config", "opencode", "opencode.json"), filepath.Join(home, ".config", "opencode", "plugins", "kei-audit.js")}, nil
+		// Only edit an existing OpenCode config (resolved the way OpenCode
+		// does); never create one. The audit plugin is always installed.
+		files := []string{filepath.Join(home, ".config", "opencode", "plugins", "kei-audit.js")}
+		if cfgPath, exists := opencodeConfigPath(); exists {
+			files = append([]string{cfgPath}, files...)
+		}
+		return files, nil
 	default:
 		return nil, fmt.Errorf("unsupported harness kind %q", kind)
 	}
@@ -687,7 +754,7 @@ func harnessNonPromptingConfig(kind string) []byte {
 	case "claude_code":
 		path = filepath.Join(home, ".claude", "settings.json")
 	case "opencode":
-		path = filepath.Join(home, ".config", "opencode", "opencode.json")
+		path, _ = opencodeConfigPath()
 	}
 	data, _ := os.ReadFile(path)
 	return data
@@ -1088,6 +1155,10 @@ func (nativeHarnessRenderer) Render(kind, harnessID string, bundle Bundle, files
 	for path, cfg := range files {
 		switch {
 		case strings.HasSuffix(path, filepath.Join(".codex", "rules", "kei.rules")):
+			if len(allows) == 0 && len(denies) == 0 {
+				// No rules: don't write an empty kei.rules.
+				continue
+			}
 			var rules strings.Builder
 			rules.WriteString("# managed by kei harness sync; edits are overwritten\n")
 			for _, entry := range allows {
@@ -1299,6 +1370,12 @@ func filterAbsentPermissionEntries(kind string, cfg []byte, key string, entries 
 }
 
 func mergePermissionJSON(kind string, cfg []byte, allows, denies []string) ([]byte, error) {
+	if len(allows) == 0 && len(denies) == 0 {
+		// No Kei-managed entries: leave the config untouched. We do not create
+		// or modify a permission block, so unmatched commands fall back to the
+		// harness's native permission mode and the user's own defaults stand.
+		return cfg, nil
+	}
 	var root *orderedObject
 	if len(cfg) > 0 {
 		parsed, err := parseOrdered(cfg)
@@ -1324,10 +1401,6 @@ func mergePermissionJSON(kind string, cfg []byte, allows, denies []string) ([]by
 		if !ok {
 			bashObj = &orderedObject{values: map[string]any{}}
 		}
-		_, userStarExists := bashObj.get("*")
-		if !userStarExists {
-			bashObj.set("*", "ask")
-		}
 		skill, _ := permObj.get("skill")
 		skillObj, ok := skill.(*orderedObject)
 		if !ok {
@@ -1351,10 +1424,14 @@ func mergePermissionJSON(kind string, cfg []byte, allows, denies []string) ([]by
 					externalObj.set(pattern, decision)
 				}
 			default:
+				if entry == "*" {
+					// Never write a "*" catch-all key: unmatched commands fall
+					// back to OpenCode's native permission mode, and any
+					// user-defined "*" key is left untouched.
+					return
+				}
 				for _, pattern := range []string{entry, entry + " *"} {
-					if pattern == "*" && !userStarExists {
-						bashObj.set(pattern, decision)
-					} else if _, exists := bashObj.get(pattern); !exists {
+					if _, exists := bashObj.get(pattern); !exists {
 						bashObj.set(pattern, decision)
 					}
 				}

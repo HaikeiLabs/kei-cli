@@ -3,7 +3,6 @@
   "permission": {
     "bash": {
       "npm": "allow",
-      "*": "ask",
       "git status": "allow",
       "git status *": "allow",
       "rm": "deny",
