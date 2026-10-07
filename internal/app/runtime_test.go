@@ -180,6 +180,16 @@ func TestRuntimeCommandRejectsUnknownSubcommand(t *testing.T) {
 }
 
 func TestRuntimeCommandDispatchesService(t *testing.T) {
+	// Hermetic: a temp HOME means no real service definition is present, and
+	// overriding sysCommand keeps the #89 guard from ever reaching the real
+	// launchctl/systemctl (which panics under KEI_SERVICE_TEST_GUARD).
+	t.Setenv("HOME", t.TempDir())
+	oldSysCommand := sysCommand
+	sysCommand = func(name string, args ...string) *exec.Cmd {
+		return exec.Command("true")
+	}
+	defer func() { sysCommand = oldSysCommand }()
+
 	var stdout, stderr bytes.Buffer
 	// "runtime service" should dispatch without error (will fail on config read, not unknown command)
 	code := runRuntimeCommand([]string{"service", "status"}, &stdout, &stderr, nil, nil)
