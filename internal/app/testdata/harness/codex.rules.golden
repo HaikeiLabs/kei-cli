@@ -1,2 +1,3 @@
 # managed by kei harness sync; edits are overwritten
 prefix_rule(pattern=["git", "status"], decision="allow", justification="kei policy")
+prefix_rule(pattern=["rm"], decision="deny", justification="kei policy")

@@ -1,11 +1,17 @@
 {
+  "model": "claude-sonnet-4-5",
   "permissions": {
     "allow": [
       "Bash(user:*)",
-      "Bash(git status:*)"
+      "Bash(git status:*)",
+      "Skill(my-skill)"
     ],
     "deny": [
-      "Bash(user-deny:*)"
+      "Bash(user-deny:*)",
+      "Bash(rm:*)"
     ]
+  },
+  "env": {
+    "FOO": "bar"
   }
 }

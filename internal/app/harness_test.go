@@ -152,7 +152,8 @@ func (f fakeHarnessRenderer) Render(kind, harnessID string, bundle Bundle, files
 	return renderedHarness{Files: map[string][]byte{path: out}, AllowEntries: map[string][]string{path: []string{f.allow}}}, nil
 }
 func (f fakeHarnessRenderer) HookSpec(kind, harnessID string) (map[string][]byte, error) {
-	return map[string][]byte{f.hookPath: []byte(`{"PreToolUse":[{"type":"command","command":"kei-proxy hook claude --harness ` + harnessID + `"}]}`)}, nil
+	// HP-C11: the hook command no longer carries a --harness uuid.
+	return map[string][]byte{f.hookPath: []byte(`{"PreToolUse":[{"type":"command","command":"kei-proxy hook claude"}]}`)}, nil
 }
 
 func TestHarnessSyncFetchesBundleWritesManagedConfigWithBackupAndHook(t *testing.T) {
@@ -209,14 +210,18 @@ func TestHarnessSyncFetchesBundleWritesManagedConfigWithBackupAndHook(t *testing
 			t.Errorf("config missing %q: %s", want, updated)
 		}
 	}
-	if got, err := os.ReadFile(hookPath); err != nil || !strings.Contains(string(got), "kei-proxy hook claude --harness "+harnessID) {
+	if got, err := os.ReadFile(hookPath); err != nil || !strings.Contains(string(got), "kei-proxy hook claude") {
 		t.Fatalf("hook = %q err=%v", got, err)
+	}
+	if strings.Contains(string(updated), "--harness") {
+		t.Fatalf("hook still carries a --harness uuid: %s", updated)
 	}
 	backups, err := filepath.Glob(configPath + ".kei-backup-*")
 	if err != nil || len(backups) != 1 {
 		t.Fatalf("backups=%v err=%v", backups, err)
 	}
-	if _, err := os.Stat(harnessLedgerPath(harnessID)); err != nil {
+	// HP-C11: the ledger is keyed by kind, not a registered agent id.
+	if _, err := os.Stat(harnessLedgerPath("claude_code")); err != nil {
 		t.Fatalf("ledger missing: %v", err)
 	}
 }
@@ -224,13 +229,17 @@ func TestHarnessSyncFetchesBundleWritesManagedConfigWithBackupAndHook(t *testing
 func TestHarnessSyncDryRunDoesNotWrite(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	id := "77777777-7777-7777-7777-777777777777"
+	// HP-C11: sync renders for locally-detected kinds; create ~/.claude so
+	// claude_code is detected and the dry-run path is actually exercised.
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0700); err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/runtime/whoami" {
 			_, _ = w.Write([]byte(`{"id":"runtime-id","org_id":"org-id","platform":"cli"}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v1","bundle_id":"b","bundle_version":1,"policy_revision":1,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harness_match_semantics":"kei.harness-match/v1","harnesses":[{"agent_id":"` + id + `","kind":"claude_code"}],"policy_set":{"policies":[]}}`))
+		_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v1","bundle_id":"b","bundle_version":1,"policy_revision":1,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harness_match_semantics":"kei.harness-match/v1","harnesses":[],"policy_set":{"policies":[]}}`))
 	}))
 	defer server.Close()
 	var stdout, stderr bytes.Buffer
@@ -238,7 +247,8 @@ func TestHarnessSyncDryRunDoesNotWrite(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("sync exit=%d stderr=%s", code, stderr.String())
 	}
-	if _, err := os.Stat(harnessLedgerPath(id)); !os.IsNotExist(err) {
+	// HP-C11: the ledger is keyed by kind; a dry-run must not write it.
+	if _, err := os.Stat(harnessLedgerPath("claude_code")); !os.IsNotExist(err) {
 		t.Fatalf("dry-run wrote ledger: %v", err)
 	}
 }
@@ -281,7 +291,7 @@ func TestHarnessExpiredBundleRemovesOnlyManagedAllows(t *testing.T) {
 
 func TestHarnessRendererGoldenConfigs(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	policySet := json.RawMessage(`{"policies":[{"id":"p1","src_pattern":"*","dst_pattern":"shell:git status","action":"permit","enabled":true},{"id":"p2","src_pattern":"*","dst_pattern":"shell:rm","action":"deny","enabled":true},{"id":"p3","src_pattern":"user:someone","dst_pattern":"shell:secret","action":"permit","enabled":true},{"id":"p4","src_pattern":"*","dst_pattern":"shell:*","action":"permit","enabled":true}]}`)
+	policySet := json.RawMessage(`{"policies":[{"id":"p1","src_pattern":"*","dst_pattern":"shell:git status","action":"permit","enabled":true},{"id":"p2","src_pattern":"*","dst_pattern":"shell:rm","action":"deny","enabled":true},{"id":"p3","src_pattern":"user:someone","dst_pattern":"shell:secret","action":"permit","enabled":true},{"id":"p4","src_pattern":"*","dst_pattern":"shell:*","action":"permit","enabled":true},{"id":"p5","src_pattern":"*","dst_pattern":"skill:my-skill","action":"permit","enabled":true}]}`)
 	bundle := Bundle{PolicySet: policySet, Harnesses: []bundleHarness{{AgentID: "77777777-7777-7777-7777-777777777777", Kind: "claude_code"}, {AgentID: "88888888-8888-8888-8888-888888888888", Kind: "codex"}, {AgentID: "99999999-9999-9999-9999-999999999999", Kind: "opencode"}}}
 	cases := []struct{ kind, id, input, golden, path string }{
 		{"claude_code", bundle.Harnesses[0].AgentID, "claude.settings.input.json", "claude.settings.golden.json", filepath.Join(t.TempDir(), ".claude", "settings.json")},
@@ -305,7 +315,7 @@ func TestHarnessRendererGoldenConfigs(t *testing.T) {
 			if !bytes.Equal(bytes.TrimSpace(got.Files[tc.path]), bytes.TrimSpace(golden)) {
 				t.Fatalf("rendered config mismatch\ngot:\n%s\nwant:\n%s", got.Files[tc.path], golden)
 			}
-			if len(got.AllowEntries[tc.path]) == 0 || len(got.DenyEntries[tc.path]) != 0 {
+			if len(got.AllowEntries[tc.path]) == 0 || len(got.DenyEntries[tc.path]) == 0 {
 				t.Fatalf("managed allows/denies = %v / %v", got.AllowEntries[tc.path], got.DenyEntries[tc.path])
 			}
 		})
@@ -393,19 +403,18 @@ func TestHarnessNonPromptingModesWarnAndDoNotBlock(t *testing.T) {
 	}
 }
 
-func TestHarnessSyncCustomSkipsFilesAndReports(t *testing.T) {
+func TestHarnessSyncCustomSkipsFiles(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	id := "77777777-7777-7777-7777-777777777777"
 	var reported bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/runtime/whoami":
+		switch {
+		case r.URL.Path == "/api/v1/runtime/whoami":
 			_, _ = w.Write([]byte(`{"id":"runtime-id","org_id":"org-id","platform":"cli"}`))
-		case "/api/v1/runtime/policy-bundles/current":
-			_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v1","bundle_id":"bundle-1","bundle_version":1,"policy_revision":1,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harness_match_semantics":"kei.harness-match/v1","harnesses":[{"agent_id":"` + id + `","kind":"custom"}],"policy_set":{"policies":[]}}`))
-		case "/api/v1/runtime/harnesses/" + id:
-			reported = r.Method == http.MethodPatch && r.URL.Query().Get("update_mask") == "last_synced_at,last_synced_bundle_version,last_synced_digest"
+		case r.URL.Path == "/api/v1/runtime/policy-bundles/current":
+			_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v1","bundle_id":"bundle-1","bundle_version":1,"policy_revision":1,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harness_match_semantics":"kei.harness-match/v1","harnesses":[],"policy_set":{"policies":[]}}`))
+		case strings.HasPrefix(r.URL.Path, "/api/v1/runtime/harnesses/"):
+			reported = true
 			w.WriteHeader(http.StatusOK)
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
@@ -414,15 +423,77 @@ func TestHarnessSyncCustomSkipsFilesAndReports(t *testing.T) {
 	}))
 	defer server.Close()
 	var stdout, stderr bytes.Buffer
-	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "runtime-secret"}, "", false, &stdout, &stderr, server.Client(), rendererMustNotRun{}, time.Now)
-	if code != 0 || !reported {
-		t.Fatalf("sync exit=%d report=%v stderr=%q", code, reported, stderr.String())
+	// HP-C11: custom is only synced when explicitly selected with --harness.
+	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "runtime-secret"}, "custom", false, &stdout, &stderr, server.Client(), rendererMustNotRun{}, time.Now)
+	if code != 0 {
+		t.Fatalf("sync exit=%d stderr=%q", code, stderr.String())
+	}
+	if reported {
+		t.Fatalf("custom sync must not report (no registered harness to report to)")
 	}
 	if !strings.Contains(stdout.String(), "custom") || !strings.Contains(stdout.String(), "no native allowlist") {
 		t.Fatalf("custom sync note = %q", stdout.String())
 	}
 	if entries, err := os.ReadDir(home); err != nil || len(entries) != 0 {
 		t.Fatalf("custom sync wrote files: entries=%v err=%v", entries, err)
+	}
+}
+
+// TestSyncReplacesStaleHarnessHook verifies HP-C11: a sync replaces an existing
+// "kei-proxy hook ... --harness <uuid>" entry (left over from the old
+// registered-harness model) with the new kind-only hook, instead of appending.
+func TestSyncReplacesStaleHarnessHook(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	staleID := "05c31c54-0000-0000-0000-000000000000"
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	stale := `{"permissions":{"allow":["Bash(user:*)"]},"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"kei-proxy hook claude --harness ` + staleID + `","timeout":5}]}]}}`
+	if err := os.WriteFile(settingsPath, []byte(stale), 0600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/runtime/whoami" {
+			_, _ = w.Write([]byte(`{"id":"runtime-id","org_id":"org-id","platform":"cli"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v1","bundle_id":"b","bundle_version":1,"policy_revision":1,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harness_match_semantics":"kei.harness-match/v1","harnesses":[],"policy_set":{"policies":[]}}`))
+	}))
+	defer server.Close()
+	var stdout, stderr bytes.Buffer
+	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "t"}, "claude_code", false, &stdout, &stderr, server.Client(), nativeHarnessRenderer{}, time.Now)
+	if code != 0 {
+		t.Fatalf("sync exit=%d stderr=%s", code, stderr.String())
+	}
+	updated, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(updated), staleID) || strings.Contains(string(updated), "--harness") {
+		t.Fatalf("stale --harness hook not replaced: %s", updated)
+	}
+	if !strings.Contains(string(updated), "kei-proxy hook claude") {
+		t.Fatalf("new kind-only hook missing: %s", updated)
+	}
+}
+
+func TestUnifiedDiff(t *testing.T) {
+	before := []string{"a", "b", "c", "d"}
+	after := []string{"a", "B", "c", "d", "e"}
+	diff := unifiedDiff(before, after, 1)
+	if !strings.Contains(diff, "@@") {
+		t.Fatalf("missing hunk header: %s", diff)
+	}
+	if !strings.Contains(diff, "-b\n") || !strings.Contains(diff, "+B\n") {
+		t.Fatalf("missing replacement: %s", diff)
+	}
+	if !strings.Contains(diff, "+e\n") {
+		t.Fatalf("missing insertion: %s", diff)
+	}
+	if got := unifiedDiff(before, before, 3); got != "" {
+		t.Fatalf("expected empty diff for equal inputs, got: %s", got)
 	}
 }
 

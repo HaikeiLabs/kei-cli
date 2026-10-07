@@ -1,1 +1,10 @@
-{"permissions":{"allow":["Bash(user:*)"],"deny":["Bash(user-deny:*)"]}}
+{
+  "model": "claude-sonnet-4-5",
+  "permissions": {
+    "allow": ["Bash(user:*)"],
+    "deny": ["Bash(user-deny:*)"]
+  },
+  "env": {
+    "FOO": "bar"
+  }
+}

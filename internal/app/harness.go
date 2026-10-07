@@ -431,41 +431,85 @@ func syncHarnessBundle(ctx context.Context, config runtimeConfig, kindFilter str
 		fmt.Fprintln(stdout, "Harness policy bundle expired; removed Kei-written allow entries. Run kei harness sync after renewing the runtime bundle.")
 		return 0
 	}
-	selected := make([]bundleHarness, 0, len(bundle.Harnesses))
-	for _, h := range bundle.Harnesses {
-		if kindFilter == "" || h.Kind == kindFilter {
-			selected = append(selected, h)
-		}
+	// HP-C11: sync no longer requires a registered harness. It renders for the
+	// harness kinds installed locally, or for a single --harness KIND.
+	var kinds []string
+	if kindFilter != "" {
+		kinds = []string{kindFilter}
+	} else {
+		kinds = detectLocalKinds()
 	}
-	if len(selected) == 0 {
-		fmt.Fprintln(stdout, "No registered harnesses selected.")
+	if len(kinds) == 0 {
+		fmt.Fprintln(stdout, "No harness kinds detected locally; use --harness KIND to sync a specific one.")
 		return 0
 	}
-	for _, h := range selected {
-		if !validHarnessKind(h.Kind) || !isUUID(h.AgentID) {
-			fmt.Fprintf(stderr, "harness sync: invalid harness in bundle\n")
+	for _, kind := range kinds {
+		if !validHarnessKind(kind) {
+			fmt.Fprintf(stderr, "harness sync: invalid kind %q\n", kind)
 			return 1
 		}
-		if h.Kind == "custom" {
+		if kind == "custom" {
 			fmt.Fprintln(stdout, "custom harness: skipped; no native allowlist (authorization is enforced by kei-proxy per ADR-011).")
-		} else {
-			if err := syncOneHarness(bundle, h, dryRun, stdout, renderer, now()); err != nil {
-				fmt.Fprintf(stderr, "harness sync: %v\n", err)
-				return 1
-			}
-			_ = warnNonPromptingMode(h.Kind, harnessNonPromptingConfig(h.Kind), stderr)
+			continue
 		}
+		h := bundleHarness{Kind: kind}
+		if err := syncOneHarness(bundle, h, dryRun, stdout, renderer, now()); err != nil {
+			fmt.Fprintf(stderr, "harness sync: %v\n", err)
+			return 1
+		}
+		_ = warnNonPromptingMode(kind, harnessNonPromptingConfig(kind), stderr)
 		if !dryRun {
-			if err := reportHarnessSync(ctx, client, config, h, bundle, payload, now()); err != nil {
-				fmt.Fprintf(stderr, "harness sync: report sync for %s: %v\n", h.AgentID, err)
-				return 1
+			// Report only when the bundle still carries a registered harness for
+			// this kind; sync itself does not depend on one.
+			if registered := findRegisteredHarness(bundle, kind); registered != nil {
+				if err := reportHarnessSync(ctx, client, config, *registered, bundle, payload, now()); err != nil {
+					fmt.Fprintf(stderr, "harness sync: report sync for %s: %v\n", registered.AgentID, err)
+					return 1
+				}
 			}
 		}
-		if h.Kind == "codex" {
+		if kind == "codex" {
 			fmt.Fprintln(stdout, "Codex may skip the reporting hook until you trust it with /hooks.")
 		}
 	}
 	return 0
+}
+
+// detectLocalKinds returns the harness kinds that have a local config
+// directory on this machine, in a stable order. It drives `kei harness sync`
+// when no --harness KIND is given (HP-C11).
+func detectLocalKinds() []string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	var kinds []string
+	if dirExists(filepath.Join(home, ".claude")) {
+		kinds = append(kinds, "claude_code")
+	}
+	if dirExists(filepath.Join(home, ".codex")) {
+		kinds = append(kinds, "codex")
+	}
+	if dirExists(filepath.Join(home, ".config", "opencode")) {
+		kinds = append(kinds, "opencode")
+	}
+	return kinds
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+// findRegisteredHarness returns the bundle's registered harness for a kind, or
+// nil when the bundle has none (HP-C11: sync works without one).
+func findRegisteredHarness(bundle Bundle, kind string) *bundleHarness {
+	for i := range bundle.Harnesses {
+		if bundle.Harnesses[i].Kind == kind {
+			return &bundle.Harnesses[i]
+		}
+	}
+	return nil
 }
 
 func isLoopbackHost(host string) bool {
@@ -510,7 +554,9 @@ func syncOneHarness(bundle Bundle, h bundleHarness, dryRun bool, stdout io.Write
 	if err != nil {
 		return err
 	}
-	ledgerPath := harnessLedgerPath(h.AgentID)
+	// HP-C11: a desktop harness is a session of the runtime installation keyed
+	// by kind, so the local ledger is keyed by kind (not a registered agent id).
+	ledgerPath := harnessLedgerPath(h.Kind)
 	prior := readLedger(ledgerPath)
 	if prior.Bundle > bundle.BundleVersion {
 		return fmt.Errorf("bundle version rollback: local %d, fetched %d", prior.Bundle, bundle.BundleVersion)
@@ -518,7 +564,7 @@ func syncOneHarness(bundle Bundle, h bundleHarness, dryRun bool, stdout io.Write
 	if prior.Bundle == bundle.BundleVersion && prior.Digest != "" && prior.Digest != bundle.PayloadDigest {
 		return fmt.Errorf("bundle payload changed without a version increase")
 	}
-	ledger := syncLedger{HarnessID: h.AgentID, Kind: h.Kind, Bundle: bundle.BundleVersion, Digest: bundle.PayloadDigest, NotAfter: bundle.NotAfter, Files: map[string]fileLedger{}}
+	ledger := syncLedger{HarnessID: h.Kind, Kind: h.Kind, Bundle: bundle.BundleVersion, Digest: bundle.PayloadDigest, NotAfter: bundle.NotAfter, Files: map[string]fileLedger{}}
 	inputs := map[string][]byte{}
 	for _, path := range files {
 		cfg, err := os.ReadFile(path)
@@ -585,17 +631,31 @@ func syncOneHarness(bundle Bundle, h bundleHarness, dryRun bool, stdout io.Write
 }
 
 func printHarnessDiff(out io.Writer, path string, before, after []byte) {
-	fmt.Fprintf(out, "--- %s\n+++ %s (Kei render)\n", path, path)
-	for _, line := range strings.Split(strings.TrimSuffix(string(before), "\n"), "\n") {
-		if line != "" {
-			fmt.Fprintf(out, "-%s\n", line)
+	beforeLines := splitLines(string(before))
+	afterLines := splitLines(string(after))
+	added, removed := 0, 0
+	for _, o := range diffOps(beforeLines, afterLines) {
+		switch o.typ {
+		case '+':
+			added++
+		case '-':
+			removed++
 		}
 	}
-	for _, line := range strings.Split(strings.TrimSuffix(string(after), "\n"), "\n") {
-		if line != "" {
-			fmt.Fprintf(out, "+%s\n", line)
-		}
+	fmt.Fprintf(out, "%s: +%-3d -%-3d (Kei-managed entries updated)\n", path, added, removed)
+	if diff := unifiedDiff(beforeLines, afterLines, 3); diff != "" {
+		fmt.Fprintf(out, "--- %s\n+++ %s (Kei render)\n%s", path, path, diff)
 	}
+}
+
+// splitLines splits a file body into lines, dropping the trailing newline and
+// returning nil for an empty body.
+func splitLines(s string) []string {
+	s = strings.TrimSuffix(s, "\n")
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, "\n")
 }
 
 func harnessFiles(kind, id string) ([]string, error) {
@@ -777,57 +837,96 @@ func mergeHookSpec(kind string, cfg, spec []byte) ([]byte, error) {
 	if kind == "opencode" {
 		return spec, nil
 	}
-	var current map[string]any
+	var current *orderedObject
 	if len(cfg) > 0 {
-		if err := json.Unmarshal(cfg, &current); err != nil {
+		parsed, err := parseOrdered(cfg)
+		if err != nil {
 			return nil, fmt.Errorf("decode %s config: %w", kind, err)
 		}
+		obj, ok := parsed.(*orderedObject)
+		if !ok {
+			return nil, fmt.Errorf("%s config root is not a JSON object", kind)
+		}
+		current = obj
 	} else {
-		current = map[string]any{}
+		current = &orderedObject{values: map[string]any{}}
 	}
-	var incoming map[string]any
-	if err := json.Unmarshal(spec, &incoming); err != nil {
+	parsedSpec, err := parseOrdered(spec)
+	if err != nil {
 		return nil, err
 	}
-	target := current
-	if kind == "claude_code" {
-		target, _ = current["hooks"].(map[string]any)
-		if target == nil {
-			target = map[string]any{}
-		}
-		current["hooks"] = target
-	} else if nested, ok := incoming["hooks"].(map[string]any); ok {
-		target, _ = current["hooks"].(map[string]any)
-		if target == nil {
-			target = map[string]any{}
-		}
-		current["hooks"] = target
-		incoming = nested
+	incoming, ok := parsedSpec.(*orderedObject)
+	if !ok {
+		return nil, fmt.Errorf("hook spec root is not a JSON object")
 	}
-	for key, value := range incoming {
-		old, _ := target[key].([]any)
+	// Codex nests its hooks under a top-level "hooks" key; claude_code puts
+	// PreToolUse/PostToolUse at the top level of the spec.
+	if kind != "claude_code" {
+		if nested, ok := incoming.get("hooks"); ok {
+			if nestedObj, ok := nested.(*orderedObject); ok {
+				incoming = nestedObj
+			}
+		}
+	}
+	hooks, _ := current.get("hooks")
+	var target *orderedObject
+	if hooksObj, ok := hooks.(*orderedObject); ok {
+		target = hooksObj
+	} else {
+		target = &orderedObject{values: map[string]any{}}
+	}
+	current.set("hooks", target)
+	for _, key := range incoming.keys {
+		value, _ := incoming.get(key)
 		added, ok := value.([]any)
 		if !ok {
-			target[key] = value
+			target.set(key, value)
 			continue
 		}
-		for _, item := range added {
-			duplicate := false
-			for _, prior := range old {
-				a, _ := json.Marshal(prior)
-				b, _ := json.Marshal(item)
-				if bytes.Equal(a, b) {
-					duplicate = true
-					break
+		old, _ := target.get(key)
+		oldArr, _ := old.([]any)
+		// Drop any existing Kei-managed hook entries (command starting
+		// "kei-proxy hook ", including stale "--harness <uuid>" forms) so a
+		// re-sync replaces them instead of appending a duplicate.
+		kept := make([]any, 0, len(oldArr))
+		for _, entry := range oldArr {
+			if containsKeiHookCommand(entry) {
+				continue
+			}
+			kept = append(kept, entry)
+		}
+		target.set(key, append(kept, added...))
+	}
+	return marshalOrdered(current, "  ")
+}
+
+// containsKeiHookCommand reports whether a hook entry (or anything nested
+// inside it) carries a command that starts with "kei-proxy hook ". Such
+// entries are Kei-managed and are replaced on every sync.
+func containsKeiHookCommand(value any) bool {
+	switch node := value.(type) {
+	case *orderedObject:
+		for _, key := range node.keys {
+			if key == "command" {
+				if s, ok := node.values[key].(string); ok && strings.HasPrefix(s, "kei-proxy hook ") {
+					return true
 				}
 			}
-			if !duplicate {
-				old = append(old, item)
+			if containsKeiHookCommand(node.values[key]) {
+				return true
 			}
 		}
-		target[key] = old
+		return false
+	case []any:
+		for _, elem := range node {
+			if containsKeiHookCommand(elem) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
 	}
-	return json.MarshalIndent(current, "", "  ")
 }
 
 func expireHarnessEntries(now time.Time) error {
@@ -984,7 +1083,7 @@ func (nativeHarnessRenderer) Render(kind, harnessID string, bundle Bundle, files
 			break
 		}
 	}
-	allows, _ := nativePermissionEntries(kind, harnessID, selected, set.Policies)
+	allows, denies := nativePermissionEntries(kind, harnessID, selected, set.Policies)
 	result := renderedHarness{Files: map[string][]byte{}, AllowEntries: map[string][]string{}, DenyEntries: map[string][]string{}}
 	for path, cfg := range files {
 		switch {
@@ -994,15 +1093,20 @@ func (nativeHarnessRenderer) Render(kind, harnessID string, bundle Bundle, files
 			for _, entry := range allows {
 				fmt.Fprintf(&rules, "prefix_rule(pattern=%s, decision=\"allow\", justification=\"kei policy\")\n", entry)
 			}
+			for _, entry := range denies {
+				fmt.Fprintf(&rules, "prefix_rule(pattern=%s, decision=\"deny\", justification=\"kei policy\")\n", entry)
+			}
 			result.Files[path] = []byte(rules.String())
 			result.AllowEntries[path] = append([]string(nil), allows...)
+			result.DenyEntries[path] = append([]string(nil), denies...)
 		case strings.HasSuffix(path, filepath.Join("opencode", "opencode.json")), strings.HasSuffix(path, filepath.Join(".claude", "settings.json")):
-			out, err := mergePermissionJSON(kind, cfg, allows, nil)
+			out, err := mergePermissionJSON(kind, cfg, allows, denies)
 			if err != nil {
 				return renderedHarness{}, err
 			}
 			result.Files[path] = out
 			result.AllowEntries[path] = newlyManagedEntries(kind, cfg, allows)
+			result.DenyEntries[path] = newlyManagedDenies(kind, cfg, denies)
 		default:
 			result.Files[path] = cfg
 		}
@@ -1015,7 +1119,9 @@ func (nativeHarnessRenderer) HookSpec(kind, harnessID string) (map[string][]byte
 		return nil, err
 	}
 	short := map[string]string{"claude_code": "claude", "codex": "codex", "opencode": "opencode"}[kind]
-	command := "kei-proxy hook " + short + " --harness " + harnessID
+	// HP-C11: desktop harnesses are sessions of the runtime installation keyed
+	// by kind, so the hook no longer carries a --harness uuid.
+	command := "kei-proxy hook " + short
 	hook := map[string]any{"type": "command", "command": command, "timeout": 5}
 	switch kind {
 	case "claude_code":
@@ -1023,7 +1129,7 @@ func (nativeHarnessRenderer) HookSpec(kind, harnessID string) (map[string][]byte
 	case "codex":
 		return map[string][]byte{filepath.Join(home, ".codex", "hooks.json"): mustJSON(map[string]any{"hooks": map[string]any{"PreToolUse": []any{hook}, "PostToolUse": []any{hook}}})}, nil
 	case "opencode":
-		plugin := fmt.Sprintf("// managed by kei harness sync\nconst report = async (phase, event) => { try { const child = Bun.spawn(['kei-proxy','hook','opencode','--harness','%s'], { stdin: 'pipe', stdout: 'ignore', stderr: 'ignore' }); child.stdin.write(JSON.stringify({phase, ...event})); child.stdin.end(); } catch {} };\nexport const KeiAudit = async () => ({ 'tool.execute.before': async (event) => { void report('pre', event); }, 'tool.execute.after': async (event) => { void report('post', event); }, 'permission.ask': async (event) => { void report('ask', event); }, 'permission.replied': async (event) => { void report('permission_reply', event); } });\n", harnessID)
+		plugin := "// managed by kei harness sync\nconst report = async (phase, event) => { try { const child = Bun.spawn(['kei-proxy','hook','opencode'], { stdin: 'pipe', stdout: 'ignore', stderr: 'ignore' }); child.stdin.write(JSON.stringify({phase, ...event})); child.stdin.end(); } catch {} };\nexport const KeiAudit = async () => ({ 'tool.execute.before': async (event) => { void report('pre', event); }, 'tool.execute.after': async (event) => { void report('post', event); }, 'permission.ask': async (event) => { void report('ask', event); }, 'permission.replied': async (event) => { void report('permission_reply', event); } });\n"
 		return map[string][]byte{filepath.Join(home, ".config", "opencode", "plugins", "kei-audit.js"): []byte(plugin)}, nil
 	default:
 		return nil, fmt.Errorf("unsupported harness kind %q", kind)
@@ -1069,7 +1175,7 @@ func nativePermissionEntries(kind, harnessID string, harness *bundleHarness, pol
 				entry = shellNativeEntry(kind, "*")
 			}
 		case strings.HasPrefix(dst, "skill:"):
-			if kind != "opencode" {
+			if kind != "opencode" && kind != "claude_code" {
 				continue
 			}
 			name := strings.TrimPrefix(dst, "skill:")
@@ -1193,51 +1299,63 @@ func filterAbsentPermissionEntries(kind string, cfg []byte, key string, entries 
 }
 
 func mergePermissionJSON(kind string, cfg []byte, allows, denies []string) ([]byte, error) {
-	root := map[string]any{}
+	var root *orderedObject
 	if len(cfg) > 0 {
-		if err := json.Unmarshal(cfg, &root); err != nil {
+		parsed, err := parseOrdered(cfg)
+		if err != nil {
 			return nil, err
 		}
+		obj, ok := parsed.(*orderedObject)
+		if !ok {
+			return nil, fmt.Errorf("settings root is not a JSON object")
+		}
+		root = obj
+	} else {
+		root = &orderedObject{values: map[string]any{}}
 	}
 	if kind == "opencode" {
-		permission, _ := root["permission"].(map[string]any)
-		if permission == nil {
-			permission = map[string]any{}
+		permission, _ := root.get("permission")
+		permObj, ok := permission.(*orderedObject)
+		if !ok {
+			permObj = &orderedObject{values: map[string]any{}}
 		}
-		bash, _ := permission["bash"].(map[string]any)
-		if bash == nil {
-			bash = map[string]any{}
+		bash, _ := permObj.get("bash")
+		bashObj, ok := bash.(*orderedObject)
+		if !ok {
+			bashObj = &orderedObject{values: map[string]any{}}
 		}
-		_, userStarExists := bash["*"]
+		_, userStarExists := bashObj.get("*")
 		if !userStarExists {
-			bash["*"] = "ask"
+			bashObj.set("*", "ask")
 		}
-		skill, _ := permission["skill"].(map[string]any)
-		if skill == nil {
-			skill = map[string]any{}
+		skill, _ := permObj.get("skill")
+		skillObj, ok := skill.(*orderedObject)
+		if !ok {
+			skillObj = &orderedObject{values: map[string]any{}}
 		}
-		external, _ := permission["external_directory"].(map[string]any)
-		if external == nil {
-			external = map[string]any{}
+		external, _ := permObj.get("external_directory")
+		externalObj, ok := external.(*orderedObject)
+		if !ok {
+			externalObj = &orderedObject{values: map[string]any{}}
 		}
 		apply := func(entry, decision string) {
 			switch {
 			case strings.HasPrefix(entry, "Skill(") && strings.HasSuffix(entry, ")"):
 				name := strings.TrimSuffix(strings.TrimPrefix(entry, "Skill("), ")")
-				if _, exists := skill[name]; !exists {
-					skill[name] = decision
+				if _, exists := skillObj.get(name); !exists {
+					skillObj.set(name, decision)
 				}
 			case strings.HasPrefix(entry, "path:"):
 				pattern := strings.TrimPrefix(entry, "path:")
-				if _, exists := external[pattern]; !exists {
-					external[pattern] = decision
+				if _, exists := externalObj.get(pattern); !exists {
+					externalObj.set(pattern, decision)
 				}
 			default:
 				for _, pattern := range []string{entry, entry + " *"} {
 					if pattern == "*" && !userStarExists {
-						bash[pattern] = decision
-					} else if _, exists := bash[pattern]; !exists {
-						bash[pattern] = decision
+						bashObj.set(pattern, decision)
+					} else if _, exists := bashObj.get(pattern); !exists {
+						bashObj.set(pattern, decision)
 					}
 				}
 			}
@@ -1248,37 +1366,46 @@ func mergePermissionJSON(kind string, cfg []byte, allows, denies []string) ([]by
 		for _, entry := range denies {
 			apply(entry, "deny")
 		}
-		permission["bash"] = bash
-		if len(skill) > 0 {
-			permission["skill"] = skill
+		permObj.set("bash", bashObj)
+		if len(skillObj.keys) > 0 {
+			permObj.set("skill", skillObj)
 		}
-		if len(external) > 0 {
-			permission["external_directory"] = external
+		if len(externalObj.keys) > 0 {
+			permObj.set("external_directory", externalObj)
 		}
-		root["permission"] = permission
+		root.set("permission", permObj)
 	} else {
-		permissions, _ := root["permissions"].(map[string]any)
-		if permissions == nil {
-			permissions = map[string]any{}
+		permissions, _ := root.get("permissions")
+		permObj, ok := permissions.(*orderedObject)
+		if !ok {
+			permObj = &orderedObject{values: map[string]any{}}
 		}
-		for key, entries := range map[string][]string{"allow": allows, "deny": denies} {
-			existing, _ := permissions[key].([]any)
+		for _, key := range []string{"allow", "deny"} {
+			var entries []string
+			if key == "allow" {
+				entries = allows
+			} else {
+				entries = denies
+			}
+			existing, _ := permObj.get(key)
+			existingArr, _ := existing.([]any)
 			seen := map[string]bool{}
-			for _, value := range existing {
+			for _, value := range existingArr {
 				if item, ok := value.(string); ok {
 					seen[item] = true
 				}
 			}
 			for _, item := range entries {
 				if !seen[item] {
-					existing = append(existing, item)
+					existingArr = append(existingArr, item)
+					seen[item] = true
 				}
 			}
-			if existing != nil {
-				permissions[key] = existing
+			if existingArr != nil {
+				permObj.set(key, existingArr)
 			}
 		}
-		root["permissions"] = permissions
+		root.set("permissions", permObj)
 	}
-	return json.MarshalIndent(root, "", "  ")
+	return marshalOrdered(root, "  ")
 }
