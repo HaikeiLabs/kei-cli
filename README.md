@@ -122,6 +122,32 @@ Use `--config PATH` if you need a separate configuration file. The runtime
 token is used only by the local proxy; it is not sent to the model or written
 to the repository.
 
+## Runtime service
+
+The runtime can run as a background service that heartbeats independently of
+any harness, using the runtime token in `~/.config/kei.yaml` (not the kei
+login token):
+
+```sh
+kei runtime service install
+kei runtime service status
+kei runtime service uninstall
+```
+
+`kei runtime service install` writes a LaunchAgent on macOS
+(`~/Library/LaunchAgents/com.haikeilabs.kei-runtime.plist`) or a systemd
+`--user` unit on Linux (`~/.config/systemd/user/kei.service`), then loads
+and starts it. The service runs `kei runtime heartbeat --config <path>` on a
+loop and restarts automatically if it exits. On macOS, logs go to
+`~/Library/Logs/kei-runtime.log`.
+
+`kei runtime service status` reports whether the service is installed and
+running. An installation that has never sent a heartbeat reports as
+`pending` in `kei bot status` until the first successful heartbeat arrives.
+
+`kei runtime service uninstall` stops the service and removes the definition
+file. No `--yes` flag is needed.
+
 ## Login
 
 The CLI uses Kei device authorization. It prints a browser URL and one-time
