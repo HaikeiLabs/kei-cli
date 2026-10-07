@@ -144,6 +144,13 @@ func validHarnessKind(kind string) bool {
 func runHarnessAdd(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("harness add", flag.ContinueOnError)
 	flags.SetOutput(stderr)
+	flags.Usage = func() {
+		fmt.Fprintln(stderr, "Register a custom (SDK) harness on a runtime installation.")
+		fmt.Fprintln(stderr, "Desktop harnesses (Claude Code, Codex, OpenCode) are sessions of the installation and are configured by 'kei harness sync'; they do not need 'kei harness add'.")
+		fmt.Fprintln(stderr, "")
+		fmt.Fprintln(stderr, "Usage: kei harness add --kind custom [--installation ID] [--agent AGENT_ID]")
+		flags.PrintDefaults()
+	}
 	installation := flags.String("installation", "", "runtime installation ID")
 	kind := flags.String("kind", "", "claude_code, codex, opencode, or custom")
 	agentID := flags.String("agent", "", "assigned agent ID")
@@ -191,7 +198,7 @@ func runHarnessAdd(args []string, stdout, stderr io.Writer, client *http.Client,
 		msg := harnessResponseError(payload, status, err)
 		fmt.Fprintf(stderr, "harness add: %s\n", msg)
 		if status == http.StatusConflict && (strings.Contains(msg, "already_exists") || strings.Contains(msg, "agent_harness_exists")) {
-			fmt.Fprintln(stderr, "Hint: one harness per agent; for another harness on this machine, register it on another agent or create a new installation: kei bot init --platform cli --name <kind>@<host>")
+			fmt.Fprintln(stderr, "Hint: Claude Code, Codex and OpenCode don't need kei harness add; run kei harness sync. For another custom (SDK) harness, pass --agent with a different agent assigned to this installation.")
 		} else if status >= 400 && status < 500 && (strings.Contains(msg, "agent") || strings.Contains(msg, "assign")) {
 			fmt.Fprintln(stderr, "Hint: ensure the agent is assigned to the installation: kei bot agents add")
 		}
