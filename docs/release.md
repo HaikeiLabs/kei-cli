@@ -28,8 +28,8 @@ Check these before you cut a release:
   file first (one line, `vX.Y.Z`):
 
   ```sh
-  echo v0.1.29 > KEI_PROXY_VERSION
-  git add KEI_PROXY_VERSION && git commit -m "chore: bump kei-proxy pin to v0.1.29"
+  echo v0.1.30 > KEI_PROXY_VERSION
+  git add KEI_PROXY_VERSION && git commit -m "chore: bump kei-proxy pin to v0.1.30"
   ```
 
   The PR CI workflow automatically verifies that the pin is well-formed and
