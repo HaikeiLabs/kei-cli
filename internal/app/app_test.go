@@ -135,12 +135,12 @@ func TestNormalizedKeiWebURL(t *testing.T) {
 }
 
 func TestValidRuntimePlatform(t *testing.T) {
-	for _, platform := range []string{"cli", "teams", "discord", "slack", "whatsapp"} {
+	for _, platform := range []string{"cli", "teams", "discord", "slack", "whatsapp", "openwebui"} {
 		if !validRuntimePlatform(platform) {
 			t.Errorf("validRuntimePlatform(%q) = false", platform)
 		}
 	}
-	for _, platform := range []string{"", "openwebui", "unknown", "sms"} {
+	for _, platform := range []string{"", "unknown", "sms"} {
 		if validRuntimePlatform(platform) {
 			t.Errorf("validRuntimePlatform(%q) = true", platform)
 		}

@@ -129,7 +129,7 @@ func Main(version, command string, args []string, stdout, stderr io.Writer, stdi
 
 func PrintUsage(w io.Writer) {
 	fmt.Fprintln(w, "Kei CLI")
-	fmt.Fprintln(w, "\nUsage:\n  kei setup [--config PATH] [--control-plane-url URL] [--runtime-token TOKEN]\n  kei runtime bootstrap [--config PATH] [--proxy-path PATH]\n  kei login [--no-browser]\n  kei logout\n  kei upgrade [--version VERSION]\n  kei bot list [--json] [--all]\n  kei bot init --platform cli|teams|discord|slack --name NAME [--agent ID] [--workspace WORKSPACE]\n  kei bot credential --installation ID --workspace WORKSPACE [--rotate]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default]\n  kei bot status --installation ID\n  kei bot delete --installation ID --yes\n  kei workspaces list [--json]\n  kei connectors create|list|get|reconnect|delete --workspace WORKSPACE\n  kei policies list|get|create|update|delete|import --workspace WORKSPACE (get/update/delete accept ID or name)\n  kei model-profiles list [--workspace WORKSPACE] [--json]\n  kei model-profiles get|create|update|delete|set-default [--workspace WORKSPACE] (PROFILE is an ID or name; API keys are read from stdin)\n  kei model-profiles assign PROFILE --workspace WORKSPACE --agent AGENT_ID\n  kei model-profiles unassign|assignment --workspace WORKSPACE --agent AGENT_ID\n  kei model-profiles readiness PROFILE --workspace WORKSPACE\n  kei model-profiles test --endpoint URL | test PROFILE [--workspace WORKSPACE] (validates the endpoint like the console; no provider call)\n  kei credential-store get|put|update\n  kei --version")
+	fmt.Fprintln(w, "\nUsage:\n  kei setup [--config PATH] [--control-plane-url URL] [--runtime-token TOKEN]\n  kei runtime bootstrap [--config PATH] [--proxy-path PATH]\n  kei login [--no-browser]\n  kei logout\n  kei upgrade [--version VERSION]\n  kei bot list [--json] [--all]\n  kei bot init --platform cli|teams|discord|slack|whatsapp|openwebui --name NAME [--agent ID] [--workspace WORKSPACE]\n  kei bot credential --installation ID --workspace WORKSPACE [--rotate]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default]\n  kei bot status --installation ID\n  kei bot delete --installation ID --yes\n  kei workspaces list [--json]\n  kei connectors create|list|get|reconnect|delete --workspace WORKSPACE\n  kei policies list|get|create|update|delete|import --workspace WORKSPACE (get/update/delete accept ID or name)\n  kei model-profiles list [--workspace WORKSPACE] [--json]\n  kei model-profiles get|create|update|delete|set-default [--workspace WORKSPACE] (PROFILE is an ID or name; API keys are read from stdin)\n  kei model-profiles assign PROFILE --workspace WORKSPACE --agent AGENT_ID\n  kei model-profiles unassign|assignment --workspace WORKSPACE --agent AGENT_ID\n  kei model-profiles readiness PROFILE --workspace WORKSPACE\n  kei model-profiles test --endpoint URL | test PROFILE [--workspace WORKSPACE] (validates the endpoint like the console; no provider call)\n  kei credential-store get|put|update\n  kei --version")
 	fmt.Fprintln(w, "  kei audit keys create [--identity-out PATH] [--name NAME] [--force]")
 	fmt.Fprintln(w, "  kei audit keys list")
 	fmt.Fprintln(w, "  kei audit keys disable KEY")
@@ -265,7 +265,7 @@ func writerIsTerminal(w io.Writer) bool {
 func runBotInitCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("bot init", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	platform := flags.String("platform", "", "runtime platform (cli, teams, discord, slack, or whatsapp)")
+	platform := flags.String("platform", "", "runtime platform (cli, teams, discord, slack, whatsapp, or openwebui)")
 	agentID := flags.String("agent", "", "Kei agent ID")
 	displayName := flags.String("name", "", "installation name")
 	workspace := flags.String("workspace", "", "workspace ID or name")
@@ -273,7 +273,7 @@ func runBotInitCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 		return 2
 	}
 	if flags.NArg() != 0 || *displayName == "" || !validRuntimePlatform(*platform) {
-		fmt.Fprintln(stderr, "bot init requires --platform cli|teams|discord|slack|whatsapp and --name NAME")
+		fmt.Fprintln(stderr, "bot init requires --platform cli|teams|discord|slack|whatsapp|openwebui and --name NAME")
 		return 2
 	}
 	wid := *workspace
@@ -304,7 +304,7 @@ func runBotInitCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 }
 
 func validRuntimePlatform(platform string) bool {
-	return platform == "cli" || platform == "teams" || platform == "discord" || platform == "slack" || platform == "whatsapp"
+	return platform == "cli" || platform == "teams" || platform == "discord" || platform == "slack" || platform == "whatsapp" || platform == "openwebui"
 }
 
 type createRuntimeInstallationRequest struct {
