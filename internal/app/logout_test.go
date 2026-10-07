@@ -7,7 +7,7 @@ import (
 )
 
 func TestLogoutRemovesStoredCredential(t *testing.T) {
-	store := &memoryCredentialStore{server: "https://app.haikeilabs.com", token: "cli-session-token"}
+	store := &memoryCredentialStore{server: "https://api.haikeilabs.com", token: "cli-session-token"}
 	var stdout, stderr bytes.Buffer
 	if code := runLogoutCommand(nil, &stdout, &stderr, store); code != 0 {
 		t.Fatalf("logout exit = %d, stderr=%s", code, stderr.String())
@@ -15,7 +15,7 @@ func TestLogoutRemovesStoredCredential(t *testing.T) {
 	if store.token != "" || store.server != "" {
 		t.Fatalf("credential survived logout: %#v", store)
 	}
-	if !strings.Contains(stdout.String(), "Logged out of Kei for app.haikeilabs.com") {
+	if !strings.Contains(stdout.String(), "Logged out of Kei for api.haikeilabs.com") {
 		t.Fatalf("logout output = %q", stdout.String())
 	}
 }
@@ -26,7 +26,7 @@ func TestLogoutIsIdempotentWhenNotLoggedIn(t *testing.T) {
 	if code := runLogoutCommand(nil, &stdout, &stderr, store); code != 0 {
 		t.Fatalf("logout exit = %d, stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "Not logged in to app.haikeilabs.com") {
+	if !strings.Contains(stdout.String(), "Not logged in to api.haikeilabs.com") {
 		t.Fatalf("logout output = %q", stdout.String())
 	}
 }

@@ -42,34 +42,35 @@ func (s *memoryCredentialStore) Delete(serverURL string) (bool, error) {
 }
 
 func TestLoginStoresTokenWithoutPrintingIt(t *testing.T) {
-	polls := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/cli/device/authorize":
-			json.NewEncoder(w).Encode(deviceAuthorizationStartResponse{
-				DeviceCode:      "device-secret",
-				UserCode:        "ABCDE-23456",
-				ExpiresAt:       time.Now().Add(time.Minute),
-				IntervalSeconds: 1,
-			})
-		case "/api/cli/device/token":
-			polls++
-			if polls == 1 {
-				json.NewEncoder(w).Encode(deviceAuthorizationPollResponse{Status: "pending"})
-				return
-			}
-			json.NewEncoder(w).Encode(deviceAuthorizationPollResponse{Status: "approved", AccessToken: "never-print-this-token", OrgID: "org-123"})
-		default:
-			t.Fatalf("unexpected path %s", r.URL.Path)
+	exchanges := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/deviceAuthorizations", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(deviceAuthorizationStartResponse{
+			DeviceCode:              "device-secret",
+			UserCode:                "ABCDE-23456",
+			VerificationURIComplete: "http://example.com/activate?user_code=ABCDE-23456",
+			ExpiresIn:               60,
+			Interval:                1,
+		})
+	})
+	mux.HandleFunc("/api/v1/deviceAuthorizations:exchange", func(w http.ResponseWriter, r *http.Request) {
+		exchanges++
+		if exchanges == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(aipError{Detail: aipErrorDetail{Code: 400, Reason: "AUTHORIZATION_PENDING", Message: "not yet approved"}})
+			return
 		}
-	}))
+		json.NewEncoder(w).Encode(deviceAuthorizationExchangeResponse{AccessToken: "never-print-this-token"})
+	})
+	server := httptest.NewServer(mux)
 	defer server.Close()
 
 	var output bytes.Buffer
 	store := &memoryCredentialStore{}
 	sleeps := 0
 	openedURL := ""
-	err := login(context.Background(), server.URL, "kei@test", &output, server.Client(), store, func(time.Duration) { sleeps++ }, func(url string) error {
+	err := login(context.Background(), server.URL, "kei", "v0.0.1", &output, server.Client(), store, func(time.Duration) { sleeps++ }, func(url string) error {
 		openedURL = url
 		return nil
 	})
@@ -82,7 +83,7 @@ func TestLoginStoresTokenWithoutPrintingIt(t *testing.T) {
 	if strings.Contains(output.String(), "never-print-this-token") || strings.Contains(output.String(), "device-secret") {
 		t.Fatalf("login output exposed a secret: %q", output.String())
 	}
-	if !strings.Contains(openedURL, "/cli/activate?user_code=ABCDE-23456") {
+	if !strings.Contains(openedURL, "/activate?user_code=ABCDE-23456") {
 		t.Fatalf("browser URL = %q", openedURL)
 	}
 	if sleeps != 2 {
@@ -91,15 +92,52 @@ func TestLoginStoresTokenWithoutPrintingIt(t *testing.T) {
 }
 
 func TestLoginReportsBrowserOpenFailureAndKeepsURLVisible(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/deviceAuthorizations", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(deviceAuthorizationStartResponse{
+			DeviceCode:              "device-code",
+			UserCode:                "ABCDE-23456",
+			VerificationURIComplete: "http://example.com/activate?user_code=ABCDE-23456",
+			ExpiresIn:               60,
+			Interval:                1,
+		})
+	})
+	mux.HandleFunc("/api/v1/deviceAuthorizations:exchange", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(deviceAuthorizationExchangeResponse{AccessToken: "token"})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	var output bytes.Buffer
+	store := &memoryCredentialStore{}
+	err := login(context.Background(), server.URL, "kei", "v0.0.1", &output, server.Client(), store, func(time.Duration) {}, func(string) error {
+		return errors.New("no graphical session")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "http://example.com/activate?user_code=ABCDE-23456") {
+		t.Fatalf("login output omitted fallback URL: %q", output.String())
+	}
+	if !strings.Contains(output.String(), "Could not open a browser automatically") {
+		t.Fatalf("login output omitted browser fallback: %q", output.String())
+	}
+}
+
+func TestLogin404FallsBackToLegacy(t *testing.T) {
+	var legacyCalled bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/v1/deviceAuthorizations":
+			w.WriteHeader(http.StatusNotFound)
 		case "/api/cli/device/authorize":
+			legacyCalled = true
 			json.NewEncoder(w).Encode(deviceAuthorizationStartResponse{
-				DeviceCode: "device-code", UserCode: "ABCDE-23456",
+				DeviceCode: "legacy-device", UserCode: "LEGACY-12345",
 				ExpiresAt: time.Now().Add(time.Minute), IntervalSeconds: 1,
 			})
 		case "/api/cli/device/token":
-			json.NewEncoder(w).Encode(deviceAuthorizationPollResponse{Status: "approved", AccessToken: "token", OrgID: "org-123"})
+			json.NewEncoder(w).Encode(deviceAuthorizationPollResponse{Status: "approved", AccessToken: "legacy-token", OrgID: "org-legacy"})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -108,17 +146,154 @@ func TestLoginReportsBrowserOpenFailureAndKeepsURLVisible(t *testing.T) {
 
 	var output bytes.Buffer
 	store := &memoryCredentialStore{}
-	err := login(context.Background(), server.URL, "kei@test", &output, server.Client(), store, func(time.Duration) {}, func(string) error {
-		return errors.New("no graphical session")
-	})
+	err := login(context.Background(), server.URL, "kei", "v0.0.1", &output, server.Client(), store, func(time.Duration) {}, func(string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), server.URL+"/cli/activate?user_code=ABCDE-23456") {
-		t.Fatalf("login output omitted fallback URL: %q", output.String())
+	if !legacyCalled {
+		t.Fatal("expected legacy flow to be called on 404")
 	}
-	if !strings.Contains(output.String(), "Could not open a browser automatically") {
-		t.Fatalf("login output omitted browser fallback: %q", output.String())
+	if store.token != "legacy-token" {
+		t.Fatalf("token = %q, want %q", store.token, "legacy-token")
+	}
+	if !strings.Contains(output.String(), "Note: AIP device authorization not available") {
+		t.Fatalf("output missing fallback notice: %q", output.String())
+	}
+}
+
+func TestLoginSlowDownIncreasesInterval(t *testing.T) {
+	exchanges := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/deviceAuthorizations", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(deviceAuthorizationStartResponse{
+			DeviceCode:              "device-secret",
+			UserCode:                "SLOW-12345",
+			VerificationURIComplete: "http://example.com/activate?user_code=SLOW-12345",
+			ExpiresIn:               60,
+			Interval:                1,
+		})
+	})
+	mux.HandleFunc("/api/v1/deviceAuthorizations:exchange", func(w http.ResponseWriter, r *http.Request) {
+		exchanges++
+		if exchanges == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(aipError{Detail: aipErrorDetail{Code: 400, Reason: "SLOW_DOWN", Message: "too fast"}})
+			return
+		}
+		// On second exchange the interval should have increased;
+		// deny immediately so the test terminates quickly.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(aipError{Detail: aipErrorDetail{Code: 403, Reason: "ACCESS_DENIED", Message: "nope"}})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	var output bytes.Buffer
+	store := &memoryCredentialStore{}
+	sleepDurations := make([]time.Duration, 0)
+	err := login(context.Background(), server.URL, "kei", "v0.0.1", &output, server.Client(), store, func(d time.Duration) { sleepDurations = append(sleepDurations, d) }, func(string) error { return nil })
+	if err == nil {
+		t.Fatal("expected denied error")
+	}
+	if !strings.Contains(err.Error(), "denied") {
+		t.Fatalf("error = %v, want 'denied'", err)
+	}
+	if len(sleepDurations) < 2 {
+		t.Fatalf("expected at least 2 sleeps, got %d", len(sleepDurations))
+	}
+	// First interval from start response (1s). After SLOW_DOWN, interval should be 1s + 5s = 6s.
+	if sleepDurations[1] < 5*time.Second {
+		t.Fatalf("expected increased interval after SLOW_DOWN, got %v", sleepDurations[1])
+	}
+}
+
+func TestLoginAccessDenied(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/deviceAuthorizations", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(deviceAuthorizationStartResponse{
+			DeviceCode:              "device-secret",
+			UserCode:                "DENY-12345",
+			VerificationURIComplete: "http://example.com/activate?user_code=DENY-12345",
+			ExpiresIn:               60,
+			Interval:                1,
+		})
+	})
+	mux.HandleFunc("/api/v1/deviceAuthorizations:exchange", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(aipError{Detail: aipErrorDetail{Code: 403, Reason: "ACCESS_DENIED", Message: "user denied"}})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	var output bytes.Buffer
+	store := &memoryCredentialStore{}
+	err := login(context.Background(), server.URL, "kei", "v0.0.1", &output, server.Client(), store, func(time.Duration) {}, func(string) error { return nil })
+	if err == nil {
+		t.Fatal("expected denied error")
+	}
+	if !strings.Contains(err.Error(), "denied") {
+		t.Fatalf("error = %v, want 'denied'", err)
+	}
+}
+
+func TestLoginExpiredToken(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/deviceAuthorizations", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(deviceAuthorizationStartResponse{
+			DeviceCode:              "device-secret",
+			UserCode:                "EXPR-12345",
+			VerificationURIComplete: "http://example.com/activate?user_code=EXPR-12345",
+			ExpiresIn:               60,
+			Interval:                1,
+		})
+	})
+	mux.HandleFunc("/api/v1/deviceAuthorizations:exchange", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(aipError{Detail: aipErrorDetail{Code: 400, Reason: "EXPIRED_TOKEN", Message: "timed out"}})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	var output bytes.Buffer
+	store := &memoryCredentialStore{}
+	err := login(context.Background(), server.URL, "kei", "v0.0.1", &output, server.Client(), store, func(time.Duration) {}, func(string) error { return nil })
+	if err == nil {
+		t.Fatal("expected expired error")
+	}
+	if !strings.Contains(err.Error(), "expired") {
+		t.Fatalf("error = %v, want 'expired'", err)
+	}
+}
+
+func TestLoginDeviceCodeNeverInOutput(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/deviceAuthorizations", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(deviceAuthorizationStartResponse{
+			DeviceCode:              "super-secret-device-code-12345",
+			UserCode:                "ABCDE-23456",
+			VerificationURIComplete: "http://example.com/activate?user_code=ABCDE-23456",
+			ExpiresIn:               60,
+			Interval:                1,
+		})
+	})
+	mux.HandleFunc("/api/v1/deviceAuthorizations:exchange", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(deviceAuthorizationExchangeResponse{AccessToken: "token"})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	var output bytes.Buffer
+	store := &memoryCredentialStore{}
+	err := login(context.Background(), server.URL, "kei", "v0.0.1", &output, server.Client(), store, func(time.Duration) {}, func(string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), "super-secret-device-code-12345") {
+		t.Fatalf("device_code leaked into output: %q", output.String())
 	}
 }
 
@@ -536,8 +711,64 @@ func TestBotAgentsAddUsesCLIOrganizationScopedEndpoint(t *testing.T) {
 }
 
 func TestDefaultKeiWebURLIsHTTPS(t *testing.T) {
-	if defaultKeiWebURL != "https://app.haikeilabs.com" {
-		t.Fatalf("defaultKeiWebURL = %q, want https://app.haikeilabs.com", defaultKeiWebURL)
+	if defaultKeiWebURL != "https://api.haikeilabs.com" {
+		t.Fatalf("defaultKeiWebURL = %q, want https://api.haikeilabs.com", defaultKeiWebURL)
+	}
+}
+
+func TestLegacyWebHost(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{defaultKeiWebURL, "https://app.haikeilabs.com"},
+		{"https://api.haikeilabs.com", "https://app.haikeilabs.com"},
+		{"https://app.haikeilabs.com", "https://app.haikeilabs.com"},
+		{"https://api.custom.io", "https://app.custom.io"},
+		{"https://app.custom.io", "https://app.custom.io"},
+		{"https://console.custom.io", "https://console.custom.io"},
+		{"http://127.0.0.1:8443", "http://127.0.0.1:8443"},
+	}
+	for _, tc := range tests {
+		got, err := legacyWebHost(tc.input)
+		if err != nil {
+			t.Errorf("legacyWebHost(%q) = _, %v", tc.input, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("legacyWebHost(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestLoginLegacyFallbackUsesWebHostForActivationURL(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/cli/device/authorize":
+			json.NewEncoder(w).Encode(deviceAuthorizationStartResponse{
+				DeviceCode: "legacy-dev", UserCode: "LGCY-99999",
+				ExpiresAt: time.Now().Add(time.Minute), IntervalSeconds: 1,
+			})
+		case "/api/cli/device/token":
+			json.NewEncoder(w).Encode(deviceAuthorizationPollResponse{Status: "approved", AccessToken: "t", OrgID: "o"})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	var output bytes.Buffer
+	store := &memoryCredentialStore{}
+	// Call legacyLogin directly with a webURL that differs from the API server URL.
+	err := legacyLogin(context.Background(), "https://app.haikeilabs.com", server.URL, "kei", &output, server.Client(), store, func(time.Duration) {}, func(string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "https://app.haikeilabs.com/cli/activate") {
+		t.Fatalf("activation URL should use web host, got:\n%s", output.String())
+	}
+	if strings.Contains(output.String(), server.URL+"/cli/activate") {
+		t.Fatalf("activation URL should NOT use the API server URL, got:\n%s", output.String())
 	}
 }
 
