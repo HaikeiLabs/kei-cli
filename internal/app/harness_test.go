@@ -69,6 +69,131 @@ func TestHarnessAddAndRemoveUseAIPResource(t *testing.T) {
 	}
 }
 
+func TestHarnessAddResolvesDefaultAgent(t *testing.T) {
+	const inst = testHarnessInstallationID
+	const defaultAgent = "77777777-7777-7777-7777-777777777777"
+	var calls []consoleRequest
+	fake, server, _ := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		calls = append(calls, r)
+		if r.Method == http.MethodGet && strings.HasSuffix(r.Path, "/runtime-installations/"+inst+"/agents") {
+			_, _ = w.Write([]byte(`[{"installation_id":"` + inst + `","agent_id":"` + defaultAgent + `","is_default":true}]`))
+			return
+		}
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"installation_id":"` + inst + `","agent_id":"` + defaultAgent + `","kind":"custom","agent_name":"Kei Assistant"}`))
+		}
+	})
+	_ = fake
+	store := &memoryCredentialStore{server: server.URL, token: testCLIToken}
+	var stdout, stderr bytes.Buffer
+	code := runHarnessCommand([]string{"add", "--installation", inst, "--kind", "custom"}, &stdout, &stderr, server.Client(), store)
+	if code != 0 {
+		t.Fatalf("add exit=%d stderr=%s", code, stderr.String())
+	}
+	if len(calls) != 2 {
+		t.Fatalf("console calls = %d, want 2: %#v", len(calls), calls)
+	}
+	if calls[0].Method != http.MethodGet || calls[0].Path != "/api/v1/organizations/org-1/runtime-installations/"+inst+"/agents" {
+		t.Fatalf("agents request = %#v", calls[0])
+	}
+	if calls[1].Method != http.MethodPost || calls[1].Path != harnessCollectionPath(inst) {
+		t.Fatalf("add request = %#v", calls[1])
+	}
+	if calls[1].Body["agent_id"] != defaultAgent {
+		t.Fatalf("add body agent_id = %v, want %s", calls[1].Body["agent_id"], defaultAgent)
+	}
+}
+
+func TestHarnessAddResolvesDefaultInstallationAndAgent(t *testing.T) {
+	const inst = testHarnessInstallationID
+	const defaultAgent = "77777777-7777-7777-7777-777777777777"
+	var calls []consoleRequest
+	fake, server, _ := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		calls = append(calls, r)
+		if r.Path == "/api/v1/runtime/whoami" {
+			_, _ = w.Write([]byte(`{"id":"` + inst + `","org_id":"org-1","platform":"cli"}`))
+			return
+		}
+		if r.Method == http.MethodGet && strings.HasSuffix(r.Path, "/runtime-installations/"+inst+"/agents") {
+			_, _ = w.Write([]byte(`[{"installation_id":"` + inst + `","agent_id":"` + defaultAgent + `","is_default":true}]`))
+			return
+		}
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"installation_id":"` + inst + `","agent_id":"` + defaultAgent + `","kind":"custom","agent_name":"Kei Assistant"}`))
+		}
+	})
+	_ = fake
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	configPath := filepath.Join(home, ".config", "kei.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveRuntimeConfig(configPath, runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "runtime-secret", HarnessURL: "http://127.0.0.1:8088"}); err != nil {
+		t.Fatal(err)
+	}
+	store := &memoryCredentialStore{server: server.URL, token: testCLIToken}
+	var stdout, stderr bytes.Buffer
+	code := runHarnessCommand([]string{"add", "--kind", "custom"}, &stdout, &stderr, server.Client(), store)
+	if code != 0 {
+		t.Fatalf("add exit=%d stderr=%s", code, stderr.String())
+	}
+	if len(calls) != 3 {
+		t.Fatalf("console calls = %d, want 3: %#v", len(calls), calls)
+	}
+	if calls[0].Path != "/api/v1/runtime/whoami" {
+		t.Fatalf("first call = %#v, want whoami", calls[0])
+	}
+	if calls[2].Method != http.MethodPost || calls[2].Path != harnessCollectionPath(inst) {
+		t.Fatalf("add request = %#v", calls[2])
+	}
+	if calls[2].Body["agent_id"] != defaultAgent {
+		t.Fatalf("add body agent_id = %v, want %s", calls[2].Body["agent_id"], defaultAgent)
+	}
+}
+
+func TestHarnessAddNoDefaultAgentRequiresFlag(t *testing.T) {
+	const inst = testHarnessInstallationID
+	fake, server, _ := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.Path, "/runtime-installations/"+inst+"/agents") {
+			_, _ = w.Write([]byte(`[{"installation_id":"` + inst + `","agent_id":"77777777-7777-7777-7777-777777777777","is_default":false}]`))
+			return
+		}
+	})
+	_ = fake
+	store := &memoryCredentialStore{server: server.URL, token: testCLIToken}
+	var stdout, stderr bytes.Buffer
+	code := runHarnessCommand([]string{"add", "--installation", inst, "--kind", "custom"}, &stdout, &stderr, server.Client(), store)
+	if code != 1 {
+		t.Fatalf("add exit=%d, want 1 stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "no default agent") {
+		t.Fatalf("stderr missing no-default hint: %q", stderr.String())
+	}
+}
+
+func TestHarnessAddAlreadyExistsPrintsHint(t *testing.T) {
+	const inst = testHarnessInstallationID
+	const agent = "77777777-7777-7777-7777-777777777777"
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"reason":"already_exists","message":"agent_harness_exists"}`))
+		}
+	})
+	_ = fake
+	var stdout, stderr bytes.Buffer
+	code := runHarnessCommand([]string{"add", "--installation", inst, "--kind", "custom", "--agent", agent}, &stdout, &stderr, server.Client(), store)
+	if code != 1 {
+		t.Fatalf("add exit=%d, want 1 stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "one harness per agent") {
+		t.Fatalf("stderr missing one-harness-per-agent hint: %q", stderr.String())
+	}
+}
+
 func TestHarnessListFollowsAIPPageTokens(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
 		if strings.Contains(r.Query, "page_token=next") {

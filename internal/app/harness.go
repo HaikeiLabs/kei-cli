@@ -150,13 +150,37 @@ func runHarnessAdd(args []string, stdout, stderr io.Writer, client *http.Client,
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		return 2
 	}
-	if !isUUID(*installation) || !validHarnessKind(*kind) || !isUUID(*agentID) {
-		fmt.Fprintln(stderr, "harness add requires --installation UUID, --kind claude_code|codex|opencode|custom, and --agent UUID")
+	if !validHarnessKind(*kind) {
+		fmt.Fprintln(stderr, "harness add requires --kind claude_code|codex|opencode|custom")
+		return 2
+	}
+	if *installation == "" {
+		resolved, err := defaultInstallationID(client, stderr)
+		if err != nil {
+			fmt.Fprintf(stderr, "harness add: %v; specify --installation\n", err)
+			return 1
+		}
+		installation = &resolved
+	}
+	if !isUUID(*installation) {
+		fmt.Fprintln(stderr, "harness add: --installation must be a UUID")
 		return 2
 	}
 	baseURL, token, ok := harnessSession(store, stderr)
 	if !ok {
 		return 1
+	}
+	if *agentID == "" {
+		resolved, err := defaultAgentID(client, baseURL, token, *installation)
+		if err != nil {
+			fmt.Fprintf(stderr, "harness add: %v; specify --agent\n", err)
+			return 1
+		}
+		agentID = &resolved
+	}
+	if !isUUID(*agentID) {
+		fmt.Fprintln(stderr, "harness add: --agent must be a UUID")
+		return 2
 	}
 	body := struct {
 		Kind    string `json:"kind"`
@@ -166,7 +190,9 @@ func runHarnessAdd(args []string, stdout, stderr io.Writer, client *http.Client,
 	if err != nil || status < 200 || status > 299 {
 		msg := harnessResponseError(payload, status, err)
 		fmt.Fprintf(stderr, "harness add: %s\n", msg)
-		if status >= 400 && status < 500 && (strings.Contains(msg, "agent") || strings.Contains(msg, "assign")) {
+		if status == http.StatusConflict && (strings.Contains(msg, "already_exists") || strings.Contains(msg, "agent_harness_exists")) {
+			fmt.Fprintln(stderr, "Hint: one harness per agent; for another harness on this machine, register it on another agent or create a new installation: kei bot init --platform cli --name <kind>@<host>")
+		} else if status >= 400 && status < 500 && (strings.Contains(msg, "agent") || strings.Contains(msg, "assign")) {
 			fmt.Fprintln(stderr, "Hint: ensure the agent is assigned to the installation: kei bot agents add")
 		}
 		return 1
@@ -178,6 +204,64 @@ func runHarnessAdd(args []string, stdout, stderr io.Writer, client *http.Client,
 	}
 	fmt.Fprintf(stdout, "Added %s harness (%s) for agent %s.\n", result.Kind, result.AgentName, result.AgentID)
 	return 0
+}
+
+// defaultInstallationID resolves the runtime installation ID from the local
+// runtime config by verifying the runtime token against the control plane.
+func defaultInstallationID(client *http.Client, stderr io.Writer) (string, error) {
+	configPath, err := defaultConfigPath()
+	if err != nil {
+		return "", err
+	}
+	config, err := loadRuntimeConfig(configPath)
+	if err != nil {
+		return "", err
+	}
+	if err := config.validate(); err != nil {
+		return "", err
+	}
+	identity, err := verifyRuntimeToken(context.Background(), client, config.ControlPlaneURL, config.RuntimeToken)
+	if err != nil {
+		return "", err
+	}
+	return identity.ID, nil
+}
+
+// defaultAgentID resolves the default agent for a runtime installation via
+// the organization-scoped agents list endpoint.
+func defaultAgentID(client *http.Client, baseURL, token, installationID string) (string, error) {
+	orgID, err := organizationIDFromCLIToken(token)
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+"/api/v1/organizations/"+url.PathEscape(orgID)+"/runtime-installations/"+url.PathEscape(installationID)+"/agents", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	statusCode, body, err := doRequest(client, req, 4<<10)
+	if err != nil {
+		return "", err
+	}
+	if statusCode != http.StatusOK {
+		return "", fmt.Errorf("list agents returned HTTP %d", statusCode)
+	}
+	var agents []runtimeInstallationAgent
+	if err := json.Unmarshal(body, &agents); err != nil {
+		var wrapper struct {
+			Agents []runtimeInstallationAgent `json:"agents"`
+		}
+		if err2 := json.Unmarshal(body, &wrapper); err2 != nil || len(wrapper.Agents) == 0 {
+			return "", fmt.Errorf("could not parse agents list")
+		}
+		agents = wrapper.Agents
+	}
+	for _, a := range agents {
+		if a.IsDefault {
+			return a.AgentID, nil
+		}
+	}
+	return "", fmt.Errorf("no default agent found for installation %s; set one with 'kei bot agents add --default'", installationID)
 }
 
 func runHarnessList(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
