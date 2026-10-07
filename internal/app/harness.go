@@ -1094,7 +1094,7 @@ func (nativeHarnessRenderer) Render(kind, harnessID string, bundle Bundle, files
 				fmt.Fprintf(&rules, "prefix_rule(pattern=%s, decision=\"allow\", justification=\"kei policy\")\n", entry)
 			}
 			for _, entry := range denies {
-				fmt.Fprintf(&rules, "prefix_rule(pattern=%s, decision=\"deny\", justification=\"kei policy\")\n", entry)
+				fmt.Fprintf(&rules, "prefix_rule(pattern=%s, decision=\"forbidden\", justification=\"kei policy\")\n", entry)
 			}
 			result.Files[path] = []byte(rules.String())
 			result.AllowEntries[path] = append([]string(nil), allows...)
