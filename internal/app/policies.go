@@ -811,7 +811,7 @@ func parseImportSource(harness, fileOverride, srcPattern string, stderr io.Write
 	case "opencode":
 		path := fileOverride
 		if path == "" {
-			path = filepath.Join(home, ".config", "opencode", "opencode.json")
+			path = filepath.Join(opencodeConfigDir(), "opencode.json")
 		}
 		return parseOpenCodeConfig(path, srcPattern)
 	default:
