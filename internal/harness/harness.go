@@ -113,6 +113,9 @@ type Rendered struct {
 	// harness; ScopedElsewhereExample is one such src for the sync hint.
 	ScopedElsewhere        int
 	ScopedElsewhereExample string
+	// PersonSourcesSkipped counts the user:/email:/group: policies a v1
+	// bundle could not render: only v2 carries the subject they need.
+	PersonSourcesSkipped int
 	// The bundle identity, kept so Apply can refuse a rollback.
 	BundleVersion int64
 	BundleDigest  string

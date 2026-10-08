@@ -84,7 +84,7 @@ func TestNativePermissionEntriesSharedHarnessFixtures(t *testing.T) {
 			policies = append(policies, bundlePolicy{ID: p.ID, SrcPattern: p.Src, DstPattern: p.Dst, Action: p.Action, Effect: p.Action, Enabled: p.Enabled})
 		}
 		h := &BundleHarness{AgentID: tc.Call.AgentID, Kind: tc.Call.Kind}
-		entries := nativePermissionEntries(syntaxFor(tc.Call.Kind), tc.Call.HarnessID, h, policies)
+		entries := nativePermissionEntries(syntaxFor(tc.Call.Kind), tc.Call.HarnessID, h, nil, policies)
 		allows, denies := entries.Allows, entries.Denies
 		switch tc.WantOutcome {
 		case harnessmatch.OutcomePermit:
