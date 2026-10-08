@@ -21,6 +21,10 @@ type fileHarness interface {
 	// entries it newly manages there. A file it does not manage is returned
 	// unchanged.
 	renderFile(path string, cfg []byte, r Rendered) (out []byte, allows, denies []string, err error)
+	// missingEntries returns the allows and denies that are not in force in
+	// the target file at path (absent, or present with another decision). A
+	// file that holds no permission entries reports nothing missing.
+	missingEntries(path string, cfg []byte, allows, denies []string) (missingAllows, missingDenies []string)
 	// removeManaged removes previously Kei-written entries from cfg.
 	removeManaged(cfg []byte, allows, denies []string) ([]byte, error)
 	// mergeHook merges a HookSpec document into the target file.
@@ -33,36 +37,42 @@ type fileHarness interface {
 // applyFiles renders r into f's target files: it strips the entries the
 // previous sync wrote, merges the new ones and the audit hook, backs up and
 // rewrites each changed file, and records what it manages in the ledger.
-func applyFiles(f fileHarness, r Rendered, opts ApplyOpts) error {
+// Entries the previous sync wrote that another writer has since removed are
+// restored, and the returned Result says how many.
+func applyFiles(f fileHarness, r Rendered, opts ApplyOpts) (Result, error) {
 	targets, err := f.Targets(opts.Env)
 	if err != nil {
-		return err
+		return Result{}, err
 	}
 	// HP-C11: a desktop harness is a session of the runtime installation keyed
 	// by kind, so the local ledger is keyed by kind (not a registered agent id).
 	ledgerPath := ledgerPath(opts.Env, f.Kind())
 	prior := readLedger(ledgerPath)
 	if prior.Bundle > r.BundleVersion {
-		return fmt.Errorf("bundle version rollback: local %d, fetched %d", prior.Bundle, r.BundleVersion)
+		return Result{}, fmt.Errorf("bundle version rollback: local %d, fetched %d", prior.Bundle, r.BundleVersion)
 	}
 	if prior.Bundle == r.BundleVersion && prior.Digest != "" && prior.Digest != r.BundleDigest {
-		return fmt.Errorf("bundle payload changed without a version increase")
+		return Result{}, fmt.Errorf("bundle payload changed without a version increase")
 	}
 	ledger := syncLedger{HarnessID: f.Kind(), Kind: f.Kind(), Bundle: r.BundleVersion, Digest: r.BundleDigest, NotAfter: r.NotAfter, Files: map[string]fileLedger{}}
 	inputs := map[string][]byte{}
+	reapplied := 0
 	for _, target := range targets {
 		if target.Remote() {
-			return fmt.Errorf("%s: remote target %s needs its own Apply", f.Kind(), target.URL)
+			return Result{}, fmt.Errorf("%s: remote target %s needs its own Apply", f.Kind(), target.URL)
 		}
 		path := target.Path
 		cfg, err := os.ReadFile(path)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
+			return Result{}, err
 		}
-		if previous, ok := prior.Files[path]; ok && len(cfg) > 0 {
-			cfg, err = f.removeManaged(cfg, previous.AllowEntries, previous.DenyEntries)
-			if err != nil {
-				return fmt.Errorf("remove previous managed entries from %s: %w", path, err)
+		if previous, ok := prior.Files[path]; ok {
+			reapplied += countReapplied(f, path, cfg, previous, r)
+			if len(cfg) > 0 {
+				cfg, err = f.removeManaged(cfg, previous.AllowEntries, previous.DenyEntries)
+				if err != nil {
+					return Result{}, fmt.Errorf("remove previous managed entries from %s: %w", path, err)
+				}
 			}
 		}
 		inputs[path] = cfg
@@ -73,7 +83,7 @@ func applyFiles(f fileHarness, r Rendered, opts ApplyOpts) error {
 	for path, cfg := range inputs {
 		out, allowed, denied, err := f.renderFile(path, cfg, r)
 		if err != nil {
-			return err
+			return Result{}, err
 		}
 		outputs[path] = out
 		allows[path] = allowed
@@ -88,7 +98,7 @@ func applyFiles(f fileHarness, r Rendered, opts ApplyOpts) error {
 			}
 			merged, err := f.mergeHook(base, content)
 			if err != nil {
-				return err
+				return Result{}, err
 			}
 			outputs[path] = merged
 		}
@@ -105,23 +115,42 @@ func applyFiles(f fileHarness, r Rendered, opts ApplyOpts) error {
 			if len(cfg) > 0 {
 				backup := path + ".kei-backup-" + opts.Now.UTC().Format("20060102T150405.000000000Z")
 				if err := os.WriteFile(backup, cfg, 0o600); err != nil {
-					return err
+					return Result{}, err
 				}
 			}
 			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-				return err
+				return Result{}, err
 			}
 			if err := os.WriteFile(path, managed, 0o600); err != nil {
-				return err
+				return Result{}, err
 			}
 		}
 	}
 	if !opts.DryRun {
 		if err := writeLedger(ledgerPath, ledger); err != nil {
-			return err
+			return Result{}, err
 		}
 	}
-	return nil
+	var result Result
+	if reapplied > 0 {
+		result.Notes = append(result.Notes, reappliedNote(f, reapplied, opts.DryRun))
+	}
+	return result, nil
+}
+
+// reappliedNote reports entries a sync restores after another writer removed
+// them. For Claude Code the usual writer is a running session saving an
+// "always allow" answer from settings it loaded before the last sync.
+func reappliedNote(f fileHarness, n int, dryRun bool) string {
+	verb := "re-applied"
+	if dryRun {
+		verb = "would re-apply"
+	}
+	cause := "another process rewrote the native config"
+	if f.Kind() == claudeSyntax.kind {
+		cause = "an open Claude session saved stale settings; restart running Claude Code sessions after sync"
+	}
+	return fmt.Sprintf("%s: %s %d entries removed since last sync (likely %s)", f.displayName(), verb, n, cause)
 }
 
 // printRenderHints names the policies r could not render natively. Every

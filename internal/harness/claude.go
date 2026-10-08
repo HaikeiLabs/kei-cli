@@ -49,10 +49,10 @@ func (claudeCode) Targets(env Env) ([]Target, error) {
 func (claudeCode) Render(b Bundle) (Rendered, error) { return render(claudeSyntax, "", b) }
 
 func (c claudeCode) Apply(_ context.Context, r Rendered, opts ApplyOpts) (Result, error) {
-	if err := applyFiles(c, r, opts); err != nil {
+	result, err := applyFiles(c, r, opts)
+	if err != nil {
 		return Result{}, err
 	}
-	var result Result
 	if _, err := opts.Env.home(); err == nil {
 		config, _ := os.ReadFile(claudeSettingsPath(opts.Env))
 		if claudeNonPrompting(config) {
@@ -95,6 +95,13 @@ func (claudeCode) renderFile(path string, cfg []byte, r Rendered) ([]byte, []str
 		return nil, nil, nil, err
 	}
 	return out, filterAbsent(claudePresent(cfg, "allow"), r.Allows), filterAbsent(claudePresent(cfg, "deny"), r.Denies), nil
+}
+
+func (claudeCode) missingEntries(path string, cfg []byte, allows, denies []string) ([]string, []string) {
+	if !strings.HasSuffix(path, filepath.Join(".claude", "settings.json")) {
+		return nil, nil
+	}
+	return filterAbsent(claudePresent(cfg, "allow"), allows), filterAbsent(claudePresent(cfg, "deny"), denies)
 }
 
 // claudePresent returns the entries already in permissions[key].

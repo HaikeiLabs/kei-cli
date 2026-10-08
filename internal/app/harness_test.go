@@ -704,3 +704,112 @@ func TestHarnessSyncDrivesRemoteHarness(t *testing.T) {
 		t.Fatalf("sync reported %d times, want once (not on dry run)", reported)
 	}
 }
+
+// HAI-416: a stale writer (an open Claude Code session saving settings it
+// loaded before the last sync) drops the Kei-written permissions. --check
+// reports it as JSON and exits 1; sync re-applies the entries and says so;
+// --check then exits 0. Neither output carries the runtime token.
+func TestHarnessSyncCheckDetectsAndSyncHealsStaleWriter(t *testing.T) {
+	home := t.TempDir()
+	env := harness.Env{Home: home, Getenv: func(string) string { return "" }}
+	settings := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settings, []byte(`{"permissions":{"allow":["Bash(user:*)"]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const token = "runtime-secret-hai416"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/runtime/whoami":
+			_, _ = w.Write([]byte(`{"id":"runtime-id","org_id":"org-id","platform":"cli"}`))
+		case "/api/v1/runtime/policy-bundles/current":
+			_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v1","bundle_id":"b","bundle_version":2,"policy_revision":1,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harness_match_semantics":"kei.harness-match/v1","harnesses":[],"policy_set":{"policies":[{"id":"p1","src_pattern":"*","dst_pattern":"shell:git","effect":"permit","enabled":true},{"id":"p2","src_pattern":"*","dst_pattern":"shell:rm","effect":"deny","enabled":true}]}}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	config := runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: token}
+	check := func(jsonOutput bool) (int, string) {
+		t.Helper()
+		var stdout, stderr bytes.Buffer
+		code := checkHarnessDrift(t.Context(), config, "", jsonOutput, &stdout, &stderr, server.Client(), harness.Default, env, time.Now)
+		if strings.Contains(stdout.String()+stderr.String(), token) {
+			t.Fatalf("check output leaks the runtime token")
+		}
+		if code == 2 {
+			t.Fatalf("check error: %s", stderr.String())
+		}
+		return code, stdout.String()
+	}
+	sync := func() string {
+		t.Helper()
+		var stdout, stderr bytes.Buffer
+		if code := syncHarnessBundle(t.Context(), config, "", false, &stdout, &stderr, server.Client(), harness.Default, env, time.Now); code != 0 {
+			t.Fatalf("sync exit=%d stderr=%s", code, stderr.String())
+		}
+		if strings.Contains(stdout.String()+stderr.String(), token) {
+			t.Fatalf("sync output leaks the runtime token")
+		}
+		return stdout.String()
+	}
+
+	sync()
+	if code, out := check(false); code != 0 || !strings.Contains(out, "claude_code: in sync with bundle 2") {
+		t.Fatalf("check after sync exit=%d out=%s", code, out)
+	}
+	// The stale writer keeps the hook and the user's answers, drops Kei's.
+	stale := `{"permissions":{"allow":["Bash(user:*)","Bash(npm test:*)"]},"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"kei-proxy hook claude","timeout":5}]}]}}`
+	if err := os.WriteFile(settings, []byte(stale), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, out := check(true)
+	if code != 1 {
+		t.Fatalf("check after stale write exit=%d out=%s", code, out)
+	}
+	var report harness.DriftReport
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("decode report %q: %v", out, err)
+	}
+	if report.Schema != harness.DriftSchema || !report.Drift || report.Bundle.Version != 2 || !strings.HasPrefix(report.Bundle.Digest, "sha256:") || len(report.Harnesses) != 1 {
+		t.Fatalf("report = %+v", report)
+	}
+	got := report.Harnesses[0]
+	want := []harness.DriftEntry{{File: settings, Effect: "allow", Entry: "Bash(git:*)"}, {File: settings, Effect: "deny", Entry: "Bash(rm:*)"}}
+	if got.Kind != "claude_code" || got.Status != harness.DriftDetected || len(got.Missing) != 2 || got.Missing[0] != want[0] || got.Missing[1] != want[1] {
+		t.Fatalf("claude_code drift = %+v", got)
+	}
+
+	if out := sync(); !strings.Contains(out, "Claude Code: re-applied 2 entries removed since last sync (likely an open Claude session saved stale settings") {
+		t.Fatalf("sync stdout = %s", out)
+	}
+	healed, _ := os.ReadFile(settings)
+	for _, want := range []string{"Bash(git:*)", "Bash(rm:*)", "Bash(user:*)", "Bash(npm test:*)", "kei-proxy hook claude"} {
+		if !strings.Contains(string(healed), want) {
+			t.Errorf("healed settings missing %q:\n%s", want, healed)
+		}
+	}
+	if code, out := check(true); code != 0 || !strings.Contains(out, `"drift":false`) {
+		t.Fatalf("check after heal exit=%d out=%s", code, out)
+	}
+}
+
+func TestHarnessSyncCheckFlagValidation(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	for _, args := range [][]string{{"--json"}, {"--check", "--dry-run"}} {
+		var stdout, stderr bytes.Buffer
+		if code := runHarnessSync(args, &stdout, &stderr, http.DefaultClient, nil, harness.Default); code != 2 {
+			t.Errorf("%v exit=%d stderr=%s", args, code, stderr.String())
+		}
+	}
+}
+
+func TestHarnessSyncCheckFetchErrorExits2(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := checkHarnessDrift(t.Context(), runtimeConfig{ControlPlaneURL: "http://example.com", RuntimeToken: "t"}, "", true, &stdout, &stderr, http.DefaultClient, harness.Default, harness.Env{Home: t.TempDir()}, time.Now)
+	if code != 2 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "require HTTPS") {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}

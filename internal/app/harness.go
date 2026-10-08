@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -389,7 +390,17 @@ func runHarnessSync(args []string, stdout, stderr io.Writer, client *http.Client
 	configPath := flags.String("config", defaultPath, "runtime configuration path")
 	kindFilter := flags.String("harness", "", "only sync this harness kind")
 	dryRun := flags.Bool("dry-run", false, "show changes without writing")
+	check := flags.Bool("check", false, "report drift between native config, the sync ledger and the current bundle; exit 1 on drift, 2 on error")
+	jsonOutput := flags.Bool("json", false, "with --check, print a machine-readable report ("+harness.DriftSchema+")")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+		return 2
+	}
+	if *jsonOutput && !*check {
+		fmt.Fprintln(stderr, "harness sync: --json requires --check")
+		return 2
+	}
+	if *check && *dryRun {
+		fmt.Fprintln(stderr, "harness sync: --check and --dry-run are mutually exclusive")
 		return 2
 	}
 	if _, ok := registry.Get(*kindFilter); *kindFilter != "" && !ok {
@@ -405,55 +416,125 @@ func runHarnessSync(args []string, stdout, stderr io.Writer, client *http.Client
 		fmt.Fprintf(stderr, "harness sync: %v\n", err)
 		return 1
 	}
+	if *check {
+		return checkHarnessDrift(context.Background(), config, *kindFilter, *jsonOutput, stdout, stderr, client, registry, harness.OSEnv(), time.Now)
+	}
 	return syncHarnessBundle(context.Background(), config, *kindFilter, *dryRun, stdout, stderr, client, registry, harness.OSEnv(), time.Now)
 }
 
-func syncHarnessBundle(ctx context.Context, config runtimeConfig, kindFilter string, dryRun bool, stdout, stderr io.Writer, client *http.Client, registry *harness.Registry, env harness.Env, now func() time.Time) int {
+// checkHarnessDrift is `kei harness sync --check`: it compares each harness's
+// native config with its sync ledger and the current bundle and writes
+// nothing. It exits 0 in sync, 1 on drift and 2 on error, so a bundle
+// refresher can run sync only when needed.
+func checkHarnessDrift(ctx context.Context, config runtimeConfig, kindFilter string, jsonOutput bool, stdout, stderr io.Writer, client *http.Client, registry *harness.Registry, env harness.Env, now func() time.Time) int {
+	bundle, _, err := fetchHarnessBundle(ctx, config, client)
+	if err != nil {
+		fmt.Fprintf(stderr, "harness sync --check: %v\n", err)
+		return 2
+	}
+	report := harness.NewDriftReport(bundle, now())
+	if report.Bundle.Expired {
+		report.Drift = harness.LedgersUnexpired(env)
+	} else {
+		harnesses, err := selectHarnesses(registry, env, kindFilter)
+		if err != nil {
+			fmt.Fprintf(stderr, "harness sync --check: %v\n", err)
+			return 2
+		}
+		for _, h := range harnesses {
+			rendered, err := h.Render(bundle)
+			if err != nil {
+				fmt.Fprintf(stderr, "harness sync --check: %v\n", err)
+				return 2
+			}
+			drift, err := harness.CheckDrift(h, env, rendered)
+			if err != nil {
+				fmt.Fprintf(stderr, "harness sync --check: %s: %v\n", h.Kind(), err)
+				return 2
+			}
+			report.Add(drift)
+		}
+	}
+	if jsonOutput {
+		out, err := json.Marshal(report)
+		if err != nil {
+			fmt.Fprintf(stderr, "harness sync --check: encode report: %v\n", err)
+			return 2
+		}
+		fmt.Fprintln(stdout, string(out))
+	} else {
+		if len(report.Harnesses) == 0 && !report.Bundle.Expired {
+			fmt.Fprintln(stdout, "No harness kinds detected locally; use --harness KIND to check a specific one.")
+		}
+		report.WriteText(stdout)
+	}
+	if report.Drift {
+		return 1
+	}
+	return 0
+}
+
+// fetchHarnessBundle verifies the runtime token and fetches the current
+// policy bundle, checking that it is addressed to this installation.
+func fetchHarnessBundle(ctx context.Context, config runtimeConfig, client *http.Client) (harness.Bundle, []byte, error) {
+	var bundle harness.Bundle
 	controlPlane, parseErr := url.Parse(config.ControlPlaneURL)
 	if parseErr != nil || !strings.EqualFold(controlPlane.Scheme, "https") && !isLoopbackHost(controlPlane.Hostname()) {
-		fmt.Fprintln(stderr, "harness sync: runtime policy bundles require HTTPS")
-		return 1
+		return bundle, nil, errors.New("runtime policy bundles require HTTPS")
 	}
 	identity, err := verifyRuntimeToken(ctx, client, config.ControlPlaneURL, config.RuntimeToken)
 	if err != nil {
-		fmt.Fprintf(stderr, "harness sync: verify runtime token: %v\n", err)
-		return 1
+		return bundle, nil, fmt.Errorf("verify runtime token: %w", err)
 	}
 	endpoint := strings.TrimRight(config.ControlPlaneURL, "/") + "/api/v1/runtime/policy-bundles/current"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		fmt.Fprintf(stderr, "harness sync: %v\n", err)
-		return 1
+		return bundle, nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+config.RuntimeToken)
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Fprintf(stderr, "harness sync: fetch bundle: %v\n", err)
-		return 1
+		return bundle, nil, fmt.Errorf("fetch bundle: %w", err)
 	}
 	payload, readErr := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	_ = resp.Body.Close()
 	if readErr != nil {
-		fmt.Fprintf(stderr, "harness sync: read bundle: %v\n", readErr)
-		return 1
+		return bundle, nil, fmt.Errorf("read bundle: %w", readErr)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		fmt.Fprintf(stderr, "harness sync: fetch bundle: %s\n", harnessResponseError(payload, resp.StatusCode, nil))
-		return 1
+		return bundle, nil, fmt.Errorf("fetch bundle: %s", harnessResponseError(payload, resp.StatusCode, nil))
 	}
-	var bundle harness.Bundle
 	if err := json.Unmarshal(payload, &bundle); err != nil || bundle.Schema != "kei.policy-bundle/v1" || bundle.BundleID == "" || bundle.BundleVersion < 1 || bundle.PolicyRevision < 1 || bundle.NotAfter.IsZero() {
-		fmt.Fprintln(stderr, "harness sync: invalid policy bundle")
-		return 1
+		return harness.Bundle{}, nil, errors.New("invalid policy bundle")
 	}
 	digest := sha256.Sum256(payload)
 	bundle.PayloadDigest = "sha256:" + hex.EncodeToString(digest[:])
 	if bundle.Audience.InstallationID != identity.ID || bundle.Audience.OrgID != identity.OrgID || bundle.Audience.WorkspaceID == "" {
-		fmt.Fprintln(stderr, "harness sync: policy bundle audience does not match runtime installation")
-		return 1
+		return harness.Bundle{}, nil, errors.New("policy bundle audience does not match runtime installation")
 	}
 	if len(bundle.Harnesses) > 0 && bundle.HarnessMatchSemantics != "kei.harness-match/v1" {
-		fmt.Fprintln(stderr, "harness sync: unsupported harness match semantics")
+		return harness.Bundle{}, nil, errors.New("unsupported harness match semantics")
+	}
+	return bundle, payload, nil
+}
+
+// selectHarnesses returns the harness of kindFilter, or every harness
+// installed in env when kindFilter is empty (HP-C11).
+func selectHarnesses(registry *harness.Registry, env harness.Env, kindFilter string) ([]harness.Harness, error) {
+	if kindFilter == "" {
+		return registry.Detected(env), nil
+	}
+	h, ok := registry.Get(kindFilter)
+	if !ok {
+		return nil, fmt.Errorf("invalid kind %q", kindFilter)
+	}
+	return []harness.Harness{h}, nil
+}
+
+func syncHarnessBundle(ctx context.Context, config runtimeConfig, kindFilter string, dryRun bool, stdout, stderr io.Writer, client *http.Client, registry *harness.Registry, env harness.Env, now func() time.Time) int {
+	bundle, payload, err := fetchHarnessBundle(ctx, config, client)
+	if err != nil {
+		fmt.Fprintf(stderr, "harness sync: %v\n", err)
 		return 1
 	}
 	if !bundle.NotAfter.After(now()) {
@@ -466,16 +547,10 @@ func syncHarnessBundle(ctx context.Context, config runtimeConfig, kindFilter str
 	}
 	// HP-C11: sync no longer requires a registered harness. It renders for the
 	// harness kinds installed locally, or for a single --harness KIND.
-	var harnesses []harness.Harness
-	if kindFilter != "" {
-		h, ok := registry.Get(kindFilter)
-		if !ok {
-			fmt.Fprintf(stderr, "harness sync: invalid kind %q\n", kindFilter)
-			return 1
-		}
-		harnesses = []harness.Harness{h}
-	} else {
-		harnesses = registry.Detected(env)
+	harnesses, err := selectHarnesses(registry, env, kindFilter)
+	if err != nil {
+		fmt.Fprintf(stderr, "harness sync: %v\n", err)
+		return 1
 	}
 	if len(harnesses) == 0 {
 		fmt.Fprintln(stdout, "No harness kinds detected locally; use --harness KIND to sync a specific one.")

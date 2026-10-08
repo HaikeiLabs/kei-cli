@@ -126,10 +126,10 @@ func (o openCode) Apply(_ context.Context, r Rendered, opts ApplyOpts) (Result, 
 	// Capture whether the config existed before sync, since the sync creates
 	// it when missing.
 	cfgPath, hadConfig := opencodeConfigPath(opts.Env)
-	if err := applyFiles(o, r, opts); err != nil {
+	result, err := applyFiles(o, r, opts)
+	if err != nil {
 		return Result{}, err
 	}
-	var result Result
 	if _, err := opts.Env.home(); err == nil {
 		path, _ := opencodeConfigPath(opts.Env)
 		config, _ := os.ReadFile(path)
@@ -193,6 +193,47 @@ func opencodePresent(cfg []byte) map[string]bool {
 		}
 	}
 	return present
+}
+
+func (openCode) missingEntries(path string, cfg []byte, allows, denies []string) ([]string, []string) {
+	if !strings.HasSuffix(path, filepath.Join("opencode", "opencode.json")) {
+		return nil, nil
+	}
+	var root struct {
+		Permission struct {
+			Bash     map[string]any `json:"bash"`
+			Skill    map[string]any `json:"skill"`
+			External map[string]any `json:"external_directory"`
+		} `json:"permission"`
+	}
+	_ = json.Unmarshal(cfg, &root)
+	inForce := func(entry, decision string) bool {
+		switch {
+		case strings.HasPrefix(entry, "Skill(") && strings.HasSuffix(entry, ")"):
+			return root.Permission.Skill[strings.TrimSuffix(strings.TrimPrefix(entry, "Skill("), ")")] == decision
+		case strings.HasPrefix(entry, "path:"):
+			return root.Permission.External[strings.TrimPrefix(entry, "path:")] == decision
+		case entry == "*":
+			// Never written; see mergeOpenCodePermissions.
+			return true
+		default:
+			// The ledger tracks the bare prefix; its "prefix *" twin is
+			// written alongside it but may be the user's own key.
+			return root.Permission.Bash[entry] == decision
+		}
+	}
+	var missingAllows, missingDenies []string
+	for _, e := range allows {
+		if !inForce(e, "allow") {
+			missingAllows = append(missingAllows, e)
+		}
+	}
+	for _, e := range denies {
+		if !inForce(e, "deny") {
+			missingDenies = append(missingDenies, e)
+		}
+	}
+	return missingAllows, missingDenies
 }
 
 func mergeOpenCodePermissions(cfg []byte, allows, denies []string) ([]byte, error) {
