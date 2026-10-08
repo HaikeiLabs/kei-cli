@@ -87,6 +87,11 @@ func runFeedbackCommand(args []string, stdout, stderr io.Writer, stdin io.Reader
 	if !ok {
 		return 1
 	}
+	consoleURL, err := legacyWebHost(baseURL)
+	if err != nil {
+		fmt.Fprintf(stderr, "feedback: determine Console host: %v\n", err)
+		return 1
+	}
 	fmt.Fprintf(stdout, "Feedback to submit:\n  Description: %q\n", descriptionText)
 	if len(files) == 0 {
 		fmt.Fprintln(stdout, "  Evidence: none")
@@ -156,7 +161,7 @@ func runFeedbackCommand(args []string, stdout, stderr io.Writer, stdin io.Reader
 		return 2
 	}
 
-	request, err := http.NewRequest(http.MethodPost, baseURL+"/api/bug-reports", &body)
+	request, err := http.NewRequest(http.MethodPost, consoleURL+"/api/bug-reports", &body)
 	if err != nil {
 		fmt.Fprintf(stderr, "feedback: build request: %v\n", err)
 		return 1
