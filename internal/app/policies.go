@@ -11,17 +11,14 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"text/tabwriter"
 
+	"github.com/HaikeiLabs/kei-cli/internal/harness"
 	"github.com/google/uuid"
 	"golang.org/x/term"
 )
-
-var codexTokenRe = regexp.MustCompile(`"([^"]*)"`)
 
 type policy struct {
 	ID               string  `json:"id"`
@@ -209,7 +206,7 @@ func runPoliciesCommand(args []string, stdout, stderr io.Writer, stdin io.Reader
 	case "delete":
 		return runPoliciesDelete(args[1:], stdout, stderr, client, store)
 	case "import":
-		return runPoliciesImport(args[1:], stdout, stderr, stdin, client, store)
+		return runPoliciesImport(args[1:], stdout, stderr, stdin, client, store, harness.Default)
 	default:
 		fmt.Fprintf(stderr, "unknown policies command %q\n", args[0])
 		return 2
@@ -666,11 +663,12 @@ type importedPolicy struct {
 	Effect     string `json:"effect"`
 }
 
-func runPoliciesImport(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
+func runPoliciesImport(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore, registry *harness.Registry) int {
 	flags := flag.NewFlagSet("policies import", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	workspace := policiesWorkspaceFlag(flags)
-	from := flags.String("from", "", "harness to import from: claude, codex, or opencode")
+	importNames := registry.ImportNames()
+	from := flags.String("from", "", "harness to import from: "+harness.JoinOr(importNames))
 	file := flags.String("file", "", "override the source file or directory")
 	src := flags.String("src", "", "source pattern (default: harness:<kind>; harness:* shares the rules with every harness)")
 	out := flags.String("out", "", "write the proposed policy-set JSON to this file")
@@ -680,11 +678,12 @@ func runPoliciesImport(args []string, stdout, stderr io.Writer, stdin io.Reader,
 		return 2
 	}
 	if *from == "" {
-		fmt.Fprintln(stderr, "policies import requires --from claude|codex|opencode")
+		fmt.Fprintf(stderr, "policies import requires --from %s\n", strings.Join(importNames, "|"))
 		return 2
 	}
-	if *from != "claude" && *from != "codex" && *from != "opencode" {
-		fmt.Fprintln(stderr, "policies import: --from must be claude, codex, or opencode")
+	source, ok := registry.Importer(*from)
+	if !ok {
+		fmt.Fprintf(stderr, "policies import: --from must be %s\n", harness.JoinOr(importNames))
 		return 2
 	}
 	ws, ok := requirePoliciesWorkspace("import", *workspace, stderr)
@@ -693,13 +692,9 @@ func runPoliciesImport(args []string, stdout, stderr io.Writer, stdin io.Reader,
 	}
 	srcPattern := *src
 	if srcPattern == "" {
-		kind := *from
-		if kind == "claude" {
-			kind = "claude_code"
-		}
-		srcPattern = "harness:" + kind
+		srcPattern = "harness:" + source.Kind()
 	}
-	policies, err := parseImportSource(*from, *file, srcPattern, stderr)
+	policies, err := importPolicies(source, *file, srcPattern, stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "policies import: %v\n", err)
 		return 1
@@ -790,262 +785,20 @@ func printImportScope(stdout io.Writer, srcPattern string) {
 	}
 }
 
-func parseImportSource(harness, fileOverride, srcPattern string, stderr io.Writer) ([]importedPolicy, error) {
-	home, err := os.UserHomeDir()
+// importPolicies reads h's native rules and maps each onto a policy with src
+// srcPattern, reporting the entries that have no Kei equivalent.
+func importPolicies(h harness.Harness, fileOverride, srcPattern string, stderr io.Writer) ([]importedPolicy, error) {
+	rules, err := h.ImportRules(harness.OSEnv(), fileOverride)
 	if err != nil {
-		return nil, fmt.Errorf("resolve home directory: %w", err)
-	}
-	switch harness {
-	case "claude":
-		path := fileOverride
-		if path == "" {
-			path = filepath.Join(home, ".claude", "settings.json")
-		}
-		return parseClaudeSettings(path, srcPattern, stderr)
-	case "codex":
-		path := fileOverride
-		if path == "" {
-			path = filepath.Join(home, ".codex", "rules")
-		}
-		return parseCodexRules(path, srcPattern)
-	case "opencode":
-		path := fileOverride
-		if path == "" {
-			path = filepath.Join(opencodeConfigDir(), "opencode.json")
-		}
-		return parseOpenCodeConfig(path, srcPattern)
-	default:
-		return nil, fmt.Errorf("unknown harness %q", harness)
-	}
-}
-
-func parseClaudeSettings(path, srcPattern string, stderr io.Writer) ([]importedPolicy, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("%s not found", path)
-	}
-	var settings struct {
-		AutoMode struct {
-			SoftDeny []string `json:"soft_deny"`
-		} `json:"autoMode"`
-		Permissions struct {
-			Allow []string `json:"allow"`
-			Deny  []string `json:"deny"`
-		} `json:"permissions"`
-	}
-	if err := json.Unmarshal(data, &settings); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
+		return nil, err
 	}
 	var policies []importedPolicy
-	skip := func(entry, effect string) {
-		if p, ok := claudeEntryToPolicy(entry, effect, srcPattern); ok {
-			policies = append(policies, p)
-		} else {
-			fmt.Fprintf(stderr, "policies import: skipping %q (wildcard is not a trailing :*)\n", entry)
-		}
-	}
-	for _, entry := range settings.Permissions.Allow {
-		skip(entry, "permit")
-	}
-	for _, entry := range settings.Permissions.Deny {
-		skip(entry, "deny")
-	}
-	for _, entry := range settings.AutoMode.SoftDeny {
-		if entry == "$defaults" {
+	for _, rule := range rules {
+		if rule.SkipReason != "" {
+			fmt.Fprintf(stderr, "policies import: skipping %q (%s)\n", rule.Native, rule.SkipReason)
 			continue
 		}
-		skip(entry, "deny")
+		policies = append(policies, importedPolicy{Name: rule.Name, SrcPattern: srcPattern, DstPattern: rule.Dst, Effect: rule.Effect})
 	}
 	return policies, nil
-}
-
-func claudeEntryToPolicy(entry, effect, srcPattern string) (importedPolicy, bool) {
-	bashMatch := extractBashPattern(entry)
-	if bashMatch != "" {
-		// Only trailing :* wildcards map to an argv prefix.
-		// Mid-pattern wildcards (e.g. helm:*values-prod.yaml*) cannot be
-		// expressed as an argv prefix and are skipped.
-		if !strings.HasSuffix(bashMatch, ":*") {
-			return importedPolicy{}, false
-		}
-		cmd := strings.TrimSuffix(bashMatch, ":*")
-		dst := "shell:" + cmd
-		name := "claude-" + truncateName(cmd, 50)
-		return importedPolicy{Name: name, SrcPattern: srcPattern, DstPattern: dst, Effect: effect}, true
-	}
-	dst := "skill:" + strings.ToLower(entry)
-	name := "claude-" + strings.ToLower(entry)
-	return importedPolicy{Name: name, SrcPattern: srcPattern, DstPattern: dst, Effect: effect}, true
-}
-
-func extractBashPattern(entry string) string {
-	if !strings.HasPrefix(entry, "Bash(") {
-		return ""
-	}
-	rest := entry[5:]
-	end := strings.Index(rest, ")")
-	if end < 0 {
-		return ""
-	}
-	return rest[:end]
-}
-
-func truncateName(s string, max int) string {
-	s = strings.ReplaceAll(s, " ", "-")
-	if len(s) > max {
-		return s[:max]
-	}
-	return s
-}
-
-func parseCodexRules(path, srcPattern string) ([]importedPolicy, error) {
-	var files []string
-	info, err := os.Stat(path)
-	if err != nil {
-		return nil, fmt.Errorf("%s not found", path)
-	}
-	if info.IsDir() {
-		entries, err := os.ReadDir(path)
-		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", path, err)
-		}
-		for _, e := range entries {
-			if !e.IsDir() && strings.HasSuffix(e.Name(), ".rules") {
-				files = append(files, filepath.Join(path, e.Name()))
-			}
-		}
-	} else {
-		files = []string{path}
-	}
-	if len(files) == 0 {
-		return nil, nil
-	}
-	var policies []importedPolicy
-	for _, file := range files {
-		data, err := os.ReadFile(file)
-		if err != nil {
-			return nil, fmt.Errorf("%s not found", file)
-		}
-		for i, line := range strings.Split(string(data), "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" || strings.HasPrefix(line, "#") {
-				continue
-			}
-			p, ok := parseCodexLine(line, srcPattern, file, i+1)
-			if !ok {
-				continue
-			}
-			policies = append(policies, p)
-		}
-	}
-	return policies, nil
-}
-
-func parseCodexLine(line, srcPattern, file string, lineNum int) (importedPolicy, bool) {
-	// Extract pattern=[...]
-	pIdx := strings.Index(line, "pattern=[")
-	if pIdx < 0 {
-		return importedPolicy{}, false
-	}
-	pStart := pIdx + len("pattern=[")
-	pEnd := strings.Index(line[pStart:], "]")
-	if pEnd < 0 {
-		return importedPolicy{}, false
-	}
-	pEnd += pStart
-
-	// Extract decision="..."
-	dIdx := strings.Index(line, `decision="`)
-	if dIdx < 0 {
-		return importedPolicy{}, false
-	}
-	dStart := dIdx + len(`decision="`)
-	dEnd := strings.Index(line[dStart:], `"`)
-	if dEnd < 0 {
-		return importedPolicy{}, false
-	}
-	decision := line[dStart : dStart+dEnd]
-
-	var effect string
-	switch decision {
-	case "allow":
-		effect = "permit"
-	case "forbidden":
-		effect = "deny"
-	default:
-		return importedPolicy{}, false
-	}
-
-	// Parse the pattern list: ["tok1", "tok2", ...]
-	inner := line[pStart:pEnd]
-	var tokens []string
-	for _, m := range codexTokenRe.FindAllStringSubmatch(inner, -1) {
-		tokens = append(tokens, m[1])
-	}
-	if len(tokens) == 0 {
-		return importedPolicy{}, false
-	}
-
-	dst := "shell:" + strings.Join(tokens, " ")
-	name := "codex-" + truncateName(strings.Join(tokens, " "), 50)
-	return importedPolicy{Name: name, SrcPattern: srcPattern, DstPattern: dst, Effect: effect}, true
-}
-
-func parseOpenCodeConfig(path, srcPattern string) ([]importedPolicy, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("%s not found", path)
-	}
-	var config struct {
-		Permission map[string]json.RawMessage `json:"permission"`
-	}
-	if err := json.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
-	}
-	var policies []importedPolicy
-	for tool, raw := range config.Permission {
-		var strVal string
-		if err := json.Unmarshal(raw, &strVal); err == nil {
-			if p := opencodeEntry(tool, tool, strVal, srcPattern); p.Effect != "" {
-				policies = append(policies, p)
-			}
-			continue
-		}
-		var mapVal map[string]string
-		if err := json.Unmarshal(raw, &mapVal); err != nil {
-			continue
-		}
-		for pattern, val := range mapVal {
-			if p := opencodeEntry(tool, pattern, val, srcPattern); p.Effect != "" {
-				policies = append(policies, p)
-			}
-		}
-	}
-	return policies, nil
-}
-
-func opencodeEntry(tool, pattern, value, srcPattern string) importedPolicy {
-	var effect string
-	switch value {
-	case "allow":
-		effect = "permit"
-	case "deny":
-		effect = "deny"
-	default:
-		// "ask" and unknown values are skipped
-		return importedPolicy{}
-	}
-	var dst string
-	switch tool {
-	case "bash":
-		dst = "shell:" + strings.TrimSuffix(pattern, "*")
-	case "skill":
-		dst = "skill:" + pattern
-	case "external_directory":
-		dst = "path:" + pattern
-	default:
-		dst = "tool:" + tool
-	}
-	name := "opencode-" + truncateName(tool+"-"+pattern, 50)
-	return importedPolicy{Name: name, SrcPattern: srcPattern, DstPattern: dst, Effect: effect}
 }

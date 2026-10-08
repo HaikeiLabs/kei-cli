@@ -2,18 +2,18 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/HaikeiLabs/kei-connector-contracts/harnessmatch"
+	"github.com/HaikeiLabs/kei-cli/internal/harness"
 )
 
 const testHarnessInstallationID = "66666666-6666-6666-6666-666666666666"
@@ -235,72 +235,6 @@ func TestHarnessListFollowsAIPPageTokens(t *testing.T) {
 	}
 }
 
-func TestHarnessRemoveCleansOnlyItsManagedLocalEntries(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	id := "77777777-7777-7777-7777-777777777777"
-	path := filepath.Join(home, ".claude", "settings.json")
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		t.Fatal(err)
-	}
-	initial := []byte(`{"permissions":{"allow":["Bash(user:*)","Bash(kei:*)"]},"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"user-hook"},{"type":"command","command":"kei-proxy hook claude --harness ` + id + `"}]}]}}`)
-	if err := os.WriteFile(path, initial, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeLedger(harnessLedgerPath(id), syncLedger{HarnessID: id, Kind: "claude_code", Files: map[string]fileLedger{path: {AllowEntries: []string{"Bash(kei:*)"}}}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := removeLocalHarness(id); err != nil {
-		t.Fatal(err)
-	}
-	cleaned, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(cleaned), "Bash(kei:*)") || strings.Contains(string(cleaned), "--harness "+id) || !strings.Contains(string(cleaned), "Bash(user:*)") || !strings.Contains(string(cleaned), "user-hook") {
-		t.Fatalf("cleanup damaged config: %s", cleaned)
-	}
-}
-
-type fakeHarnessRenderer struct {
-	allow    string
-	hookPath string
-}
-
-func (f fakeHarnessRenderer) Render(kind, harnessID string, bundle Bundle, files map[string][]byte) (renderedHarness, error) {
-	path := ""
-	for key := range files {
-		if strings.HasSuffix(key, "settings.json") {
-			path = key
-		}
-	}
-	var root map[string]any
-	if len(files[path]) > 0 {
-		if err := json.Unmarshal(files[path], &root); err != nil {
-			return renderedHarness{}, err
-		}
-	} else {
-		root = map[string]any{}
-	}
-	perms := map[string]any{}
-	if old, ok := root["permissions"].(map[string]any); ok {
-		perms = old
-	}
-	allow := []any{"Bash(user command:*)"}
-	if old, ok := perms["allow"].([]any); ok {
-		allow = append(allow, old...)
-	}
-	allow = append(allow, f.allow)
-	perms["allow"] = allow
-	root["permissions"] = perms
-	out, _ := json.Marshal(root)
-	return renderedHarness{Files: map[string][]byte{path: out}, AllowEntries: map[string][]string{path: []string{f.allow}}}, nil
-}
-func (f fakeHarnessRenderer) HookSpec(kind, harnessID string) (map[string][]byte, error) {
-	// HP-C11: the hook command no longer carries a --harness uuid.
-	return map[string][]byte{f.hookPath: []byte(`{"PreToolUse":[{"type":"command","command":"kei-proxy hook claude"}]}`)}, nil
-}
-
 func TestHarnessSyncFetchesBundleWritesManagedConfigWithBackupAndHook(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -313,7 +247,6 @@ func TestHarnessSyncFetchesBundleWritesManagedConfigWithBackupAndHook(t *testing
 	if err := os.WriteFile(configPath, original, 0600); err != nil {
 		t.Fatal(err)
 	}
-	hookPath := filepath.Join(home, ".claude", "hooks.json")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer runtime-secret" {
 			t.Errorf("request %s auth=%q", r.URL.Path, r.Header.Get("Authorization"))
@@ -323,7 +256,7 @@ func TestHarnessSyncFetchesBundleWritesManagedConfigWithBackupAndHook(t *testing
 			return
 		}
 		if r.URL.Path == "/api/v1/runtime/policy-bundles/current" {
-			_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v1","bundle_id":"bundle-1","bundle_version":2,"policy_revision":4,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harness_match_semantics":"kei.harness-match/v1","harnesses":[{"agent_id":"` + harnessID + `","kind":"claude_code"}],"policy_set":{"policies":[]}}`))
+			_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v1","bundle_id":"bundle-1","bundle_version":2,"policy_revision":4,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harness_match_semantics":"kei.harness-match/v1","harnesses":[{"agent_id":"` + harnessID + `","kind":"claude_code"}],"policy_set":{"policies":[{"id":"p1","src_pattern":"*","dst_pattern":"shell:kei command","effect":"permit","enabled":true}]}}`))
 			return
 		}
 		if r.Method == http.MethodPatch {
@@ -342,7 +275,7 @@ func TestHarnessSyncFetchesBundleWritesManagedConfigWithBackupAndHook(t *testing
 	}))
 	defer server.Close()
 	var stdout, stderr bytes.Buffer
-	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "runtime-secret"}, "claude_code", false, &stdout, &stderr, server.Client(), fakeHarnessRenderer{allow: "Bash(kei command:*)", hookPath: hookPath}, time.Now)
+	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "runtime-secret"}, "claude_code", false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now)
 	if code != 0 {
 		t.Fatalf("sync exit=%d stderr=%s", code, stderr.String())
 	}
@@ -355,8 +288,9 @@ func TestHarnessSyncFetchesBundleWritesManagedConfigWithBackupAndHook(t *testing
 			t.Errorf("config missing %q: %s", want, updated)
 		}
 	}
-	if got, err := os.ReadFile(hookPath); err != nil || !strings.Contains(string(got), "kei-proxy hook claude") {
-		t.Fatalf("hook = %q err=%v", got, err)
+	// The Claude Code audit hook is merged into settings.json.
+	if !strings.Contains(string(updated), "kei-proxy hook claude") {
+		t.Fatalf("hook missing: %s", updated)
 	}
 	if strings.Contains(string(updated), "--harness") {
 		t.Fatalf("hook still carries a --harness uuid: %s", updated)
@@ -366,7 +300,7 @@ func TestHarnessSyncFetchesBundleWritesManagedConfigWithBackupAndHook(t *testing
 		t.Fatalf("backups=%v err=%v", backups, err)
 	}
 	// HP-C11: the ledger is keyed by kind, not a registered agent id.
-	if _, err := os.Stat(harnessLedgerPath("claude_code")); err != nil {
+	if _, err := os.Stat(testLedgerPath(home, "claude_code")); err != nil {
 		t.Fatalf("ledger missing: %v", err)
 	}
 }
@@ -388,12 +322,12 @@ func TestHarnessSyncDryRunDoesNotWrite(t *testing.T) {
 	}))
 	defer server.Close()
 	var stdout, stderr bytes.Buffer
-	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "t"}, "", true, &stdout, &stderr, server.Client(), fakeHarnessRenderer{allow: "Bash(git:*)", hookPath: filepath.Join(home, "hook.json")}, time.Now)
+	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "t"}, "", true, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now)
 	if code != 0 {
 		t.Fatalf("sync exit=%d stderr=%s", code, stderr.String())
 	}
 	// HP-C11: the ledger is keyed by kind; a dry-run must not write it.
-	if _, err := os.Stat(harnessLedgerPath("claude_code")); !os.IsNotExist(err) {
+	if _, err := os.Stat(testLedgerPath(home, "claude_code")); !os.IsNotExist(err) {
 		t.Fatalf("dry-run wrote ledger: %v", err)
 	}
 }
@@ -409,9 +343,7 @@ func TestHarnessExpiredBundleRemovesOnlyManagedAllows(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"permissions":{"allow":["Bash(user:*)","Bash(kei:*)"],"deny":["Bash(rm:*)"]}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeLedger(harnessLedgerPath(id), syncLedger{HarnessID: id, Kind: "claude_code", NotAfter: time.Now().Add(-time.Minute), Files: map[string]fileLedger{path: {AllowEntries: []string{"Bash(kei:*)"}}}}); err != nil {
-		t.Fatal(err)
-	}
+	writeTestLedger(t, home, id, map[string]any{"harness_id": id, "kind": "claude_code", "not_after": time.Now().Add(-time.Minute), "files": map[string]any{path: map[string]any{"allow_entries": []string{"Bash(kei:*)"}}}})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/runtime/whoami" {
 			_, _ = w.Write([]byte(`{"id":"runtime-id","org_id":"org-id","platform":"cli"}`))
@@ -421,7 +353,7 @@ func TestHarnessExpiredBundleRemovesOnlyManagedAllows(t *testing.T) {
 	}))
 	defer server.Close()
 	var stdout, stderr bytes.Buffer
-	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "t"}, "", false, &stdout, &stderr, server.Client(), nativeHarnessRenderer{}, time.Now)
+	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "t"}, "", false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now)
 	if code != 0 {
 		t.Fatalf("sync exit=%d stderr=%s", code, stderr.String())
 	}
@@ -431,91 +363,6 @@ func TestHarnessExpiredBundleRemovesOnlyManagedAllows(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "renew") {
 		t.Fatalf("expiry output missing renew prompt: %q", stdout.String())
-	}
-}
-
-func TestHarnessRendererGoldenConfigs(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	policySet := json.RawMessage(`{"policies":[{"id":"p1","src_pattern":"*","dst_pattern":"shell:git status","action":"permit","enabled":true},{"id":"p2","src_pattern":"*","dst_pattern":"shell:rm","action":"deny","enabled":true},{"id":"p3","src_pattern":"user:someone","dst_pattern":"shell:secret","action":"permit","enabled":true},{"id":"p4","src_pattern":"*","dst_pattern":"shell:*","action":"permit","enabled":true},{"id":"p5","src_pattern":"*","dst_pattern":"skill:my-skill","action":"permit","enabled":true}]}`)
-	bundle := Bundle{PolicySet: policySet, Harnesses: []bundleHarness{{AgentID: "77777777-7777-7777-7777-777777777777", Kind: "claude_code"}, {AgentID: "88888888-8888-8888-8888-888888888888", Kind: "codex"}, {AgentID: "99999999-9999-9999-9999-999999999999", Kind: "opencode"}}}
-	cases := []struct{ kind, id, input, golden, path string }{
-		{"claude_code", bundle.Harnesses[0].AgentID, "claude.settings.input.json", "claude.settings.golden.json", filepath.Join(t.TempDir(), ".claude", "settings.json")},
-		{"codex", bundle.Harnesses[1].AgentID, "codex.rules.input", "codex.rules.golden", filepath.Join(t.TempDir(), ".codex", "rules", "kei.rules")},
-		{"opencode", bundle.Harnesses[2].AgentID, "opencode.input.json", "opencode.golden.json", filepath.Join(t.TempDir(), ".config", "opencode", "opencode.json")},
-	}
-	for _, tc := range cases {
-		t.Run(tc.kind, func(t *testing.T) {
-			input, err := os.ReadFile(filepath.Join("testdata", "harness", tc.input))
-			if err != nil {
-				t.Fatal(err)
-			}
-			golden, err := os.ReadFile(filepath.Join("testdata", "harness", tc.golden))
-			if err != nil {
-				t.Fatal(err)
-			}
-			got, err := (nativeHarnessRenderer{}).Render(tc.kind, tc.id, bundle, map[string][]byte{tc.path: input})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(bytes.TrimSpace(got.Files[tc.path]), bytes.TrimSpace(golden)) {
-				t.Fatalf("rendered config mismatch\ngot:\n%s\nwant:\n%s", got.Files[tc.path], golden)
-			}
-			if len(got.AllowEntries[tc.path]) == 0 || len(got.DenyEntries[tc.path]) == 0 {
-				t.Fatalf("managed allows/denies = %v / %v", got.AllowEntries[tc.path], got.DenyEntries[tc.path])
-			}
-		})
-	}
-}
-
-// No Kei-managed entries: an existing OpenCode config is left byte-for-byte
-// untouched; a non-existent config is created as an empty object so Kei can
-// put it under management.
-func TestOpencodeRenderNoEntriesLeavesConfigUntouched(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	bundle := Bundle{PolicySet: json.RawMessage(`{"policies":[]}`), Harnesses: []bundleHarness{{AgentID: "99999999-9999-9999-9999-999999999999", Kind: "opencode"}}}
-	id := "99999999-9999-9999-9999-999999999999"
-
-	userCfg := []byte(`{"model":"anthropic/claude-sonnet","permission":{"bash":{"npm":"allow"}}}`)
-	path := filepath.Join(t.TempDir(), ".config", "opencode", "opencode.json")
-	got, err := (nativeHarnessRenderer{}).Render("opencode", id, bundle, map[string][]byte{path: userCfg})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(got.Files[path], userCfg) {
-		t.Fatalf("config changed with no entries:\n%s", got.Files[path])
-	}
-
-	// When no config exists, a minimal empty object is rendered so sync
-	// creates the file and puts it under Kei management.
-	emptyPath := filepath.Join(t.TempDir(), ".config", "opencode", "opencode.json")
-	got2, err := (nativeHarnessRenderer{}).Render("opencode", id, bundle, map[string][]byte{emptyPath: nil})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got2.Files[emptyPath]) != "{}\n" {
-		t.Fatalf("expected empty config, got:\n%s", got2.Files[emptyPath])
-	}
-}
-
-// A user-defined "*" catch-all is preserved (never overridden); Kei-managed
-// entries are still added alongside it.
-func TestOpencodeRenderPreservesUserCatchAll(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	policySet := json.RawMessage(`{"policies":[{"id":"p1","src_pattern":"*","dst_pattern":"shell:git status","action":"permit","enabled":true}]}`)
-	bundle := Bundle{PolicySet: policySet, Harnesses: []bundleHarness{{AgentID: "99999999-9999-9999-9999-999999999999", Kind: "opencode"}}}
-	id := "99999999-9999-9999-9999-999999999999"
-	userCfg := []byte(`{"permission":{"bash":{"*":"allow"}}}`)
-	path := filepath.Join(t.TempDir(), ".config", "opencode", "opencode.json")
-	got, err := (nativeHarnessRenderer{}).Render("opencode", id, bundle, map[string][]byte{path: userCfg})
-	if err != nil {
-		t.Fatal(err)
-	}
-	out := string(got.Files[path])
-	if !strings.Contains(out, `"*": "allow"`) {
-		t.Fatalf("user catch-all not preserved:\n%s", out)
-	}
-	if !strings.Contains(out, `"git status": "allow"`) {
-		t.Fatalf("managed entry missing:\n%s", out)
 	}
 }
 
@@ -540,7 +387,7 @@ func TestHarnessSyncOpencodeCreatesConfigWhenMissing(t *testing.T) {
 	}))
 	defer server.Close()
 	var stdout, stderr bytes.Buffer
-	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "t"}, "opencode", false, &stdout, &stderr, server.Client(), nativeHarnessRenderer{}, time.Now)
+	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "t"}, "opencode", false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now)
 	if code != 0 {
 		t.Fatalf("sync exit=%d stderr=%s", code, stderr.String())
 	}
@@ -559,88 +406,6 @@ func TestHarnessSyncOpencodeCreatesConfigWhenMissing(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "scoped to another harness") {
 		t.Fatalf("printed a scope hint with no scoped policies: %q", stdout.String())
-	}
-}
-
-func TestNativePermissionEntriesSharedHarnessFixtures(t *testing.T) {
-	// FixturePath is the contracts package's exported fixture helper. The
-	// contracts currently ships it from its test source, so resolve the same
-	// testdata file through the module directory for this consumer test.
-	module, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "github.com/HaikeiLabs/kei-connector-contracts").Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	fixturePath := filepath.Join(strings.TrimSpace(string(module)), "harnessmatch", "testdata", "cases.v1.json")
-	data, err := os.ReadFile(fixturePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var suite struct {
-		Cases []struct {
-			ID       string            `json:"id"`
-			Call     harnessmatch.Call `json:"call"`
-			Policies []struct {
-				ID, Src, Dst, Action string
-				Enabled              bool `json:"enabled"`
-			} `json:"policies"`
-			WantOutcome harnessmatch.Outcome `json:"want_outcome"`
-		} `json:"cases"`
-	}
-	if err := json.Unmarshal(data, &suite); err != nil {
-		t.Fatal(err)
-	}
-	for _, tc := range suite.Cases {
-		if tc.WantOutcome != harnessmatch.OutcomePermit && tc.WantOutcome != harnessmatch.OutcomeDeny && tc.WantOutcome != harnessmatch.OutcomeUnmatched && tc.WantOutcome != harnessmatch.OutcomeNotRenderable {
-			continue
-		}
-		if tc.ID != "shell-argv-prefix-permit" && tc.ID != "shell-deny-still-works" && tc.ID != "shell-star-permit-rejected" && tc.ID != "custom-kind-evaluate-via-pdp" {
-			continue
-		}
-		policies := make([]bundlePolicy, 0, len(tc.Policies))
-		for _, p := range tc.Policies {
-			policies = append(policies, bundlePolicy{ID: p.ID, SrcPattern: p.Src, DstPattern: p.Dst, Action: p.Action, Effect: p.Action, Enabled: p.Enabled})
-		}
-		h := &bundleHarness{AgentID: tc.Call.AgentID, Kind: tc.Call.Kind}
-		entries := nativePermissionEntries(tc.Call.Kind, tc.Call.HarnessID, h, policies)
-		allows, denies := entries.Allows, entries.Denies
-		switch tc.WantOutcome {
-		case harnessmatch.OutcomePermit:
-			if len(allows) == 0 {
-				t.Errorf("%s: permit produced no allow", tc.ID)
-			}
-		case harnessmatch.OutcomeDeny:
-			if len(denies) == 0 {
-				t.Errorf("%s: deny produced no deny", tc.ID)
-			}
-		default:
-			if len(allows)+len(denies) != 0 {
-				t.Errorf("%s: %s rendered allow=%v deny=%v", tc.ID, tc.WantOutcome, allows, denies)
-			}
-		}
-	}
-}
-
-func TestHarnessNonPromptingModesWarnAndDoNotBlock(t *testing.T) {
-	cases := []struct {
-		kind, config string
-		want         string
-	}{
-		{"codex", "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\n", "codex"},
-		{"claude_code", `{"permissions":{"defaultMode":"bypassPermissions"}}`, "claude_code"},
-		{"claude_code", `{"permissions":{"defaultMode":"dontAsk"}}`, "claude_code"},
-		{"opencode", `{"permission":{"*":"allow"}}`, "opencode"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.kind+tc.config, func(t *testing.T) {
-			var out bytes.Buffer
-			if !warnNonPromptingMode(tc.kind, []byte(tc.config), &out) || !strings.Contains(out.String(), "ADR-029 OQ1") || !strings.Contains(out.String(), tc.want) {
-				t.Fatalf("warning = %q", out.String())
-			}
-		})
-	}
-	var out bytes.Buffer
-	if warnNonPromptingMode("codex", []byte("approval_policy = \"on-request\"\nsandbox_mode = \"workspace-write\""), &out) || out.Len() != 0 {
-		t.Fatalf("unexpected warning for prompting config: %q", out.String())
 	}
 }
 
@@ -665,7 +430,7 @@ func TestHarnessSyncCustomSkipsFiles(t *testing.T) {
 	defer server.Close()
 	var stdout, stderr bytes.Buffer
 	// HP-C11: custom is only synced when explicitly selected with --harness.
-	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "runtime-secret"}, "custom", false, &stdout, &stderr, server.Client(), rendererMustNotRun{}, time.Now)
+	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "runtime-secret"}, "custom", false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now)
 	if code != 0 {
 		t.Fatalf("sync exit=%d stderr=%q", code, stderr.String())
 	}
@@ -704,7 +469,7 @@ func TestSyncReplacesStaleHarnessHook(t *testing.T) {
 	}))
 	defer server.Close()
 	var stdout, stderr bytes.Buffer
-	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "t"}, "claude_code", false, &stdout, &stderr, server.Client(), nativeHarnessRenderer{}, time.Now)
+	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "t"}, "claude_code", false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now)
 	if code != 0 {
 		t.Fatalf("sync exit=%d stderr=%s", code, stderr.String())
 	}
@@ -717,24 +482,6 @@ func TestSyncReplacesStaleHarnessHook(t *testing.T) {
 	}
 	if !strings.Contains(string(updated), "kei-proxy hook claude") {
 		t.Fatalf("new kind-only hook missing: %s", updated)
-	}
-}
-
-func TestUnifiedDiff(t *testing.T) {
-	before := []string{"a", "b", "c", "d"}
-	after := []string{"a", "B", "c", "d", "e"}
-	diff := unifiedDiff(before, after, 1)
-	if !strings.Contains(diff, "@@") {
-		t.Fatalf("missing hunk header: %s", diff)
-	}
-	if !strings.Contains(diff, "-b\n") || !strings.Contains(diff, "+B\n") {
-		t.Fatalf("missing replacement: %s", diff)
-	}
-	if !strings.Contains(diff, "+e\n") {
-		t.Fatalf("missing insertion: %s", diff)
-	}
-	if got := unifiedDiff(before, before, 3); got != "" {
-		t.Fatalf("expected empty diff for equal inputs, got: %s", got)
 	}
 }
 
@@ -795,378 +542,6 @@ func TestBundleFetchHintKnownCodes(t *testing.T) {
 	}
 }
 
-// TestOpencodeConfigPath verifies that opencodeConfigPath resolves configs in
-// the correct XDG-aware order.
-func TestOpencodeConfigPath(t *testing.T) {
-	type env struct{ name, value string }
-
-	cases := []struct {
-		name  string
-		envs  []env
-		chdir string   // relative to root
-		files []string // relative to root; file content is irrelevant (empty)
-		dirs  []string // relative to root; directories to create
-		// wantPath is relative to root; empty means want default ~/.config/opencode/opencode.json
-		wantPath   string
-		wantExists bool
-	}{
-		{
-			name:       "OPENCODE_CONFIG env var",
-			envs:       []env{{"OPENCODE_CONFIG", "custom.json"}},
-			files:      []string{"custom.json"},
-			wantPath:   "custom.json",
-			wantExists: true,
-		},
-		{
-			name:       "OPENCODE_CONFIG missing file",
-			envs:       []env{{"OPENCODE_CONFIG", "missing.json"}},
-			wantPath:   "missing.json",
-			wantExists: false,
-		},
-		{
-			name:       "XDG_CONFIG_HOME opencode.json",
-			envs:       []env{{"XDG_CONFIG_HOME", "xdgconf"}},
-			dirs:       []string{"xdgconf/opencode"},
-			files:      []string{"xdgconf/opencode/opencode.json"},
-			wantPath:   "xdgconf/opencode/opencode.json",
-			wantExists: true,
-		},
-		{
-			name:       "XDG_CONFIG_HOME opencode.jsonc",
-			envs:       []env{{"XDG_CONFIG_HOME", "xdgconf"}},
-			dirs:       []string{"xdgconf/opencode"},
-			files:      []string{"xdgconf/opencode/opencode.jsonc"},
-			wantPath:   "xdgconf/opencode/opencode.jsonc",
-			wantExists: true,
-		},
-		{
-			name:       "XDG_CONFIG_HOME prefers json over jsonc",
-			envs:       []env{{"XDG_CONFIG_HOME", "xdgconf"}},
-			dirs:       []string{"xdgconf/opencode"},
-			files:      []string{"xdgconf/opencode/opencode.json", "xdgconf/opencode/opencode.jsonc"},
-			wantPath:   "xdgconf/opencode/opencode.json",
-			wantExists: true,
-		},
-		{
-			name:       "default HOME .config opencode.json",
-			envs:       []env{},
-			dirs:       []string{"home/.config/opencode"},
-			files:      []string{"home/.config/opencode/opencode.json"},
-			wantPath:   "home/.config/opencode/opencode.json",
-			wantExists: true,
-		},
-		{
-			name:       "default HOME .config opencode.jsonc",
-			envs:       []env{},
-			dirs:       []string{"home/.config/opencode"},
-			files:      []string{"home/.config/opencode/opencode.jsonc"},
-			wantPath:   "home/.config/opencode/opencode.jsonc",
-			wantExists: true,
-		},
-		{
-			name:       "project level opencode.json",
-			envs:       []env{},
-			dirs:       []string{"project"},
-			files:      []string{"project/opencode.json"},
-			chdir:      "project",
-			wantPath:   "project/opencode.json",
-			wantExists: true,
-		},
-		{
-			name:       "project level opencode.jsonc",
-			envs:       []env{},
-			dirs:       []string{"project"},
-			files:      []string{"project/opencode.jsonc"},
-			chdir:      "project",
-			wantPath:   "project/opencode.jsonc",
-			wantExists: true,
-		},
-		{
-			name:       "project walk-up to git root",
-			envs:       []env{},
-			dirs:       []string{"repo/subdir"},
-			files:      []string{"repo/opencode.json"},
-			chdir:      "repo/subdir",
-			wantPath:   "repo/opencode.json",
-			wantExists: true,
-		},
-		{
-			name:       "project stops at git root",
-			envs:       []env{},
-			dirs:       []string{"repo/subdir", "parent", "repo/.git"},
-			files:      []string{"parent/opencode.json"},
-			chdir:      "repo/subdir",
-			wantPath:   "",
-			wantExists: false,
-		},
-		{
-			name:       "project stops at filesystem root",
-			envs:       []env{},
-			dirs:       []string{"subdir"},
-			chdir:      "subdir",
-			wantPath:   "",
-			wantExists: false,
-		},
-		{
-			name:       "XDG_CONFIG_HOME preferred over HOME default",
-			envs:       []env{{"XDG_CONFIG_HOME", "xdgconf"}},
-			dirs:       []string{"xdgconf/opencode", "home/.config/opencode"},
-			files:      []string{"xdgconf/opencode/opencode.json", "home/.config/opencode/opencode.json"},
-			wantPath:   "xdgconf/opencode/opencode.json",
-			wantExists: true,
-		},
-		{
-			name:       "OPENCODE_CONFIG overrides XDG and default",
-			envs:       []env{{"OPENCODE_CONFIG", "override.json"}, {"XDG_CONFIG_HOME", "xdgconf"}},
-			dirs:       []string{"xdgconf/opencode"},
-			files:      []string{"override.json", "xdgconf/opencode/opencode.json"},
-			wantPath:   "override.json",
-			wantExists: true,
-		},
-		{
-			name:       "no config exists returns default path",
-			envs:       []env{},
-			dirs:       []string{},
-			wantPath:   "",
-			wantExists: false,
-		},
-		{
-			name:       "XDG_CONFIG_HOME set but no config returns XDG default path",
-			envs:       []env{{"XDG_CONFIG_HOME", "xdgconf"}},
-			dirs:       []string{"xdgconf/opencode"},
-			wantPath:   "xdgconf/opencode/opencode.json",
-			wantExists: false,
-		},
-		{
-			name:       "project config found when XDG and HOME have none",
-			envs:       []env{{"XDG_CONFIG_HOME", "xdgconf"}},
-			dirs:       []string{"xdgconf/opencode", "project"},
-			files:      []string{"project/opencode.json"},
-			chdir:      "project",
-			wantPath:   "project/opencode.json",
-			wantExists: true,
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
-
-			for _, d := range tc.dirs {
-				if err := os.MkdirAll(filepath.Join(root, d), 0o700); err != nil {
-					t.Fatal(err)
-				}
-			}
-			for _, f := range tc.files {
-				dir := filepath.Dir(filepath.Join(root, f))
-				if err := os.MkdirAll(dir, 0o700); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(filepath.Join(root, f), nil, 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}
-
-			t.Setenv("HOME", filepath.Join(root, "home"))
-			// Always clear XDG_CONFIG_HOME and OPENCODE_CONFIG first so no
-			// system env leaks in; the test case override restores it.
-			t.Setenv("XDG_CONFIG_HOME", "")
-			t.Setenv("OPENCODE_CONFIG", "")
-			for _, e := range tc.envs {
-				t.Setenv(e.name, filepath.Join(root, e.value))
-			}
-
-			if tc.chdir != "" {
-				t.Chdir(filepath.Join(root, tc.chdir))
-			} else {
-				t.Chdir(root)
-			}
-
-			got, exists := opencodeConfigPath()
-			var want string
-			if tc.wantPath != "" {
-				want = filepath.Join(root, tc.wantPath)
-			} else {
-				// Default path when none exists
-				want = filepath.Join(root, "home", ".config", "opencode", "opencode.json")
-			}
-			if got != want {
-				t.Errorf("opencodeConfigPath() path = %q, want %q", got, want)
-			}
-			if exists != tc.wantExists {
-				t.Errorf("opencodeConfigPath() exists = %v, want %v", exists, tc.wantExists)
-			}
-		})
-	}
-}
-
-func TestOpencodeConfigDir(t *testing.T) {
-	type env struct{ name, value string }
-
-	cases := []struct {
-		name string
-		envs []env
-		want func(root string) string
-	}{
-		{
-			name: "OPENCODE_CONFIG sets dir",
-			envs: []env{{"OPENCODE_CONFIG", "some/path/opencode.json"}},
-			want: func(root string) string { return filepath.Join(root, "some", "path") },
-		},
-		{
-			name: "XDG_CONFIG_HOME",
-			envs: []env{{"XDG_CONFIG_HOME", "xdgconf"}},
-			want: func(root string) string { return filepath.Join(root, "xdgconf", "opencode") },
-		},
-		{
-			name: "HOME default",
-			envs: []env{},
-			want: func(root string) string { return filepath.Join(root, "home", ".config", "opencode") },
-		},
-		{
-			name: "OPENCODE_CONFIG overrides XDG",
-			envs: []env{{"OPENCODE_CONFIG", "override.json"}, {"XDG_CONFIG_HOME", "xdgconf"}},
-			want: func(root string) string { return filepath.Dir(filepath.Join(root, "override.json")) },
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
-			t.Setenv("HOME", filepath.Join(root, "home"))
-			t.Setenv("XDG_CONFIG_HOME", "")
-			t.Setenv("OPENCODE_CONFIG", "")
-			for _, e := range tc.envs {
-				t.Setenv(e.name, filepath.Join(root, e.value))
-			}
-			got := opencodeConfigDir()
-			want := tc.want(root)
-			if got != want {
-				t.Errorf("opencodeConfigDir() = %q, want %q", got, want)
-			}
-		})
-	}
-}
-
-func TestOpencodeConfigName(t *testing.T) {
-	names := opencodeConfigName()
-	if len(names) < 2 {
-		t.Fatalf("opencodeConfigName() = %v, want at least [opencode.json, opencode.jsonc]", names)
-	}
-	if names[0] != "opencode.json" {
-		t.Errorf("opencodeConfigName()[0] = %q, want %q", names[0], "opencode.json")
-	}
-	if names[1] != "opencode.jsonc" {
-		t.Errorf("opencodeConfigName()[1] = %q, want %q", names[1], "opencode.jsonc")
-	}
-}
-
-type rendererMustNotRun struct{}
-
-func (rendererMustNotRun) Render(string, string, Bundle, map[string][]byte) (renderedHarness, error) {
-	return renderedHarness{}, fmt.Errorf("custom harness renderer must not run")
-}
-func (rendererMustNotRun) HookSpec(string, string) (map[string][]byte, error) {
-	return nil, fmt.Errorf("custom harness hook must not run")
-}
-
-// HAI-425: an owner-like bundle (tool:/skill: denies, Claude-scoped and
-// human-sourced entries, shell: entries) renders the shell: policies that
-// apply to Codex as prefix rules and names every other Codex policy as not
-// enforceable instead of silently writing nothing.
-func TestCodexRenderOwnerBundleGolden(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	policySet, err := os.ReadFile(filepath.Join("testdata", "harness", "codex-owner-bundle.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	golden, err := os.ReadFile(filepath.Join("testdata", "harness", "codex-owner.rules.golden"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	rulesPath := filepath.Join(t.TempDir(), ".codex", "rules", "kei.rules")
-	got, err := (nativeHarnessRenderer{}).Render("codex", "", Bundle{PolicySet: policySet}, map[string][]byte{rulesPath: nil})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(got.Files[rulesPath], golden) {
-		t.Fatalf("rendered kei.rules mismatch\ngot:\n%s\nwant:\n%s", got.Files[rulesPath], golden)
-	}
-	wantUnenforceable := []string{"allow kei-cli skill", "deny codex shell tool", "deny every shell command", "deny prod-deploy skill", "deny web fetch", "deny web search"}
-	if strings.Join(got.Unenforceable, "|") != strings.Join(wantUnenforceable, "|") {
-		t.Fatalf("unenforceable = %q, want %q", got.Unenforceable, wantUnenforceable)
-	}
-}
-
-func TestCodexRenderDenyIsForbidden(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	policySet := json.RawMessage(`{"policies":[{"id":"p1","name":"deny curl","src_pattern":"*","dst_pattern":"shell:curl","effect":"deny","enabled":true}]}`)
-	rulesPath := filepath.Join(t.TempDir(), ".codex", "rules", "kei.rules")
-	got, err := (nativeHarnessRenderer{}).Render("codex", "", Bundle{PolicySet: policySet}, map[string][]byte{rulesPath: nil})
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "# managed by kei harness sync; edits are overwritten\nprefix_rule(pattern=[\"curl\"], decision=\"forbidden\", justification=\"kei policy\")\n"
-	if string(got.Files[rulesPath]) != want {
-		t.Fatalf("kei.rules = %q, want %q", got.Files[rulesPath], want)
-	}
-	if strings.Join(got.DenyEntries[rulesPath], "|") != `["curl"]` || len(got.AllowEntries[rulesPath]) != 0 {
-		t.Fatalf("managed allows/denies = %v / %v", got.AllowEntries[rulesPath], got.DenyEntries[rulesPath])
-	}
-}
-
-func TestSplitArgvQuotes(t *testing.T) {
-	cases := []struct {
-		in   string
-		want []string
-	}{
-		{"git status", []string{"git", "status"}},
-		{"  git   status  ", []string{"git", "status"}},
-		{`git commit -m "wip fix"`, []string{"git", "commit", "-m", "wip fix"}},
-		{`echo 'a "b" c'`, []string{"echo", `a "b" c`}},
-		{`echo "say \"hi\""`, []string{"echo", `say "hi"`}},
-		{`echo a\ b`, []string{"echo", "a b"}},
-		{`echo pre"fix"'ed'`, []string{"echo", "prefixed"}},
-		{`echo ""`, []string{"echo", ""}},
-	}
-	for _, tc := range cases {
-		got, err := splitArgv(tc.in)
-		if err != nil {
-			t.Errorf("splitArgv(%q) error: %v", tc.in, err)
-			continue
-		}
-		if strings.Join(got, "\x00") != strings.Join(tc.want, "\x00") || len(got) != len(tc.want) {
-			t.Errorf("splitArgv(%q) = %q, want %q", tc.in, got, tc.want)
-		}
-	}
-	for _, bad := range []string{`echo "open`, `echo 'open`} {
-		if _, err := splitArgv(bad); err == nil {
-			t.Errorf("splitArgv(%q) accepted an unterminated quote", bad)
-		}
-	}
-	if _, ok := codexArgv(`shell:echo "open`); ok {
-		t.Error("codexArgv accepted an unterminated quote")
-	}
-}
-
-// An empty bundle still renders the Kei-owned kei.rules, holding only the
-// managed header, so a policy removal clears previously managed rules.
-func TestCodexRenderEmptyBundleWritesEmptyManagedFile(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	rulesPath := filepath.Join(t.TempDir(), ".codex", "rules", "kei.rules")
-	prior := []byte("# managed by kei harness sync; edits are overwritten\nprefix_rule(pattern=[\"rm\"], decision=\"forbidden\", justification=\"kei policy\")\n")
-	got, err := (nativeHarnessRenderer{}).Render("codex", "", Bundle{PolicySet: json.RawMessage(`{"policies":[]}`)}, map[string][]byte{rulesPath: prior})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := "# managed by kei harness sync; edits are overwritten\n"; string(got.Files[rulesPath]) != want {
-		t.Fatalf("kei.rules = %q, want %q", got.Files[rulesPath], want)
-	}
-	if len(got.Unenforceable) != 0 {
-		t.Fatalf("unenforceable = %q", got.Unenforceable)
-	}
-}
-
 func TestHarnessSyncCodexWritesKeiRulesAndReportsUnenforceable(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -1182,7 +557,7 @@ func TestHarnessSyncCodexWritesKeiRulesAndReportsUnenforceable(t *testing.T) {
 	if err := os.WriteFile(keiRules, []byte("# managed by kei harness sync; edits are overwritten\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	policySet, err := os.ReadFile(filepath.Join("testdata", "harness", "codex-owner-bundle.json"))
+	policySet, err := os.ReadFile(filepath.Join(harnessTestdata, "codex-owner-bundle.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1195,11 +570,11 @@ func TestHarnessSyncCodexWritesKeiRulesAndReportsUnenforceable(t *testing.T) {
 	}))
 	defer server.Close()
 	var stdout, stderr bytes.Buffer
-	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "t"}, "codex", false, &stdout, &stderr, server.Client(), nativeHarnessRenderer{}, time.Now)
+	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "t"}, "codex", false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now)
 	if code != 0 {
 		t.Fatalf("sync exit=%d stderr=%s", code, stderr.String())
 	}
-	golden, err := os.ReadFile(filepath.Join("testdata", "harness", "codex-owner.rules.golden"))
+	golden, err := os.ReadFile(filepath.Join(harnessTestdata, "codex-owner.rules.golden"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1229,28 +604,103 @@ func TestHarnessSyncCodexWritesKeiRulesAndReportsUnenforceable(t *testing.T) {
 	}
 }
 
-// Policies whose src names a different harness are counted per harness so
-// sync can say why they were not rendered.
-func TestRenderCountsPoliciesScopedToAnotherHarness(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	policySet, err := os.ReadFile(filepath.Join("testdata", "harness", "codex-owner-bundle.json"))
+// harnessTestdata holds the renderer golden files, which live with the
+// renderers in internal/harness.
+var harnessTestdata = filepath.Join("..", "harness", "testdata", "harness")
+
+// testLedgerPath is where harness sync keeps its ledger for id under home.
+func testLedgerPath(home, id string) string {
+	return filepath.Join(home, ".config", "kei", "harness-sync", id+".json")
+}
+
+// writeTestLedger writes a harness sync ledger as a previous sync would.
+func writeTestLedger(t *testing.T, home, id string, ledger map[string]any) {
+	t.Helper()
+	data, err := json.Marshal(ledger)
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings := filepath.Join(t.TempDir(), ".claude", "settings.json")
-	got, err := (nativeHarnessRenderer{}).Render("claude_code", "", Bundle{PolicySet: policySet}, map[string][]byte{settings: nil})
-	if err != nil {
+	path := testLedgerPath(home, id)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if want := (otherHarnessScope{Count: 3, Example: "harness:codex"}); got.OtherHarness != want {
-		t.Fatalf("claude_code other-harness scope = %+v, want %+v", got.OtherHarness, want)
-	}
-	rules := filepath.Join(t.TempDir(), ".codex", "rules", "kei.rules")
-	got, err = (nativeHarnessRenderer{}).Render("codex", "", Bundle{PolicySet: policySet}, map[string][]byte{rules: nil})
-	if err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if want := (otherHarnessScope{Count: 1, Example: "harness:claude_code"}); got.OtherHarness != want {
-		t.Fatalf("codex other-harness scope = %+v, want %+v", got.OtherHarness, want)
+}
+
+// remoteHarness stands in for a harness whose native store is a remote admin
+// API (OpenWebUI, HAI-430): its target is a URL and Apply records what sync
+// handed it instead of writing files.
+type remoteHarness struct {
+	url     string
+	applied *[]harness.ApplyOpts
+	rules   *[]harness.Rendered
+}
+
+func (remoteHarness) Kind() string                           { return "remote_test" }
+func (remoteHarness) Detect(harness.Env) bool                { return true }
+func (remoteHarness) HookSpec(harness.Env) *harness.HookSpec { return nil }
+func (remoteHarness) ImportRules(harness.Env, string) ([]harness.Rule, error) {
+	return nil, harness.ErrNoNativeStore
+}
+func (h remoteHarness) Targets(harness.Env) ([]harness.Target, error) {
+	return []harness.Target{{URL: h.url}}, nil
+}
+func (h remoteHarness) Render(b harness.Bundle) (harness.Rendered, error) {
+	return harness.Rendered{Kind: h.Kind(), Allows: []string{"git"}, BundleVersion: b.BundleVersion, BundleDigest: b.PayloadDigest}, nil
+}
+func (h remoteHarness) Apply(_ context.Context, r harness.Rendered, opts harness.ApplyOpts) (harness.Result, error) {
+	*h.applied = append(*h.applied, opts)
+	*h.rules = append(*h.rules, r)
+	targets, _ := h.Targets(opts.Env)
+	fmt.Fprintf(opts.Out, "would PATCH %s\n", targets[0].URL)
+	return harness.Result{Notes: []string{"remote: applied"}, Warnings: []string{"remote: warning"}}, nil
+}
+
+// A harness whose target is a remote API plugs into sync through the same
+// interface: it is detected, rendered, applied (dry run honoured), its sync is
+// reported, and its notes and warnings are printed.
+func TestHarnessSyncDrivesRemoteHarness(t *testing.T) {
+	const agentID = "77777777-7777-7777-7777-777777777777"
+	var reported int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/runtime/whoami":
+			_, _ = w.Write([]byte(`{"id":"runtime-id","org_id":"org-id","platform":"cli"}`))
+		case r.URL.Path == "/api/v1/runtime/policy-bundles/current":
+			_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v1","bundle_id":"b","bundle_version":3,"policy_revision":1,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harness_match_semantics":"kei.harness-match/v1","harnesses":[{"agent_id":"` + agentID + `","kind":"remote_test"}],"policy_set":{"policies":[]}}`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/api/v1/runtime/harnesses/"+agentID:
+			reported++
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	var applied []harness.ApplyOpts
+	var rendered []harness.Rendered
+	registry := harness.NewRegistry(remoteHarness{url: "https://openwebui.example/api/v1/configs", applied: &applied, rules: &rendered})
+	env := harness.Env{Home: t.TempDir()}
+	for _, dryRun := range []bool{true, false} {
+		var stdout, stderr bytes.Buffer
+		code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "t"}, "", dryRun, &stdout, &stderr, server.Client(), registry, env, time.Now)
+		if code != 0 {
+			t.Fatalf("dryRun=%v exit=%d stderr=%s", dryRun, code, stderr.String())
+		}
+		if want := "would PATCH https://openwebui.example/api/v1/configs\nremote: applied\n"; stdout.String() != want {
+			t.Fatalf("dryRun=%v stdout = %q, want %q", dryRun, stdout.String(), want)
+		}
+		if stderr.String() != "remote: warning\n" {
+			t.Fatalf("dryRun=%v stderr = %q", dryRun, stderr.String())
+		}
+	}
+	if len(applied) != 2 || !applied[0].DryRun || applied[1].DryRun || applied[1].Env.Home != env.Home {
+		t.Fatalf("apply opts = %+v", applied)
+	}
+	if rendered[1].BundleVersion != 3 || !strings.HasPrefix(rendered[1].BundleDigest, "sha256:") {
+		t.Fatalf("rendered = %+v", rendered[1])
+	}
+	if reported != 1 {
+		t.Fatalf("sync reported %d times, want once (not on dry run)", reported)
 	}
 }

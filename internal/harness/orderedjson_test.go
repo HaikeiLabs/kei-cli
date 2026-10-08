@@ -1,4 +1,4 @@
-package app
+package harness
 
 import (
 	"strings"
