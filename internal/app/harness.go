@@ -33,6 +33,18 @@ type renderedHarness struct {
 	Files        map[string][]byte
 	AllowEntries map[string][]string
 	DenyEntries  map[string][]string
+	// Unenforceable names the policies that apply to this harness but have no
+	// native equivalent (for example skill: and tool: policies in Codex).
+	Unenforceable []string
+	// OtherHarness counts the policies scoped to a different harness.
+	OtherHarness otherHarnessScope
+}
+
+// otherHarnessScope counts policies whose src names a different harness, with
+// one such src as an example for the sync hint.
+type otherHarnessScope struct {
+	Count   int
+	Example string
 }
 
 // Bundle is the unsigned policy-bundle/v1 payload fetched by both the CLI and runtime.
@@ -55,6 +67,7 @@ type Bundle struct {
 
 type bundlePolicy struct {
 	ID         string `json:"id"`
+	Name       string `json:"name"`
 	SrcPattern string `json:"src_pattern"`
 	DstPattern string `json:"dst_pattern"`
 	Effect     string `json:"effect"`
@@ -719,6 +732,12 @@ func syncOneHarness(bundle Bundle, h bundleHarness, dryRun bool, stdout io.Write
 	if err != nil {
 		return err
 	}
+	for _, name := range rendered.Unenforceable {
+		fmt.Fprintf(stdout, "not enforceable in %s: %s\n", harnessDisplayName(h.Kind), name)
+	}
+	if other := rendered.OtherHarness; other.Count > 0 {
+		fmt.Fprintf(stdout, "%s: %d policies scoped to another harness (e.g. %s); widen src to harness:* to share them\n", harnessDisplayName(h.Kind), other.Count, other.Example)
+	}
 	outputs := rendered.Files
 	hooks, err := renderer.HookSpec(h.Kind, h.AgentID)
 	if err != nil {
@@ -755,22 +774,6 @@ func syncOneHarness(bundle Bundle, h bundleHarness, dryRun bool, stdout io.Write
 			}
 			if err := os.WriteFile(path, managed, 0o600); err != nil {
 				return err
-			}
-		}
-	}
-	// If codex has no rules, remove a previously-managed kei.rules so we don't
-	// leave a stale or empty file behind (Render skips writing one).
-	if h.Kind == "codex" {
-		home, _ := os.UserHomeDir()
-		rulesPath := filepath.Join(home, ".codex", "rules", "kei.rules")
-		if _, ok := outputs[rulesPath]; !ok {
-			if cfg, err := os.ReadFile(rulesPath); err == nil && bytes.Contains(cfg, []byte("managed by kei harness sync")) {
-				fmt.Fprintf(stdout, "%s: removed (no Kei-managed rules)\n", rulesPath)
-				if !dryRun {
-					if err := os.Remove(rulesPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-						return err
-					}
-				}
 			}
 		}
 	}
@@ -1241,15 +1244,15 @@ func (nativeHarnessRenderer) Render(kind, harnessID string, bundle Bundle, files
 			break
 		}
 	}
-	allows, denies := nativePermissionEntries(kind, harnessID, selected, set.Policies)
-	result := renderedHarness{Files: map[string][]byte{}, AllowEntries: map[string][]string{}, DenyEntries: map[string][]string{}}
+	entries := nativePermissionEntries(kind, harnessID, selected, set.Policies)
+	allows, denies := entries.Allows, entries.Denies
+	result := renderedHarness{Files: map[string][]byte{}, AllowEntries: map[string][]string{}, DenyEntries: map[string][]string{}, Unenforceable: entries.Unenforceable, OtherHarness: entries.OtherHarness}
 	for path, cfg := range files {
 		switch {
 		case strings.HasSuffix(path, filepath.Join(".codex", "rules", "kei.rules")):
-			if len(allows) == 0 && len(denies) == 0 {
-				// No rules: don't write an empty kei.rules.
-				continue
-			}
+			// kei.rules is Kei-owned and always rendered whole, even with no
+			// rules, so a policy removal clears the previous managed rules.
+			// The user's default.rules is never touched.
 			var rules strings.Builder
 			rules.WriteString("# managed by kei harness sync; edits are overwritten\n")
 			for _, entry := range allows {
@@ -1300,7 +1303,16 @@ func (nativeHarnessRenderer) HookSpec(kind, harnessID string) (map[string][]byte
 
 func mustJSON(value any) []byte { data, _ := json.MarshalIndent(value, "", "  "); return data }
 
-func nativePermissionEntries(kind, harnessID string, harness *bundleHarness, policies []bundlePolicy) (allows, denies []string) {
+// nativeEntries is the native rendering of a policy set for one harness kind.
+type nativeEntries struct {
+	Allows        []string
+	Denies        []string
+	Unenforceable []string // names of applicable policies with no native form
+	OtherHarness  otherHarnessScope
+}
+
+func nativePermissionEntries(kind, harnessID string, harness *bundleHarness, policies []bundlePolicy) nativeEntries {
+	var out nativeEntries
 	for _, policy := range policies {
 		effect := policy.Effect
 		if effect == "" {
@@ -1314,7 +1326,24 @@ func nativePermissionEntries(kind, harnessID string, harness *bundleHarness, pol
 		scope := policy.Scope.AgentID
 		matchPolicy := harnessmatch.Policy{ID: policy.ID, Src: policy.SrcPattern, Dst: dst, Action: effect, Enabled: policy.Enabled, Scope: scope}
 		if applies, _ := harnessmatch.MatchSrc(matchPolicy.Src, call); !applies {
+			if strings.HasPrefix(policy.SrcPattern, "harness:") {
+				out.OtherHarness.Count++
+				if out.OtherHarness.Example == "" || policy.SrcPattern < out.OtherHarness.Example {
+					out.OtherHarness.Example = policy.SrcPattern
+				}
+			}
 			continue
+		}
+		if kind == "codex" {
+			// Codex rules can only express argv prefix rules. Every other
+			// policy that applies to Codex is reported, never dropped silently.
+			if scope != nil && *scope != call.AgentID {
+				continue
+			}
+			if _, ok := codexArgv(dst); !ok {
+				out.Unenforceable = append(out.Unenforceable, policyDisplayName(policy))
+				continue
+			}
 		}
 		result := harnessmatch.Evaluate(call, []harnessmatch.Policy{matchPolicy})
 		if result.Outcome != harnessmatch.OutcomePermit && result.Outcome != harnessmatch.OutcomeDeny {
@@ -1325,6 +1354,9 @@ func nativePermissionEntries(kind, harnessID string, harness *bundleHarness, pol
 		}
 		entry := ""
 		switch {
+		case kind == "codex":
+			argv, _ := codexArgv(dst)
+			entry = codexPattern(argv)
 		case strings.HasPrefix(dst, "shell:"):
 			tokens := strings.Fields(strings.TrimPrefix(dst, "shell:"))
 			if len(tokens) > 0 && tokens[0] != "*" {
@@ -1367,14 +1399,114 @@ func nativePermissionEntries(kind, harnessID string, harness *bundleHarness, pol
 			continue
 		}
 		if result.Outcome == harnessmatch.OutcomePermit {
-			allows = append(allows, entry)
+			out.Allows = append(out.Allows, entry)
 		} else {
-			denies = append(denies, entry)
+			out.Denies = append(out.Denies, entry)
 		}
 	}
-	sort.Strings(allows)
-	sort.Strings(denies)
-	return
+	sort.Strings(out.Allows)
+	sort.Strings(out.Denies)
+	sort.Strings(out.Unenforceable)
+	return out
+}
+
+func policyDisplayName(policy bundlePolicy) string {
+	if policy.Name != "" {
+		return policy.Name
+	}
+	return policy.ID
+}
+
+func harnessDisplayName(kind string) string {
+	switch kind {
+	case "claude_code":
+		return "Claude Code"
+	case "codex":
+		return "Codex"
+	case "opencode":
+		return "OpenCode"
+	default:
+		return kind
+	}
+}
+
+// codexArgv returns the argv prefix a Codex prefix_rule can express for dst.
+// Only a concrete shell:<prefix> qualifies: Codex rules have no wildcard, so
+// shell:*, *, skill:, tool:, path: and mcp: policies are not expressible.
+func codexArgv(dst string) ([]string, bool) {
+	if !strings.HasPrefix(dst, "shell:") {
+		return nil, false
+	}
+	argv, err := splitArgv(strings.TrimPrefix(dst, "shell:"))
+	if err != nil || len(argv) == 0 || argv[0] == "*" {
+		return nil, false
+	}
+	return argv, true
+}
+
+// codexPattern renders argv as a Starlark list for prefix_rule(pattern=...).
+func codexPattern(argv []string) string {
+	quoted := make([]string, len(argv))
+	for i, token := range argv {
+		quoted[i] = strconv.Quote(token)
+	}
+	return "[" + strings.Join(quoted, ", ") + "]"
+}
+
+// splitArgv splits a command prefix into argv tokens the way a POSIX shell
+// does for words: whitespace separates tokens, single quotes are literal,
+// double quotes allow backslash escapes, and a backslash escapes the next
+// character outside quotes. An unterminated quote is an error.
+func splitArgv(s string) ([]string, error) {
+	var argv []string
+	var token strings.Builder
+	inToken := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == ' ' || c == '\t' || c == '\n':
+			if inToken {
+				argv = append(argv, token.String())
+				token.Reset()
+				inToken = false
+			}
+		case c == '\'':
+			end := strings.IndexByte(s[i+1:], '\'')
+			if end < 0 {
+				return nil, fmt.Errorf("unterminated single quote in %q", s)
+			}
+			token.WriteString(s[i+1 : i+1+end])
+			i += end + 1
+			inToken = true
+		case c == '"':
+			closed := false
+			for i++; i < len(s); i++ {
+				if s[i] == '"' {
+					closed = true
+					break
+				}
+				if s[i] == '\\' && i+1 < len(s) && strings.IndexByte("\"\\$`", s[i+1]) >= 0 {
+					i++
+				}
+				token.WriteByte(s[i])
+			}
+			if !closed {
+				return nil, fmt.Errorf("unterminated double quote in %q", s)
+			}
+			inToken = true
+		case c == '\\' && i+1 < len(s):
+			i++
+			token.WriteByte(s[i])
+			inToken = true
+		default:
+			token.WriteByte(c)
+			inToken = true
+		}
+	}
+	if inToken {
+		argv = append(argv, token.String())
+	}
+	return argv, nil
 }
 
 func rendererCall(kind, harnessID string, harness *bundleHarness, dst string) harnessmatch.Call {
@@ -1410,15 +1542,8 @@ func shellNativeEntry(kind, prefix string) string {
 			return "Bash(*)"
 		}
 		return "Bash(" + prefix + ":*)"
-	case "opencode":
-		return prefix
 	default:
-		tokens := strings.Fields(prefix)
-		quoted := make([]string, len(tokens))
-		for i, token := range tokens {
-			quoted[i] = strconv.Quote(token)
-		}
-		return "[" + strings.Join(quoted, ", ") + "]"
+		return prefix
 	}
 }
 

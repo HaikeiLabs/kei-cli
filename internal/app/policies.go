@@ -18,6 +18,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/google/uuid"
+	"golang.org/x/term"
 )
 
 var codexTokenRe = regexp.MustCompile(`"([^"]*)"`)
@@ -671,7 +672,7 @@ func runPoliciesImport(args []string, stdout, stderr io.Writer, stdin io.Reader,
 	workspace := policiesWorkspaceFlag(flags)
 	from := flags.String("from", "", "harness to import from: claude, codex, or opencode")
 	file := flags.String("file", "", "override the source file or directory")
-	src := flags.String("src", "", "source pattern (default: harness:<kind>)")
+	src := flags.String("src", "", "source pattern (default: harness:<kind>; harness:* shares the rules with every harness)")
 	out := flags.String("out", "", "write the proposed policy-set JSON to this file")
 	apply := flags.Bool("apply", false, "create the imported policies (default: dry run)")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
@@ -707,6 +708,18 @@ func runPoliciesImport(args []string, stdout, stderr io.Writer, stdin io.Reader,
 		fmt.Fprintln(stdout, "No policies found to import.")
 		return 0
 	}
+	reader := bufio.NewReader(stdin)
+	if *src == "" && *apply && stdinIsInteractive(stdin) {
+		fmt.Fprintf(stdout, "Imported rules default to src %s (only that harness). Apply to all harnesses? [y/N] ", srcPattern)
+		line, _ := reader.ReadString('\n')
+		if answer := strings.TrimSpace(strings.ToLower(line)); answer == "y" || answer == "yes" {
+			srcPattern = "harness:*"
+			for i := range policies {
+				policies[i].SrcPattern = srcPattern
+			}
+		}
+	}
+	printImportScope(stdout, srcPattern)
 	if *out != "" {
 		encoded, err := json.MarshalIndent(policies, "", "  ")
 		if err != nil {
@@ -728,7 +741,6 @@ func runPoliciesImport(args []string, stdout, stderr io.Writer, stdin io.Reader,
 		fmt.Fprintln(stdout, "Dry run. Pass --apply to create these policies.")
 		return 0
 	}
-	reader := bufio.NewReader(stdin)
 	fmt.Fprintf(stdout, "Create %d policies? [y/N] ", len(policies))
 	line, _ := reader.ReadString('\n')
 	answer := strings.TrimSpace(strings.ToLower(line))
@@ -758,6 +770,24 @@ func runPoliciesImport(args []string, stdout, stderr io.Writer, stdin io.Reader,
 	}
 	fmt.Fprintf(stdout, "Created %d policies.\n", created)
 	return 0
+}
+
+// stdinIsInteractive reports whether stdin is a terminal; tests replace it.
+var stdinIsInteractive = func(stdin io.Reader) bool {
+	file, ok := stdin.(*os.File)
+	return ok && term.IsTerminal(int(file.Fd()))
+}
+
+// printImportScope states which harnesses the imported policies will apply to.
+func printImportScope(stdout io.Writer, srcPattern string) {
+	switch {
+	case srcPattern == "harness:*" || srcPattern == "*":
+		fmt.Fprintf(stdout, "Scope: src %s (shared with every harness)\n", srcPattern)
+	case strings.HasPrefix(srcPattern, "harness:"):
+		fmt.Fprintf(stdout, "Scope: src %s (only that harness; pass --src harness:* to share these rules with every harness)\n", srcPattern)
+	default:
+		fmt.Fprintf(stdout, "Scope: src %s\n", srcPattern)
+	}
 }
 
 func parseImportSource(harness, fileOverride, srcPattern string, stderr io.Writer) ([]importedPolicy, error) {
