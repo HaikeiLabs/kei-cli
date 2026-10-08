@@ -33,7 +33,7 @@ func runSetupCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, c
 		return 1
 	}
 	path := flags.String("config", configPath, "configuration file path")
-	controlPlaneURL := flags.String("control-plane-url", defaultKeiWebURL, "Kei runtime control-plane URL")
+	controlPlaneURL := flags.String("control-plane-url", defaultRuntimeControlPlaneURL, "Kei runtime control-plane URL")
 	runtimeToken := flags.String("runtime-token", "", "runtime installation token (prefer the interactive prompt)")
 	harnessURL := flags.String("harness-url", "http://127.0.0.1:8088", "local headless harness URL")
 	proxyPath := flags.String("proxy-path", defaultProxyPath(), "kei-proxy executable path")
