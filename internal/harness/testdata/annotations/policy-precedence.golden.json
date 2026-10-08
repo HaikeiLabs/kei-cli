@@ -1,0 +1,197 @@
+// Source: HaikeiLabs/kei-console frontend/src/lib/testdata/policy-precedence.golden.json
+// Commit blob SHA: dcd69f3ad20ba91548153bc803b749a5a246e90b
+// See https://github.com/HaikeiLabs/kei-console/pull/149
+{
+  "annotation_cases": [
+    {
+      "name": "except-global",
+      "target_policy_id": "target",
+      "policies": [
+        {
+          "id": "target",
+          "name": "Git commands",
+          "src_pattern": "*",
+          "dst_pattern": "shell:git",
+          "action": "permit",
+          "priority": 10,
+          "enabled": true
+        },
+        {
+          "id": "override",
+          "name": "Force push block",
+          "src_pattern": "group:admins",
+          "dst_pattern": "shell:git push --force",
+          "action": "deny",
+          "priority": 20,
+          "enabled": true
+        }
+      ],
+      "expected": [
+        {
+          "kind": "except",
+          "resource": "shell:git push --force",
+          "harnesses": "all",
+          "by": "override"
+        }
+      ],
+      "formatted": [
+        "except shell:git push --force everywhere"
+      ]
+    },
+    {
+      "name": "except-harness-scoped",
+      "target_policy_id": "target",
+      "policies": [
+        {
+          "id": "target",
+          "name": "Git commands",
+          "src_pattern": "harness:*",
+          "dst_pattern": "shell:git",
+          "action": "permit",
+          "priority": 10,
+          "enabled": true
+        },
+        {
+          "id": "override",
+          "name": "Force push block",
+          "src_pattern": "harness:claude_code",
+          "dst_pattern": "shell:git push --force",
+          "action": "deny",
+          "priority": 20,
+          "enabled": true
+        }
+      ],
+      "expected": [
+        {
+          "kind": "except",
+          "resource": "shell:git push --force",
+          "harnesses": [
+            "claude_code"
+          ],
+          "by": "override"
+        }
+      ],
+      "formatted": [
+        "except shell:git push --force on Claude Code"
+      ]
+    },
+    {
+      "name": "never-applies-global",
+      "target_policy_id": "target",
+      "policies": [
+        {
+          "id": "target",
+          "name": "Git push",
+          "src_pattern": "harness:*",
+          "dst_pattern": "shell:git push",
+          "action": "permit",
+          "priority": 10,
+          "enabled": true
+        },
+        {
+          "id": "override",
+          "name": "Git block",
+          "src_pattern": "user:dev@example.com",
+          "dst_pattern": "shell:git",
+          "action": "deny",
+          "priority": 20,
+          "enabled": true
+        }
+      ],
+      "expected": [
+        {
+          "kind": "never",
+          "resource": "shell:git push",
+          "harnesses": "all",
+          "by": "override"
+        }
+      ],
+      "formatted": [
+        "Never applies everywhere: Git block wins"
+      ]
+    },
+    {
+      "name": "never-applies-harness-scoped",
+      "target_policy_id": "target",
+      "policies": [
+        {
+          "id": "target",
+          "name": "Git push",
+          "src_pattern": "harness:*",
+          "dst_pattern": "shell:git push",
+          "action": "permit",
+          "priority": 10,
+          "enabled": true
+        },
+        {
+          "id": "override",
+          "name": "Claude Git block",
+          "src_pattern": "harness:claude_code",
+          "dst_pattern": "shell:git",
+          "action": "deny",
+          "priority": 20,
+          "enabled": true
+        }
+      ],
+      "expected": [
+        {
+          "kind": "never",
+          "resource": "shell:git push",
+          "harnesses": [
+            "claude_code"
+          ],
+          "by": "override"
+        }
+      ],
+      "formatted": [
+        "Never applies on Claude Code: Claude Git block wins"
+      ]
+    },
+    {
+      "name": "Codex remains permitted for the same resource",
+      "target_policy_id": "target",
+      "policies": [
+        {
+          "id": "target",
+          "name": "Git commands",
+          "src_pattern": "harness:*",
+          "dst_pattern": "shell:git",
+          "action": "permit",
+          "priority": 10,
+          "enabled": true
+        },
+        {
+          "id": "override",
+          "name": "Claude Git block",
+          "src_pattern": "harness:claude_code",
+          "dst_pattern": "shell:git push --force",
+          "action": "deny",
+          "priority": 20,
+          "enabled": true
+        }
+      ],
+      "expected": [
+        {
+          "kind": "except",
+          "resource": "shell:git push --force",
+          "harnesses": [
+            "claude_code"
+          ],
+          "by": "override"
+        }
+      ],
+      "formatted": [
+        "except shell:git push --force on Claude Code"
+      ],
+      "request": {
+        "user": {
+          "email": "dev@example.com",
+          "groups": []
+        },
+        "harness": "codex",
+        "resource": "shell:git push --force",
+        "expected_winner": "target"
+      }
+    }
+  ]
+}
