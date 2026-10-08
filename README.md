@@ -175,6 +175,25 @@ Logout only removes the local credential from the OS keychain; it does not
 revoke the token server-side. It is idempotent: running it while not logged
 in succeeds and reports that no session was stored.
 
+## Feedback
+
+Submit feedback to the Kei support channel with optional supporting files:
+
+```sh
+kei feedback \
+  --description "The session stopped unexpectedly." \
+  --session ./session.jsonl \
+  --screenshot ./error.png
+```
+
+Repeat `--file`, `--session`, or `--screenshot` to attach more evidence. The CLI
+shows the description and file names/sizes, then asks before submission; use
+`--yes` to skip the confirmation. Submissions require `kei login` and are sent
+to the same bug-report endpoint as Console reports. Requests are limited to
+4 MiB total and eight evidence files. Text attachments are redacted for common
+secrets and email addresses by the server. Review images and other binary
+attachments yourself before confirming; their contents are not redacted.
+
 ## Manage installations
 
 List runtime installations for an organization (the CLI does not persist an org ID, so `--org` is required):

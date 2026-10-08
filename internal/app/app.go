@@ -123,6 +123,8 @@ func Main(version, command string, args []string, stdout, stderr io.Writer, stdi
 		return runLoginCommand(version, args, stdout, stderr, &http.Client{Timeout: 15 * time.Second}, osKeychainStore{})
 	case "logout":
 		return runLogoutCommand(args, stdout, stderr, osKeychainStore{})
+	case "feedback":
+		return runFeedbackCommand(args, stdout, stderr, stdin, &http.Client{Timeout: 30 * time.Second}, osKeychainStore{}, version)
 	case "bot":
 		return runBotCommand(args, stdout, stderr, &http.Client{Timeout: 15 * time.Second}, osKeychainStore{})
 	case "runtime":
@@ -176,6 +178,7 @@ func PrintUsage(w io.Writer) {
 	fmt.Fprintln(w, "  kei runtime service install [--config PATH]")
 	fmt.Fprintln(w, "  kei runtime service uninstall")
 	fmt.Fprintln(w, "  kei runtime service status")
+	fmt.Fprintln(w, "  kei feedback --description TEXT [--file PATH] [--session PATH] [--screenshot PATH] [--yes]")
 	fmt.Fprintln(w, "users connect their own accounts through their chat harness")
 }
 
