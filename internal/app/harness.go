@@ -557,6 +557,13 @@ func syncHarnessBundle(ctx context.Context, config runtimeConfig, kindFilter str
 			continue
 		}
 		h := bundleHarness{Kind: kind}
+		// Capture opencode config existence before sync, since syncOneHarness
+		// will create it if missing.
+		var opencodeHadConfig bool
+		var opencodeCfgPath string
+		if kind == "opencode" {
+			opencodeCfgPath, opencodeHadConfig = opencodeConfigPath()
+		}
 		if err := syncOneHarness(bundle, h, dryRun, stdout, renderer, now()); err != nil {
 			fmt.Fprintf(stderr, "harness sync: %v\n", err)
 			return 1
@@ -576,8 +583,11 @@ func syncHarnessBundle(ctx context.Context, config runtimeConfig, kindFilter str
 			fmt.Fprintln(stdout, "Codex may skip the reporting hook until you trust it with /hooks.")
 		}
 		if kind == "opencode" {
-			if _, exists := opencodeConfigPath(); !exists {
-				fmt.Fprintln(stdout, "OpenCode: no existing config found; set OPENCODE_CONFIG or create opencode.json to manage permission entries. Installed the audit plugin only.")
+			if dryRun {
+				fmt.Fprintf(stdout, "OpenCode: resolved config path: %s\n", opencodeCfgPath)
+				fmt.Fprintf(stdout, "OpenCode: resolved plugin path: %s\n", filepath.Join(opencodeConfigDir(), "plugins", "kei-audit.js"))
+			} else if !opencodeHadConfig {
+				fmt.Fprintf(stdout, "OpenCode: created %s with Kei-managed permission block.\n", opencodeCfgPath)
 			}
 		}
 	}
@@ -600,8 +610,8 @@ func detectLocalKinds() []string {
 		kinds = append(kinds, "codex")
 	}
 	// OpenCode counts as installed when its global config dir exists or a
-	// config file is resolvable (OPENCODE_CONFIG / project / global).
-	if dirExists(filepath.Join(home, ".config", "opencode")) {
+	// config file is resolvable (OPENCODE_CONFIG / XDG_CONFIG_HOME / global / project).
+	if dirExists(filepath.Join(home, ".config", "opencode")) || dirExists(filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "opencode")) {
 		kinds = append(kinds, "opencode")
 	} else if _, exists := opencodeConfigPath(); exists {
 		kinds = append(kinds, "opencode")
@@ -619,21 +629,59 @@ func fileExists(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
+// opencodeConfigDir returns the OpenCode config directory (for plugins etc.)
+// using the same resolution OpenCode does:
+//  1. OPENCODE_CONFIG env var → parent of that file
+//  2. $XDG_CONFIG_HOME/opencode
+//  3. ~/.config/opencode
+func opencodeConfigDir() string {
+	if env := os.Getenv("OPENCODE_CONFIG"); env != "" {
+		return filepath.Dir(env)
+	}
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "opencode")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "opencode")
+}
+
+// opencodeConfigName returns config file names to try, in preference order.
+func opencodeConfigName() []string {
+	return []string{"opencode.json", "opencode.jsonc"}
+}
+
 // opencodeConfigPath resolves the OpenCode config file the way OpenCode does:
-// the OPENCODE_CONFIG env var, then the project opencode.json (current
-// directory, traversing up to the nearest git root), then the global
-// ~/.config/opencode/opencode.json. It returns the path and whether that file
-// exists. Only an existing config is ever edited; when none exists the caller
-// should hint rather than create one.
+//  1. OPENCODE_CONFIG env var (explicit file path)
+//  2. $XDG_CONFIG_HOME/opencode/opencode.json(c)
+//  3. ~/.config/opencode/opencode.json(c)
+//  4. Project opencode.json(c) — walk up from cwd to the nearest git root
+//
+// It returns the path and whether that file exists. Only an existing config is
+// ever edited; when none exists the caller should hint rather than create one.
 func opencodeConfigPath() (string, bool) {
 	if env := os.Getenv("OPENCODE_CONFIG"); env != "" {
 		return env, fileExists(env)
 	}
+	for _, name := range opencodeConfigName() {
+		if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+			if p := filepath.Join(xdg, "opencode", name); fileExists(p) {
+				return p, true
+			}
+		}
+	}
+	home, _ := os.UserHomeDir()
+	for _, name := range opencodeConfigName() {
+		if p := filepath.Join(home, ".config", "opencode", name); fileExists(p) {
+			return p, true
+		}
+	}
 	if cwd, err := os.Getwd(); err == nil {
 		dir := cwd
 		for {
-			if p := filepath.Join(dir, "opencode.json"); fileExists(p) {
-				return p, true
+			for _, name := range opencodeConfigName() {
+				if p := filepath.Join(dir, name); fileExists(p) {
+					return p, true
+				}
 			}
 			if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
 				break
@@ -645,9 +693,12 @@ func opencodeConfigPath() (string, bool) {
 			dir = parent
 		}
 	}
-	home, _ := os.UserHomeDir()
-	g := filepath.Join(home, ".config", "opencode", "opencode.json")
-	return g, fileExists(g)
+	// Return the default global path even when it doesn't exist, so the caller
+	// has something to hint about.
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "opencode", "opencode.json"), false
+	}
+	return filepath.Join(home, ".config", "opencode", "opencode.json"), false
 }
 
 // findRegisteredHarness returns the bundle's registered harness for a kind, or
@@ -824,12 +875,9 @@ func harnessFiles(kind, id string) ([]string, error) {
 	case "codex":
 		return []string{filepath.Join(home, ".codex", "rules", "kei.rules"), filepath.Join(home, ".codex", "hooks.json")}, nil
 	case "opencode":
-		// Only edit an existing OpenCode config (resolved the way OpenCode
-		// does); never create one. The audit plugin is always installed.
-		files := []string{filepath.Join(home, ".config", "opencode", "plugins", "kei-audit.js")}
-		if cfgPath, exists := opencodeConfigPath(); exists {
-			files = append([]string{cfgPath}, files...)
-		}
+		files := []string{filepath.Join(opencodeConfigDir(), "plugins", "kei-audit.js")}
+		cfgPath, _ := opencodeConfigPath()
+		files = append([]string{cfgPath}, files...)
 		return files, nil
 	default:
 		return nil, fmt.Errorf("unsupported harness kind %q", kind)
@@ -1295,7 +1343,7 @@ func (nativeHarnessRenderer) HookSpec(kind, harnessID string) (map[string][]byte
 		return map[string][]byte{filepath.Join(home, ".codex", "hooks.json"): mustJSON(map[string]any{"hooks": map[string]any{"PreToolUse": []any{hook}, "PostToolUse": []any{hook}}})}, nil
 	case "opencode":
 		plugin := "// managed by kei harness sync\nconst report = async (phase, event) => { try { const child = Bun.spawn(['kei-proxy','hook','opencode'], { stdin: 'pipe', stdout: 'ignore', stderr: 'ignore' }); child.stdin.write(JSON.stringify({phase, ...event})); child.stdin.end(); } catch {} };\nexport const KeiAudit = async () => ({ 'tool.execute.before': async (event) => { void report('pre', event); }, 'tool.execute.after': async (event) => { void report('post', event); }, 'permission.ask': async (event) => { void report('ask', event); }, 'permission.replied': async (event) => { void report('permission_reply', event); } });\n"
-		return map[string][]byte{filepath.Join(home, ".config", "opencode", "plugins", "kei-audit.js"): []byte(plugin)}, nil
+		return map[string][]byte{filepath.Join(opencodeConfigDir(), "plugins", "kei-audit.js"): []byte(plugin)}, nil
 	default:
 		return nil, fmt.Errorf("unsupported harness kind %q", kind)
 	}
@@ -1587,10 +1635,15 @@ func filterAbsentPermissionEntries(kind string, cfg []byte, key string, entries 
 
 func mergePermissionJSON(kind string, cfg []byte, allows, denies []string) ([]byte, error) {
 	if len(allows) == 0 && len(denies) == 0 {
-		// No Kei-managed entries: leave the config untouched. We do not create
-		// or modify a permission block, so unmatched commands fall back to the
-		// harness's native permission mode and the user's own defaults stand.
-		return cfg, nil
+		if len(cfg) > 0 {
+			// No Kei-managed entries but a config exists: leave it untouched.
+			// Unmatched commands fall back to the harness's native permission
+			// mode and the user's own defaults stand.
+			return cfg, nil
+		}
+		// No existing config and no policies: create a minimal empty config so
+		// the user knows Kei is managing it.
+		return []byte("{}\n"), nil
 	}
 	var root *orderedObject
 	if len(cfg) > 0 {
