@@ -42,10 +42,10 @@ func (codex) Targets(env Env) ([]Target, error) {
 func (codex) Render(b Bundle) (Rendered, error) { return render(codexSyntax, "", b) }
 
 func (c codex) Apply(_ context.Context, r Rendered, opts ApplyOpts) (Result, error) {
-	if err := applyFiles(c, r, opts); err != nil {
+	result, err := applyFiles(c, r, opts)
+	if err != nil {
 		return Result{}, err
 	}
-	var result Result
 	if _, err := opts.Env.home(); err == nil {
 		config, _ := os.ReadFile(filepath.Join(opts.Env.Home, ".codex", "config.toml"))
 		if codexNonPrompting(config) {
@@ -94,6 +94,33 @@ func (codex) renderFile(path string, cfg []byte, r Rendered) ([]byte, []string, 
 		fmt.Fprintf(&rules, "prefix_rule(pattern=%s, decision=\"forbidden\", justification=\"kei policy\")\n", entry)
 	}
 	return []byte(rules.String()), append([]string(nil), r.Allows...), append([]string(nil), r.Denies...), nil
+}
+
+func (codex) missingEntries(path string, cfg []byte, allows, denies []string) ([]string, []string) {
+	if !strings.HasSuffix(path, filepath.Join(".codex", "rules", "kei.rules")) {
+		return nil, nil
+	}
+	lines := strings.Split(string(cfg), "\n")
+	inForce := func(entry, decision string) bool {
+		for _, line := range lines {
+			if strings.Contains(line, "pattern="+entry+",") && strings.Contains(line, `decision="`+decision+`"`) {
+				return true
+			}
+		}
+		return false
+	}
+	var missingAllows, missingDenies []string
+	for _, e := range allows {
+		if !inForce(e, "allow") {
+			missingAllows = append(missingAllows, e)
+		}
+	}
+	for _, e := range denies {
+		if !inForce(e, "forbidden") {
+			missingDenies = append(missingDenies, e)
+		}
+	}
+	return missingAllows, missingDenies
 }
 
 func (codex) removeManaged(config []byte, allows, denies []string) ([]byte, error) {
