@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -778,6 +779,9 @@ func TestNoApiURLHelpSurface(t *testing.T) {
 	if strings.Contains(buf.String(), "--api-url") {
 		t.Fatalf("PrintUsage still contains --api-url:\n%s", buf.String())
 	}
+	if !strings.Contains(buf.String(), "kei feedback --description") {
+		t.Fatalf("PrintUsage omitted the feedback command:\n%s", buf.String())
+	}
 }
 
 func TestApiURLFlagRejected(t *testing.T) {
@@ -1155,4 +1159,98 @@ func workspaceTestToken() string {
 	hdr := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
 	pld := base64.RawURLEncoding.EncodeToString([]byte(`{"org_id":"org-1"}`))
 	return hdr + "." + pld + "."
+}
+
+func TestFeedbackSubmitsDescriptionAndEvidenceAfterConfirmation(t *testing.T) {
+	path := t.TempDir() + "/session.jsonl"
+	if err := os.WriteFile(path, []byte(`{"message":"the session transcript"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/bug-reports" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer cli-session-token" {
+			t.Fatalf("Authorization = %q", r.Header.Get("Authorization"))
+		}
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Fatalf("parse multipart form: %v", err)
+		}
+		if got := r.FormValue("description"); got != "The session stopped unexpectedly." {
+			t.Fatalf("description = %q", got)
+		}
+		files := r.MultipartForm.File["evidence"]
+		if len(files) != 1 || files[0].Filename != "session.jsonl" {
+			t.Fatalf("evidence files = %#v", files)
+		}
+		file, err := files[0].Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer file.Close()
+		content, err := io.ReadAll(file)
+		if err != nil || string(content) != `{"message":"the session transcript"}` {
+			t.Fatalf("evidence content = %q, err = %v", content, err)
+		}
+		if got := r.FormValue("page"); got != "/cli" {
+			t.Fatalf("page = %q", got)
+		}
+		if got := r.FormValue("source"); got != "cli" {
+			t.Fatalf("source = %q", got)
+		}
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(feedbackSubmissionResponse{ReportID: "feedback-123", ReceivedAt: "2026-10-07T00:00:00Z"})
+	}))
+	defer server.Close()
+	t.Setenv("KEI_WEB_URL", server.URL)
+	store := &memoryCredentialStore{server: server.URL, token: "cli-session-token"}
+	var stdout, stderr bytes.Buffer
+	code := runFeedbackCommand([]string{"--description", "The session stopped unexpectedly.", "--session", path, "--yes"}, &stdout, &stderr, strings.NewReader(""), server.Client(), store, "1.2.3")
+	if code != 0 {
+		t.Fatalf("feedback exit = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "session.jsonl") || !strings.Contains(stdout.String(), "Feedback submitted: feedback-123") {
+		t.Fatalf("feedback output = %q", stdout.String())
+	}
+}
+
+func TestFeedbackDeclineDoesNotSubmit(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests++ }))
+	defer server.Close()
+	t.Setenv("KEI_WEB_URL", server.URL)
+	store := &memoryCredentialStore{server: server.URL, token: "cli-session-token"}
+	var stdout, stderr bytes.Buffer
+	code := runFeedbackCommand([]string{"--description", "A report"}, &stdout, &stderr, strings.NewReader("n\n"), server.Client(), store, "1.2.3")
+	if code != 0 {
+		t.Fatalf("feedback exit = %d, stderr = %s", code, stderr.String())
+	}
+	if requests != 0 || !strings.Contains(stdout.String(), "Feedback not submitted.") {
+		t.Fatalf("requests = %d, output = %q", requests, stdout.String())
+	}
+}
+func TestFeedbackRejectsOversizedEvidenceBeforeConfirmation(t *testing.T) {
+	path := t.TempDir() + "/large.log"
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(maxFeedbackRequestBytes + 1); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests++ }))
+	defer server.Close()
+	t.Setenv("KEI_WEB_URL", server.URL)
+	store := &memoryCredentialStore{server: server.URL, token: "cli-session-token"}
+	var stdout, stderr bytes.Buffer
+	code := runFeedbackCommand([]string{"--description", "A report", "--file", path}, &stdout, &stderr, strings.NewReader("y\n"), server.Client(), store, "1.2.3")
+	if code != 2 || requests != 0 || !strings.Contains(stderr.String(), "4 MiB") {
+		t.Fatalf("exit = %d, requests = %d, stderr = %q", code, requests, stderr.String())
+	}
 }
