@@ -1,0 +1,6 @@
+# managed by kei harness sync; edits are overwritten
+prefix_rule(pattern=["git", "commit", "-m", "wip fix"], decision="allow", justification="kei policy")
+prefix_rule(pattern=["git", "status"], decision="allow", justification="kei policy")
+prefix_rule(pattern=["go", "test"], decision="allow", justification="kei policy")
+prefix_rule(pattern=["git", "push", "--force"], decision="forbidden", justification="kei policy")
+prefix_rule(pattern=["rm", "-rf"], decision="forbidden", justification="kei policy")

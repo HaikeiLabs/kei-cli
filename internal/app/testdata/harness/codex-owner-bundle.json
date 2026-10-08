@@ -1,0 +1,18 @@
+{
+  "policies": [
+    {"id": "p-deny-web", "name": "deny web search", "src_pattern": "*", "dst_pattern": "tool:web_search", "effect": "deny", "enabled": true},
+    {"id": "p-deny-fetch", "name": "deny web fetch", "src_pattern": "*", "dst_pattern": "tool:web_fetch", "effect": "deny", "enabled": true},
+    {"id": "p-deny-codex-shell", "name": "deny codex shell tool", "src_pattern": "harness:codex", "dst_pattern": "tool:codex.shell", "effect": "deny", "enabled": true},
+    {"id": "p-deny-skill", "name": "deny prod-deploy skill", "src_pattern": "*", "dst_pattern": "skill:prod-deploy", "effect": "deny", "enabled": true},
+    {"id": "p-allow-skill", "name": "allow kei-cli skill", "src_pattern": "*", "dst_pattern": "skill:kei-cli", "effect": "permit", "enabled": true},
+    {"id": "p-deny-rm", "name": "deny rm -rf", "src_pattern": "*", "dst_pattern": "shell:rm -rf", "effect": "deny", "enabled": true},
+    {"id": "p-deny-push", "name": "deny force push", "src_pattern": "harness:codex", "dst_pattern": "shell:git push --force", "effect": "deny", "enabled": true},
+    {"id": "p-allow-git", "name": "allow git status", "src_pattern": "*", "dst_pattern": "shell:git status", "effect": "permit", "enabled": true},
+    {"id": "p-allow-commit", "name": "allow wip commit", "src_pattern": "*", "dst_pattern": "shell:git commit -m \"wip fix\"", "effect": "permit", "enabled": true},
+    {"id": "p-allow-go", "name": "allow go test", "action": "permit", "src_pattern": "harness:*", "dst_pattern": "shell:go test", "enabled": true},
+    {"id": "p-claude-only", "name": "claude-only curl", "src_pattern": "harness:claude_code", "dst_pattern": "shell:curl", "effect": "permit", "enabled": true},
+    {"id": "p-human", "name": "human-sourced", "src_pattern": "user:someone@example.com", "dst_pattern": "shell:make", "effect": "permit", "enabled": true},
+    {"id": "p-disabled", "name": "disabled", "src_pattern": "*", "dst_pattern": "shell:npm", "effect": "permit", "enabled": false},
+    {"id": "p-star-deny", "name": "deny every shell command", "src_pattern": "harness:codex", "dst_pattern": "shell:*", "effect": "deny", "enabled": true}
+  ]
+}

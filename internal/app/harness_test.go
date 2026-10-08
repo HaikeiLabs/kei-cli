@@ -550,20 +550,8 @@ func TestHarnessSyncOpencodeNoConfigInstallsPluginOnly(t *testing.T) {
 	if !strings.Contains(stdout.String(), "no existing config") {
 		t.Fatalf("missing no-config hint: %q", stdout.String())
 	}
-}
-
-// No rules: Render does not emit a kei.rules file at all.
-func TestCodexRenderNoRulesSkipsKeiRules(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	bundle := Bundle{PolicySet: json.RawMessage(`{"policies":[]}`), Harnesses: []bundleHarness{{AgentID: "88888888-8888-8888-8888-888888888888", Kind: "codex"}}}
-	id := "88888888-8888-8888-8888-888888888888"
-	rulesPath := filepath.Join(t.TempDir(), ".codex", "rules", "kei.rules")
-	got, err := (nativeHarnessRenderer{}).Render("codex", id, bundle, map[string][]byte{rulesPath: []byte("# user-owned rules stay in default.rules")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := got.Files[rulesPath]; ok {
-		t.Fatalf("wrote kei.rules with no rules:\n%s", got.Files[rulesPath])
+	if strings.Contains(stdout.String(), "scoped to another harness") {
+		t.Fatalf("printed a scope hint with no scoped policies: %q", stdout.String())
 	}
 }
 
@@ -606,7 +594,8 @@ func TestNativePermissionEntriesSharedHarnessFixtures(t *testing.T) {
 			policies = append(policies, bundlePolicy{ID: p.ID, SrcPattern: p.Src, DstPattern: p.Dst, Action: p.Action, Effect: p.Action, Enabled: p.Enabled})
 		}
 		h := &bundleHarness{AgentID: tc.Call.AgentID, Kind: tc.Call.Kind}
-		allows, denies := nativePermissionEntries(tc.Call.Kind, tc.Call.HarnessID, h, policies)
+		entries := nativePermissionEntries(tc.Call.Kind, tc.Call.HarnessID, h, policies)
+		allows, denies := entries.Allows, entries.Denies
 		switch tc.WantOutcome {
 		case harnessmatch.OutcomePermit:
 			if len(allows) == 0 {
@@ -806,4 +795,189 @@ func (rendererMustNotRun) Render(string, string, Bundle, map[string][]byte) (ren
 }
 func (rendererMustNotRun) HookSpec(string, string) (map[string][]byte, error) {
 	return nil, fmt.Errorf("custom harness hook must not run")
+}
+
+// HAI-425: an owner-like bundle (tool:/skill: denies, Claude-scoped and
+// human-sourced entries, shell: entries) renders the shell: policies that
+// apply to Codex as prefix rules and names every other Codex policy as not
+// enforceable instead of silently writing nothing.
+func TestCodexRenderOwnerBundleGolden(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	policySet, err := os.ReadFile(filepath.Join("testdata", "harness", "codex-owner-bundle.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	golden, err := os.ReadFile(filepath.Join("testdata", "harness", "codex-owner.rules.golden"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rulesPath := filepath.Join(t.TempDir(), ".codex", "rules", "kei.rules")
+	got, err := (nativeHarnessRenderer{}).Render("codex", "", Bundle{PolicySet: policySet}, map[string][]byte{rulesPath: nil})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got.Files[rulesPath], golden) {
+		t.Fatalf("rendered kei.rules mismatch\ngot:\n%s\nwant:\n%s", got.Files[rulesPath], golden)
+	}
+	wantUnenforceable := []string{"allow kei-cli skill", "deny codex shell tool", "deny every shell command", "deny prod-deploy skill", "deny web fetch", "deny web search"}
+	if strings.Join(got.Unenforceable, "|") != strings.Join(wantUnenforceable, "|") {
+		t.Fatalf("unenforceable = %q, want %q", got.Unenforceable, wantUnenforceable)
+	}
+}
+
+func TestCodexRenderDenyIsForbidden(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	policySet := json.RawMessage(`{"policies":[{"id":"p1","name":"deny curl","src_pattern":"*","dst_pattern":"shell:curl","effect":"deny","enabled":true}]}`)
+	rulesPath := filepath.Join(t.TempDir(), ".codex", "rules", "kei.rules")
+	got, err := (nativeHarnessRenderer{}).Render("codex", "", Bundle{PolicySet: policySet}, map[string][]byte{rulesPath: nil})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "# managed by kei harness sync; edits are overwritten\nprefix_rule(pattern=[\"curl\"], decision=\"forbidden\", justification=\"kei policy\")\n"
+	if string(got.Files[rulesPath]) != want {
+		t.Fatalf("kei.rules = %q, want %q", got.Files[rulesPath], want)
+	}
+	if strings.Join(got.DenyEntries[rulesPath], "|") != `["curl"]` || len(got.AllowEntries[rulesPath]) != 0 {
+		t.Fatalf("managed allows/denies = %v / %v", got.AllowEntries[rulesPath], got.DenyEntries[rulesPath])
+	}
+}
+
+func TestSplitArgvQuotes(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"git status", []string{"git", "status"}},
+		{"  git   status  ", []string{"git", "status"}},
+		{`git commit -m "wip fix"`, []string{"git", "commit", "-m", "wip fix"}},
+		{`echo 'a "b" c'`, []string{"echo", `a "b" c`}},
+		{`echo "say \"hi\""`, []string{"echo", `say "hi"`}},
+		{`echo a\ b`, []string{"echo", "a b"}},
+		{`echo pre"fix"'ed'`, []string{"echo", "prefixed"}},
+		{`echo ""`, []string{"echo", ""}},
+	}
+	for _, tc := range cases {
+		got, err := splitArgv(tc.in)
+		if err != nil {
+			t.Errorf("splitArgv(%q) error: %v", tc.in, err)
+			continue
+		}
+		if strings.Join(got, "\x00") != strings.Join(tc.want, "\x00") || len(got) != len(tc.want) {
+			t.Errorf("splitArgv(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+	for _, bad := range []string{`echo "open`, `echo 'open`} {
+		if _, err := splitArgv(bad); err == nil {
+			t.Errorf("splitArgv(%q) accepted an unterminated quote", bad)
+		}
+	}
+	if _, ok := codexArgv(`shell:echo "open`); ok {
+		t.Error("codexArgv accepted an unterminated quote")
+	}
+}
+
+// An empty bundle still renders the Kei-owned kei.rules, holding only the
+// managed header, so a policy removal clears previously managed rules.
+func TestCodexRenderEmptyBundleWritesEmptyManagedFile(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	rulesPath := filepath.Join(t.TempDir(), ".codex", "rules", "kei.rules")
+	prior := []byte("# managed by kei harness sync; edits are overwritten\nprefix_rule(pattern=[\"rm\"], decision=\"forbidden\", justification=\"kei policy\")\n")
+	got, err := (nativeHarnessRenderer{}).Render("codex", "", Bundle{PolicySet: json.RawMessage(`{"policies":[]}`)}, map[string][]byte{rulesPath: prior})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "# managed by kei harness sync; edits are overwritten\n"; string(got.Files[rulesPath]) != want {
+		t.Fatalf("kei.rules = %q, want %q", got.Files[rulesPath], want)
+	}
+	if len(got.Unenforceable) != 0 {
+		t.Fatalf("unenforceable = %q", got.Unenforceable)
+	}
+}
+
+func TestHarnessSyncCodexWritesKeiRulesAndReportsUnenforceable(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	rulesDir := filepath.Join(home, ".codex", "rules")
+	if err := os.MkdirAll(rulesDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	userRules := []byte("prefix_rule(pattern=[\"ls\"], decision=\"allow\")\n")
+	if err := os.WriteFile(filepath.Join(rulesDir, "default.rules"), userRules, 0600); err != nil {
+		t.Fatal(err)
+	}
+	keiRules := filepath.Join(rulesDir, "kei.rules")
+	if err := os.WriteFile(keiRules, []byte("# managed by kei harness sync; edits are overwritten\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	policySet, err := os.ReadFile(filepath.Join("testdata", "harness", "codex-owner-bundle.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/runtime/whoami" {
+			_, _ = w.Write([]byte(`{"id":"runtime-id","org_id":"org-id","platform":"cli"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v1","bundle_id":"b","bundle_version":1,"policy_revision":1,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harnesses":[],"policy_set":` + string(policySet) + `}`))
+	}))
+	defer server.Close()
+	var stdout, stderr bytes.Buffer
+	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "t"}, "codex", false, &stdout, &stderr, server.Client(), nativeHarnessRenderer{}, time.Now)
+	if code != 0 {
+		t.Fatalf("sync exit=%d stderr=%s", code, stderr.String())
+	}
+	golden, err := os.ReadFile(filepath.Join("testdata", "harness", "codex-owner.rules.golden"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(keiRules); err != nil || !bytes.Equal(got, golden) {
+		t.Fatalf("kei.rules = %q err=%v", got, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(rulesDir, "default.rules")); err != nil || !bytes.Equal(got, userRules) {
+		t.Fatalf("default.rules changed: %q err=%v", got, err)
+	}
+	if backups, err := filepath.Glob(keiRules + ".kei-backup-*"); err != nil || len(backups) != 1 {
+		t.Fatalf("kei.rules backups=%v err=%v", backups, err)
+	}
+	if hooks, err := os.ReadFile(filepath.Join(home, ".codex", "hooks.json")); err != nil || !strings.Contains(string(hooks), "kei-proxy hook codex") {
+		t.Fatalf("hooks.json = %q err=%v", hooks, err)
+	}
+	out := stdout.String()
+	for _, want := range []string{"not enforceable in Codex: deny web search", "not enforceable in Codex: allow kei-cli skill", "trust it with /hooks"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "claude-only curl") {
+		t.Errorf("stdout lists a policy scoped to another harness:\n%s", out)
+	}
+	if want := "Codex: 1 policies scoped to another harness (e.g. harness:claude_code); widen src to harness:* to share them"; !strings.Contains(out, want) {
+		t.Errorf("stdout missing %q:\n%s", want, out)
+	}
+}
+
+// Policies whose src names a different harness are counted per harness so
+// sync can say why they were not rendered.
+func TestRenderCountsPoliciesScopedToAnotherHarness(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	policySet, err := os.ReadFile(filepath.Join("testdata", "harness", "codex-owner-bundle.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := filepath.Join(t.TempDir(), ".claude", "settings.json")
+	got, err := (nativeHarnessRenderer{}).Render("claude_code", "", Bundle{PolicySet: policySet}, map[string][]byte{settings: nil})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (otherHarnessScope{Count: 3, Example: "harness:codex"}); got.OtherHarness != want {
+		t.Fatalf("claude_code other-harness scope = %+v, want %+v", got.OtherHarness, want)
+	}
+	rules := filepath.Join(t.TempDir(), ".codex", "rules", "kei.rules")
+	got, err = (nativeHarnessRenderer{}).Render("codex", "", Bundle{PolicySet: policySet}, map[string][]byte{rules: nil})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (otherHarnessScope{Count: 1, Example: "harness:claude_code"}); got.OtherHarness != want {
+		t.Fatalf("codex other-harness scope = %+v, want %+v", got.OtherHarness, want)
+	}
 }
