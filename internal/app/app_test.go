@@ -1166,6 +1166,12 @@ func TestFeedbackSubmitsDescriptionAndEvidenceAfterConfirmation(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"message":"the session transcript"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// --session files are redacted into a temp copy; keep it off the real cache.
+	oldDeps := feedbackTranscriptDeps
+	feedbackTranscriptDeps = func() *TranscriptDeps {
+		return &TranscriptDeps{HomeDir: t.TempDir(), Cwd: t.TempDir(), CacheDir: t.TempDir()}
+	}
+	defer func() { feedbackTranscriptDeps = oldDeps }()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/bug-reports" {
 			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
