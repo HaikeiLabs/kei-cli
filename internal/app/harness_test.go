@@ -295,6 +295,24 @@ func TestFetchHarnessBundleUsesV2HarnessPolicies(t *testing.T) {
 	}
 }
 
+func TestFetchHarnessBundleCarriesV2Subject(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/runtime/whoami" {
+			_, _ = w.Write([]byte(`{"id":"runtime-id","org_id":"org-id","platform":"cli"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v2","bundle_id":"b","bundle_version":1,"policy_revision":1,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harness_match_semantics":"kei.harness-match/v1","harnesses":[],"subject":{"user_id":"usr-fixture-dev","email":"dev@example.com","groups":["release_eng"]},"policy_set":{"harness_policies":[{"policy_id":"p1","name":"Group deploy","src_pattern":"group:release_eng","dst_pattern":"skill:deploy","action":"deny"}]}}`))
+	}))
+	defer server.Close()
+	bundle, _, err := fetchHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "runtime-secret"}, server.Client())
+	if err != nil {
+		t.Fatalf("fetchHarnessBundle: %v", err)
+	}
+	if bundle.Subject == nil || bundle.Subject.UserID != "usr-fixture-dev" || bundle.Subject.Email != "dev@example.com" || len(bundle.Subject.Groups) != 1 || bundle.Subject.Groups[0] != "release_eng" {
+		t.Fatalf("v2 subject = %#v", bundle.Subject)
+	}
+}
+
 func TestHarnessSyncFetchesBundleWritesManagedConfigWithBackupAndHook(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

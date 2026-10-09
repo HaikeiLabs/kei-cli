@@ -3,12 +3,17 @@ package harness
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/HaikeiLabs/kei-connector-contracts/harnessmatch"
 )
+
+// BundleSchemaV2 is the current policy bundle contract; v1 is frozen and
+// deprecated.
+const BundleSchemaV2 = "kei.policy-bundle/v2"
 
 // Bundle is an unsigned policy bundle fetched by the CLI and runtime.
 type Bundle struct {
@@ -25,7 +30,43 @@ type Bundle struct {
 	HarnessMatchSemantics string          `json:"harness_match_semantics"`
 	Harnesses             []BundleHarness `json:"harnesses"`
 	PolicySet             json.RawMessage `json:"policy_set"`
+	Subject               *BundleSubject  `json:"subject"`
 	PayloadDigest         string          `json:"-"`
+}
+
+// BundleSubject is the installation's principal as the control plane resolved
+// it (HAI-433): the installation creator, their email, and their effective
+// group names. Only v2 bundles carry it. It is the only source of identity for
+// user:, email: and group: policy sources; the renderer never reads one from
+// the environment, argv or the harness. A bundle without it, including every
+// v1 bundle, renders none of those sources.
+type BundleSubject struct {
+	UserID string   `json:"user_id"`
+	Email  string   `json:"email"`
+	Groups []string `json:"groups"`
+}
+
+// matches reports whether a human policy source names the subject, with the
+// catalog's audit-precedence semantics: user:<id or email>, email:<address>
+// and group:<name>, each an exact match. Any other source, or a nil subject,
+// does not match.
+func (s *BundleSubject) matches(src string) bool {
+	if s == nil {
+		return false
+	}
+	scheme, value, _ := strings.Cut(src, ":")
+	if value == "" {
+		return false
+	}
+	switch scheme {
+	case "user":
+		return (s.UserID != "" && value == s.UserID) || (s.Email != "" && value == s.Email)
+	case "email":
+		return s.Email != "" && value == s.Email
+	case "group":
+		return slices.Contains(s.Groups, value)
+	}
+	return false
 }
 
 // BundleHarness is a harness registered on the installation the bundle is for.
@@ -83,7 +124,16 @@ func render(s nativeSyntax, harnessID string, b Bundle) (Rendered, error) {
 			break
 		}
 	}
-	entries := nativePermissionEntries(s, harnessID, selected, set.Policies)
+	// Only the v2 contract carries the subject; a v1 bundle never names one.
+	subject := b.Subject
+	if b.Schema != BundleSchemaV2 {
+		subject = nil
+	}
+	entries := nativePermissionEntries(s, harnessID, selected, subject, set.Policies)
+	personSkipped := 0
+	if b.Schema != BundleSchemaV2 {
+		personSkipped = entries.PersonSources
+	}
 	return Rendered{
 		Kind:                   s.kind,
 		Allows:                 entries.Allows,
@@ -91,6 +141,7 @@ func render(s nativeSyntax, harnessID string, b Bundle) (Rendered, error) {
 		NotEnforceable:         entries.Unenforceable,
 		ScopedElsewhere:        entries.OtherHarness.Count,
 		ScopedElsewhereExample: entries.OtherHarness.Example,
+		PersonSourcesSkipped:   personSkipped,
 		BundleVersion:          b.BundleVersion,
 		BundleDigest:           b.PayloadDigest,
 		NotAfter:               b.NotAfter,
@@ -110,9 +161,12 @@ type nativeEntries struct {
 	Denies        []string
 	Unenforceable []string // names of applicable policies with no native form
 	OtherHarness  otherHarnessScope
+	// PersonSources counts enabled user:, email: and group: sourced policies
+	// that did not name the subject (all of them when there is no subject).
+	PersonSources int
 }
 
-func nativePermissionEntries(s nativeSyntax, harnessID string, harness *BundleHarness, policies []bundlePolicy) nativeEntries {
+func nativePermissionEntries(s nativeSyntax, harnessID string, harness *BundleHarness, subject *BundleSubject, policies []bundlePolicy) nativeEntries {
 	kind := s.kind
 	var out nativeEntries
 	for _, policy := range policies {
@@ -127,7 +181,18 @@ func nativePermissionEntries(s nativeSyntax, harnessID string, harness *BundleHa
 		call := rendererCall(kind, harnessID, harness, dst)
 		scope := policy.Scope.AgentID
 		matchPolicy := harnessmatch.Policy{ID: policy.ID, Src: policy.SrcPattern, Dst: dst, Action: effect, Enabled: policy.Enabled, Scope: scope}
-		if applies, _ := harnessmatch.MatchSrc(matchPolicy.Src, call); !applies {
+		applies, human := harnessmatch.MatchSrc(matchPolicy.Src, call)
+		if human && subject.matches(policy.SrcPattern) {
+			// A source naming the installation's subject applies on every
+			// harness of the installation, as "*" does; agent scope and the
+			// dst still decide below.
+			applies = true
+			matchPolicy.Src = "*"
+		}
+		if human && !applies && isPersonSource(policy.SrcPattern) {
+			out.PersonSources++
+		}
+		if !applies {
 			if strings.HasPrefix(policy.SrcPattern, "harness:") {
 				out.OtherHarness.Count++
 				if out.OtherHarness.Example == "" || policy.SrcPattern < out.OtherHarness.Example {
@@ -210,6 +275,12 @@ func nativePermissionEntries(s nativeSyntax, harnessID string, harness *BundleHa
 	sort.Strings(out.Denies)
 	sort.Strings(out.Unenforceable)
 	return out
+}
+
+// isPersonSource reports whether src names a person or group, the sources
+// only the bundle subject can resolve.
+func isPersonSource(src string) bool {
+	return strings.HasPrefix(src, "user:") || strings.HasPrefix(src, "email:") || strings.HasPrefix(src, "group:")
 }
 
 func policyDisplayName(policy bundlePolicy) string {

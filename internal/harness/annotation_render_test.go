@@ -96,35 +96,59 @@ func TestAnnotationPrecedence(t *testing.T) {
 
 	harnessKinds := []string{"claude_code", "codex", "opencode"}
 
+	// The golden annotations describe the principal the user:/group: sources
+	// name (the console's request fixture is dev@example.com). The bundle
+	// subject (HAI-433) is that principal for "creator"; "other" and "none"
+	// prove those sources are not rendered for anyone else, or without a
+	// subject.
+	subjects := []struct {
+		name    string
+		subject *BundleSubject
+	}{
+		{"creator", &BundleSubject{UserID: "usr-fixture-dev", Email: "dev@example.com", Groups: []string{"admins", "members"}}},
+		{"other", &BundleSubject{UserID: "usr-fixture-other", Email: "other@example.com", Groups: []string{"members"}}},
+		{"none", nil},
+	}
+
 	for _, ac := range g.Cases {
 		t.Run(cleanName(ac.Name), func(t *testing.T) {
 			policySet, err := json.Marshal(map[string][]bundlePolicy{"policies": ac.Policies})
 			if err != nil {
 				t.Fatal(err)
 			}
-			bundle := Bundle{PolicySet: policySet}
+			for _, sub := range subjects {
+				t.Run(sub.name, func(t *testing.T) {
+					bundle := Bundle{Schema: BundleSchemaV2, PolicySet: policySet, Subject: sub.subject}
+					for _, kind := range harnessKinds {
+						t.Run(kind, func(t *testing.T) {
+							r, err := render(syntaxFor(kind), "test-harness-id", bundle)
+							if err != nil {
+								t.Fatal(err)
+							}
 
-			for _, kind := range harnessKinds {
-				t.Run(kind, func(t *testing.T) {
-					r, err := render(syntaxFor(kind), "test-harness-id", bundle)
-					if err != nil {
-						t.Fatal(err)
-					}
-
-					for _, exp := range ac.Expected {
-						switch exp.Kind {
-						case "except":
-							testExceptAnnotation(t, kind, "test-harness-id", ac.Policies, exp, r)
-						case "never":
-							testNeverAnnotation(t, kind, "test-harness-id", ac.Policies, exp, r)
-						default:
-							t.Fatalf("unknown expected kind: %s", exp.Kind)
-						}
+							for _, exp := range ac.Expected {
+								switch exp.Kind {
+								case "except":
+									testExceptAnnotation(t, kind, "test-harness-id", sub.subject, ac.Policies, exp, r)
+								case "never":
+									testNeverAnnotation(t, kind, "test-harness-id", sub.subject, ac.Policies, exp, r)
+								default:
+									t.Fatalf("unknown expected kind: %s", exp.Kind)
+								}
+							}
+						})
 					}
 				})
 			}
 		})
 	}
+}
+
+// overrideApplies reports whether src applies to a call on kind for subject,
+// the way the renderer decides it.
+func overrideApplies(src, kind, harnessID string, subject *BundleSubject) bool {
+	applies, human := harnessmatch.MatchSrc(src, harnessmatch.Call{Kind: kind, HarnessID: harnessID})
+	return applies || (human && subject.matches(src))
 }
 
 func cleanName(name string) string {
@@ -136,7 +160,7 @@ func cleanName(name string) string {
 	return name
 }
 
-func testExceptAnnotation(t *testing.T, kind, harnessID string, policies []bundlePolicy, exp annotationExpected, r Rendered) {
+func testExceptAnnotation(t *testing.T, kind, harnessID string, subject *BundleSubject, policies []bundlePolicy, exp annotationExpected, r Rendered) {
 	override := findPolicyByID(policies, exp.By)
 	if override == nil {
 		override = findNonTargetPolicy(policies)
@@ -147,13 +171,14 @@ func testExceptAnnotation(t *testing.T, kind, harnessID string, policies []bundl
 		t.Fatal("no override policy found")
 	}
 
-	call := harnessmatch.Call{Kind: kind, HarnessID: harnessID}
-	applies, human := harnessmatch.MatchSrc(override.SrcPattern, call)
+	denyEntry := nativeEntryFor(syntaxFor(kind), override.DstPattern)
 
-	if human || !applies {
-		if exp.Harnesses.Contains(kind) {
-			t.Skipf("exception expected on %s but override src %q is not renderable (human=%v, applies=%v)",
-				kind, override.SrcPattern, human, applies)
+	if !overrideApplies(override.SrcPattern, kind, harnessID, subject) {
+		// The override names another harness or principal: it is not
+		// rendered, and the target stays allowed.
+		if contains(r.Denies, denyEntry) {
+			t.Errorf("override src %q does not apply on %s but deny %q rendered: Denies=%v",
+				override.SrcPattern, kind, denyEntry, r.Denies)
 		}
 		targetEntry := nativeEntryFor(syntaxFor(kind), target.DstPattern)
 		if !contains(r.Allows, targetEntry) {
@@ -161,8 +186,6 @@ func testExceptAnnotation(t *testing.T, kind, harnessID string, policies []bundl
 		}
 		return
 	}
-
-	denyEntry := nativeEntryFor(syntaxFor(kind), override.DstPattern)
 
 	if exp.Harnesses.Contains(kind) {
 		if !contains(r.Denies, denyEntry) {
@@ -181,7 +204,7 @@ func testExceptAnnotation(t *testing.T, kind, harnessID string, policies []bundl
 	}
 }
 
-func testNeverAnnotation(t *testing.T, kind, harnessID string, policies []bundlePolicy, exp annotationExpected, r Rendered) {
+func testNeverAnnotation(t *testing.T, kind, harnessID string, subject *BundleSubject, policies []bundlePolicy, exp annotationExpected, r Rendered) {
 	override := findPolicyByID(policies, exp.By)
 	if override == nil {
 		override = findNonTargetPolicy(policies)
@@ -190,13 +213,12 @@ func testNeverAnnotation(t *testing.T, kind, harnessID string, policies []bundle
 		t.Fatal("no override policy found")
 	}
 
-	call := harnessmatch.Call{Kind: kind, HarnessID: harnessID}
-	applies, human := harnessmatch.MatchSrc(override.SrcPattern, call)
+	denyEntry := nativeEntryFor(syntaxFor(kind), override.DstPattern)
 
-	if human || !applies {
-		if exp.Harnesses.Contains(kind) {
-			t.Skipf("never-applies expected on %s but override src %q is not renderable (human=%v, applies=%v)",
-				kind, override.SrcPattern, human, applies)
+	if !overrideApplies(override.SrcPattern, kind, harnessID, subject) {
+		if contains(r.Denies, denyEntry) {
+			t.Errorf("override src %q does not apply on %s but deny %q rendered: Denies=%v",
+				override.SrcPattern, kind, denyEntry, r.Denies)
 		}
 		return
 	}
@@ -205,8 +227,14 @@ func testNeverAnnotation(t *testing.T, kind, harnessID string, policies []bundle
 		return
 	}
 
-	t.Skipf("renderer does not filter precedentially-shadowed policies: target %q remains in Allows for %s",
-		exp.Resource, kind)
+	// The renderer keeps the shadowed target allow; the target never applies
+	// because every native store lets the rendered deny win (Claude Code
+	// deny-beats-allow, Codex strictest decision, OpenCode denies written
+	// after allows).
+	if !contains(r.Denies, denyEntry) {
+		t.Errorf("expected shadowing deny %q for resource %q in %s Denies=%v",
+			denyEntry, exp.Resource, kind, r.Denies)
+	}
 }
 
 func findTargetPolicy(policies []bundlePolicy) bundlePolicy {

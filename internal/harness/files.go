@@ -162,6 +162,9 @@ func printRenderHints(out io.Writer, displayName string, r Rendered) {
 	if r.ScopedElsewhere > 0 {
 		fmt.Fprintf(out, "%s: %d policies scoped to another harness (e.g. %s); widen src to harness:* to share them\n", displayName, r.ScopedElsewhere, r.ScopedElsewhereExample)
 	}
+	if r.PersonSourcesSkipped > 0 {
+		fmt.Fprintf(out, "%s: %d user:/group: policies not rendered; the v1 policy bundle carries no subject (upgrade the catalog to serve v2)\n", displayName, r.PersonSourcesSkipped)
+	}
 }
 
 func printHarnessDiff(out io.Writer, path string, before, after []byte) {
