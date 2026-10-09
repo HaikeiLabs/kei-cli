@@ -175,12 +175,21 @@ func testExceptAnnotation(t *testing.T, kind, harnessID string, subject *BundleS
 
 	if !overrideApplies(override.SrcPattern, kind, harnessID, subject) {
 		// The override names another harness or principal: it is not
-		// rendered, and the target stays allowed.
+		// rendered. Another harness's deny leaves the target allowed; a
+		// person's deny the renderer skipped still decides first, so an
+		// overlapping lower target is withheld (HAI-447).
 		if contains(r.Denies, denyEntry) {
 			t.Errorf("override src %q does not apply on %s but deny %q rendered: Denies=%v",
 				override.SrcPattern, kind, denyEntry, r.Denies)
 		}
 		targetEntry := nativeEntryFor(syntaxFor(kind), target.DstPattern)
+		_, human := harnessmatch.MatchSrc(override.SrcPattern, harnessmatch.Call{Kind: kind})
+		if human && blockedBySkippedDeny(target, []bundlePolicy{*override}) {
+			if contains(r.Allows, targetEntry) || !contains(r.PermitsWithheld, policyDisplayName(target)) {
+				t.Errorf("skipped deny %q precedes target: want %q withheld, got Allows=%v Withheld=%v", override.ID, targetEntry, r.Allows, r.PermitsWithheld)
+			}
+			return
+		}
 		if !contains(r.Allows, targetEntry) {
 			t.Errorf("expected target allow %q in %s Allows=%v", targetEntry, kind, r.Allows)
 		}

@@ -116,6 +116,10 @@ type Rendered struct {
 	// PersonSourcesSkipped counts the user:/email:/group: policies a v1
 	// bundle could not render: only v2 carries the subject they need.
 	PersonSourcesSkipped int
+	// PermitsWithheld names the permits not rendered because a
+	// higher-precedence deny the renderer skipped (a user:/email:/group:
+	// source it cannot resolve) overlaps them; the harness asks instead.
+	PermitsWithheld []string
 	// The bundle identity, kept so Apply can refuse a rollback.
 	BundleVersion int64
 	BundleDigest  string

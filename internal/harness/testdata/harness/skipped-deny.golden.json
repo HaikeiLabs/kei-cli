@@ -1,0 +1,173 @@
+{
+  "equal-priority-skipped-deny-precedes-permit": {
+    "claude_code": {
+      "allows": [
+        "Skill(lint)"
+      ],
+      "denies": [],
+      "withheld": [
+        "allow deploy skill",
+        "allow git status"
+      ]
+    },
+    "codex": {
+      "allows": [],
+      "denies": [],
+      "withheld": [
+        "allow git status"
+      ]
+    },
+    "opencode": {
+      "allows": [
+        "Skill(lint)"
+      ],
+      "denies": [],
+      "withheld": [
+        "allow deploy skill",
+        "allow git status"
+      ]
+    }
+  },
+  "non-overlapping-or-higher-permits-still-render": {
+    "claude_code": {
+      "allows": [
+        "Bash(git:*)",
+        "Bash(go test:*)",
+        "Bash(make:*)"
+      ],
+      "denies": [],
+      "withheld": []
+    },
+    "codex": {
+      "allows": [
+        "[\"git\"]",
+        "[\"go\", \"test\"]",
+        "[\"make\"]"
+      ],
+      "denies": [],
+      "withheld": []
+    },
+    "opencode": {
+      "allows": [
+        "git",
+        "go test",
+        "make"
+      ],
+      "denies": [],
+      "withheld": []
+    }
+  },
+  "v1-group-deny-withholds-star-permit": {
+    "claude_code": {
+      "allows": [
+        "Bash(go test:*)"
+      ],
+      "denies": [],
+      "withheld": [
+        "allow git"
+      ]
+    },
+    "codex": {
+      "allows": [
+        "[\"go\", \"test\"]"
+      ],
+      "denies": [],
+      "withheld": [
+        "allow git"
+      ]
+    },
+    "opencode": {
+      "allows": [
+        "go test"
+      ],
+      "denies": [],
+      "withheld": [
+        "allow git"
+      ]
+    }
+  },
+  "v2-no-subject-group-deny-withholds-star-permit": {
+    "claude_code": {
+      "allows": [
+        "Bash(go test:*)"
+      ],
+      "denies": [],
+      "withheld": [
+        "allow git"
+      ]
+    },
+    "codex": {
+      "allows": [
+        "[\"go\", \"test\"]"
+      ],
+      "denies": [],
+      "withheld": [
+        "allow git"
+      ]
+    },
+    "opencode": {
+      "allows": [
+        "go test"
+      ],
+      "denies": [],
+      "withheld": [
+        "allow git"
+      ]
+    }
+  },
+  "v2-subject-group-matches-renders-deny": {
+    "claude_code": {
+      "allows": [
+        "Bash(git:*)",
+        "Bash(go test:*)"
+      ],
+      "denies": [
+        "Bash(git push:*)"
+      ],
+      "withheld": []
+    },
+    "codex": {
+      "allows": [
+        "[\"git\"]",
+        "[\"go\", \"test\"]"
+      ],
+      "denies": [
+        "[\"git\", \"push\"]"
+      ],
+      "withheld": []
+    },
+    "opencode": {
+      "allows": [
+        "git",
+        "go test"
+      ],
+      "denies": [
+        "git push"
+      ],
+      "withheld": []
+    }
+  },
+  "v2-subject-other-group-deny-withholds-star-permit": {
+    "claude_code": {
+      "allows": [],
+      "denies": [],
+      "withheld": [
+        "allow git"
+      ]
+    },
+    "codex": {
+      "allows": [],
+      "denies": [],
+      "withheld": [
+        "allow git"
+      ]
+    },
+    "opencode": {
+      "allows": [],
+      "denies": [],
+      "withheld": [
+        "allow git"
+      ]
+    }
+  }
+}
