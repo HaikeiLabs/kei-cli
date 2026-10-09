@@ -106,6 +106,9 @@ type Rendered struct {
 	// NotEnforceable names the policies that apply to this harness but have
 	// no native equivalent (for example skill: and tool: policies in Codex).
 	NotEnforceable []string
+	// DecidedLive names the policies that apply to a harness with no native
+	// allowlist, where kei-proxy decides every call at run time (openwebui).
+	DecidedLive []string
 	// ScopedElsewhere counts the policies whose src names a different
 	// harness; ScopedElsewhereExample is one such src for the sync hint.
 	ScopedElsewhere        int
@@ -170,7 +173,7 @@ func NewRegistry(hs ...Harness) *Registry {
 
 // Default is the registry of built-in harnesses. A new harness kind is one
 // file plus one entry here.
-var Default = NewRegistry(claudeCode{}, codex{}, openCode{}, custom{})
+var Default = NewRegistry(claudeCode{}, codex{}, openCode{}, custom{}, OpenWebUI{})
 
 // Register adds h, replacing any harness of the same kind. A Registry is not
 // safe for concurrent registration; register at startup.

@@ -9,10 +9,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
+
+	"github.com/HaikeiLabs/kei-cli/internal/harness"
 )
 
 type botInstallation struct {
@@ -89,7 +90,7 @@ func runBotListCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 			}
 			heartbeat := "never"
 			if item.LastHeartbeatAt != nil {
-				heartbeat = relativeTime(time.Since(*item.LastHeartbeatAt))
+				heartbeat = harness.RelativeTime(time.Since(*item.LastHeartbeatAt))
 			}
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", item.ID, item.DisplayName, item.Platform, item.Status, workspaces, heartbeat)
 		}
@@ -164,21 +165,5 @@ func listBotInstallations(ctx context.Context, client *http.Client, baseURL, tok
 			return items, page.NextPageToken, nil
 		}
 		pageToken = page.NextPageToken
-	}
-}
-
-func relativeTime(age time.Duration) string {
-	if age < 0 {
-		age = 0
-	}
-	switch {
-	case age < time.Minute:
-		return strconv.FormatInt(int64(age.Seconds()), 10) + "s ago"
-	case age < time.Hour:
-		return strconv.FormatInt(int64(age.Minutes()), 10) + "m ago"
-	case age < 24*time.Hour:
-		return strconv.FormatInt(int64(age.Hours()), 10) + "h ago"
-	default:
-		return strconv.FormatInt(int64(age.Hours()/24), 10) + "d ago"
 	}
 }

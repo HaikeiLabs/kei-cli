@@ -100,6 +100,10 @@ func runHarnessAdd(args []string, stdout, stderr io.Writer, client *http.Client,
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		return 2
 	}
+	if *kind == (harness.OpenWebUI{}).Kind() {
+		fmt.Fprintln(stderr, "harness add: Open WebUI configures itself on deploy; use kei harness list/sync --harness openwebui")
+		return 2
+	}
 	if _, ok := registry.Get(*kind); !ok {
 		fmt.Fprintf(stderr, "harness add requires --kind %s\n", strings.Join(registry.Kinds(), "|"))
 		return 2
@@ -217,56 +221,39 @@ func defaultAgentID(client *http.Client, baseURL, token, installationID string) 
 func runHarnessList(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("harness list", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	installation := flags.String("installation", "", "runtime installation ID")
+	installation := flags.String("installation", "", "runtime installation ID (omit to list only Open WebUI installations)")
 	jsonOutput := flags.Bool("json", false, "output JSON")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		return 2
 	}
-	if !isUUID(*installation) {
-		fmt.Fprintln(stderr, "harness list requires --installation UUID")
+	if *installation != "" && !isUUID(*installation) {
+		fmt.Fprintln(stderr, "harness list: --installation must be a UUID")
 		return 2
 	}
 	baseURL, token, ok := harnessSession(store, stderr)
 	if !ok {
 		return 1
 	}
-	var harnesses []harnessResource
-	pageToken := ""
-	seenTokens := map[string]bool{}
-	for {
-		query := url.Values{"page_size": {"100"}}
-		if pageToken != "" {
-			query.Set("page_token", pageToken)
-		}
-		payload, status, err := harnessRequest(context.Background(), client, baseURL, token, http.MethodGet, harnessCollectionPath(*installation)+"?"+query.Encode(), nil)
-		if err != nil || status < 200 || status > 299 {
-			fmt.Fprintf(stderr, "harness list: %s\n", harnessResponseError(payload, status, err))
+	harnesses, ok := listInstallationHarnesses(client, baseURL, token, *installation, stderr)
+	if !ok {
+		return 1
+	}
+	// Open WebUI installations are listed from the existing
+	// runtime-installations calls; with --installation they are best effort.
+	openWebUI, err := listOpenWebUIInstallations(context.Background(), client, baseURL, token)
+	if err != nil {
+		if *installation == "" {
+			fmt.Fprintf(stderr, "harness list: Open WebUI installations: %v\n", err)
 			return 1
 		}
-		var page struct {
-			Harnesses     []harnessResource `json:"harnesses"`
-			NextPageToken string            `json:"next_page_token"`
-		}
-		if err := json.Unmarshal(payload, &page); err != nil {
-			fmt.Fprintf(stderr, "harness list: decode response: %v\n", err)
-			return 1
-		}
-		harnesses = append(harnesses, page.Harnesses...)
-		if page.NextPageToken == "" {
-			break
-		}
-		if seenTokens[page.NextPageToken] {
-			fmt.Fprintln(stderr, "harness list: repeated page token")
-			return 1
-		}
-		seenTokens[page.NextPageToken] = true
-		pageToken = page.NextPageToken
+		fmt.Fprintf(stderr, "harness list: Open WebUI installations unavailable: %v\n", err)
 	}
 	if *jsonOutput {
 		out, err := json.Marshal(struct {
-			Harnesses     []harnessResource `json:"harnesses"`
-			NextPageToken string            `json:"next_page_token"`
-		}{Harnesses: harnesses})
+			Harnesses              []harnessResource               `json:"harnesses"`
+			NextPageToken          string                          `json:"next_page_token"`
+			OpenWebUIInstallations []harness.OpenWebUIInstallation `json:"openwebui_installations,omitempty"`
+		}{Harnesses: harnesses, OpenWebUIInstallations: openWebUI})
 		if err != nil {
 			fmt.Fprintf(stderr, "harness list: encode output: %v\n", err)
 			return 1
@@ -274,18 +261,68 @@ func runHarnessList(args []string, stdout, stderr io.Writer, client *http.Client
 		_, _ = stdout.Write(out)
 		return 0
 	}
-	if len(harnesses) == 0 {
-		fmt.Fprintln(stdout, "No harnesses found.")
-		return 0
-	}
-	for _, h := range harnesses {
-		if h.LastSyncedAt != "" {
-			fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", h.AgentName, h.Kind, h.AgentID, h.LastSyncedAt)
-		} else {
-			fmt.Fprintf(stdout, "%s\t%s\t%s\n", h.AgentName, h.Kind, h.AgentID)
+	if *installation != "" {
+		if len(harnesses) == 0 {
+			fmt.Fprintln(stdout, "No harnesses found.")
+		}
+		for _, h := range harnesses {
+			if h.LastSyncedAt != "" {
+				fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", h.AgentName, h.Kind, h.AgentID, h.LastSyncedAt)
+			} else {
+				fmt.Fprintf(stdout, "%s\t%s\t%s\n", h.AgentName, h.Kind, h.AgentID)
+			}
 		}
 	}
+	if len(openWebUI) > 0 {
+		if *installation != "" {
+			fmt.Fprintln(stdout)
+		}
+		harness.WriteOpenWebUIInstallations(stdout, openWebUI, time.Now())
+	} else if *installation == "" {
+		fmt.Fprintln(stdout, "No Open WebUI installations found.")
+	}
 	return 0
+}
+
+// listInstallationHarnesses pages through the harnesses registered on one
+// installation; it returns none when installation is empty.
+func listInstallationHarnesses(client *http.Client, baseURL, token, installation string, stderr io.Writer) ([]harnessResource, bool) {
+	var harnesses []harnessResource
+	if installation == "" {
+		return nil, true
+	}
+	pageToken := ""
+	seenTokens := map[string]bool{}
+	for {
+		query := url.Values{"page_size": {"100"}}
+		if pageToken != "" {
+			query.Set("page_token", pageToken)
+		}
+		payload, status, err := harnessRequest(context.Background(), client, baseURL, token, http.MethodGet, harnessCollectionPath(installation)+"?"+query.Encode(), nil)
+		if err != nil || status < 200 || status > 299 {
+			fmt.Fprintf(stderr, "harness list: %s\n", harnessResponseError(payload, status, err))
+			return nil, false
+		}
+		var page struct {
+			Harnesses     []harnessResource `json:"harnesses"`
+			NextPageToken string            `json:"next_page_token"`
+		}
+		if err := json.Unmarshal(payload, &page); err != nil {
+			fmt.Fprintf(stderr, "harness list: decode response: %v\n", err)
+			return nil, false
+		}
+		harnesses = append(harnesses, page.Harnesses...)
+		if page.NextPageToken == "" {
+			break
+		}
+		if seenTokens[page.NextPageToken] {
+			fmt.Fprintln(stderr, "harness list: repeated page token")
+			return nil, false
+		}
+		seenTokens[page.NextPageToken] = true
+		pageToken = page.NextPageToken
+	}
+	return harnesses, true
 }
 
 func runHarnessRemove(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore, registry *harness.Registry) int {
@@ -392,7 +429,21 @@ func runHarnessSync(args []string, stdout, stderr io.Writer, client *http.Client
 	dryRun := flags.Bool("dry-run", false, "show changes without writing")
 	check := flags.Bool("check", false, "report drift between native config, the sync ledger and the current bundle; exit 1 on drift, 2 on error")
 	jsonOutput := flags.Bool("json", false, "with --check, print a machine-readable report ("+harness.DriftSchema+")")
+	openWebUIURL := flags.String("url", "", "with --harness openwebui, the Open WebUI base URL to report on (admin token from OPENWEBUI_ADMIN_TOKEN)")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+		return 2
+	}
+	if *kindFilter == (harness.OpenWebUI{}).Kind() {
+		// Read-only: kei-openwebui seeds its own functions and kei-proxy
+		// decides every call live, so there is no bundle to render.
+		if *openWebUIURL == "" || *jsonOutput {
+			fmt.Fprintln(stderr, "harness sync --harness openwebui requires --url BASE_URL and does not take --json")
+			return 2
+		}
+		return checkOpenWebUI(context.Background(), *openWebUIURL, os.Getenv("OPENWEBUI_ADMIN_TOKEN"), stdout, stderr, client)
+	}
+	if *openWebUIURL != "" {
+		fmt.Fprintln(stderr, "harness sync: --url requires --harness openwebui")
 		return 2
 	}
 	if *jsonOutput && !*check {
