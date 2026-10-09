@@ -37,7 +37,7 @@ env:
 jobs:
   resolve-version:
     name: Resolve latest published kei-cli
-    runs-on: kei-docker-ci
+    runs-on: kei-public-ci
     outputs:
       version: ${{ steps.latest.outputs.version }}
     steps:
@@ -55,7 +55,7 @@ jobs:
 
   resolve-proxy-version:
     name: Resolve pinned kei-proxy version
-    runs-on: kei-docker-ci
+    runs-on: kei-public-ci
     outputs:
       version: ${{ steps.pin.outputs.version }}
     steps:
@@ -82,8 +82,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: kei-docker-ci,    shell: sh,   os: Linux, arch: x86_64 }
-          - { runner: kei-docker-ci,    shell: bash, os: Linux, arch: x86_64 }
+          - { runner: kei-public-ci,    shell: sh,   os: Linux, arch: x86_64 }
+          - { runner: kei-public-ci,    shell: bash, os: Linux, arch: x86_64 }
     env:
       SHELL_NAME: ${{ matrix.shell }}
       EXPECTED_OS: ${{ matrix.os }}
@@ -224,7 +224,7 @@ jobs:
   install-alpine:
     name: Install (alpine / busybox ash)
     needs: resolve-version
-    runs-on: kei-docker-ci
+    runs-on: kei-public-ci
     env:
       SHELL_NAME: sh
       EXPECTED_OS: Linux
@@ -302,8 +302,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: kei-docker-ci, shell: sh }
-          - { runner: kei-docker-ci, shell: bash }
+          - { runner: kei-public-ci, shell: sh }
+          - { runner: kei-public-ci, shell: bash }
     env:
       SHELL_NAME: ${{ matrix.shell }}
       VERSION: ${{ needs.resolve-version.outputs.version }}
@@ -494,7 +494,7 @@ jobs:
   proxy-only-uninstall-alpine:
     name: proxy-only + uninstall (alpine / busybox ash)
     needs: [resolve-version, resolve-proxy-version]
-    runs-on: kei-docker-ci
+    runs-on: kei-public-ci
     env:
       SHELL_NAME: sh
       VERSION: ${{ needs.resolve-version.outputs.version }}

@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   test:
-    runs-on: kei-docker-ci
+    runs-on: kei-public-ci
     steps:
       - uses: actions/checkout@v4
 

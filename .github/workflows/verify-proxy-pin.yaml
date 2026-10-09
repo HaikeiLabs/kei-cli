@@ -9,7 +9,7 @@ on:
 
 jobs:
   verify-pin:
-    runs-on: kei-docker-ci
+    runs-on: kei-public-ci
     steps:
       - uses: actions/checkout@v4
 
@@ -37,7 +37,7 @@ jobs:
       - name: Verify kei-proxy version matches pin
         run: |
           EXPECTED="${{ steps.pin.outputs.version }}"
-          # Map runner OS/arch (kei-docker-ci = Linux x86_64)
+          # Map runner OS/arch (kei-public-ci = Linux x86_64)
           OS="linux"
           ARCH="amd64"
           PROXY_BINARY="tmp/kei-proxy/${OS}/${ARCH}/kei-proxy"
