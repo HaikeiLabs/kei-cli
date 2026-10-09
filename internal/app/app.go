@@ -174,6 +174,7 @@ func PrintUsage(w io.Writer) {
 	fmt.Fprintln(w, "  kei audit decrypt --record ID --identity PATH (--out FILE | --stdout)")
 	fmt.Fprintln(w, "  See https://github.com/HaikeiLabs/kei/blob/main/docs/adr/030-audit-args-encryption.md")
 	fmt.Fprintln(w, "  kei harness add|list|remove|sync [--installation ID] [--harness kind] [--dry-run | --check [--json]]")
+	fmt.Fprintln(w, "  kei harness sync --harness openwebui --url BASE_URL (read-only; admin token from OPENWEBUI_ADMIN_TOKEN; exit 1 on drift)")
 	fmt.Fprintln(w, "  kei runtime heartbeat")
 	fmt.Fprintln(w, "  kei runtime service install [--config PATH]")
 	fmt.Fprintln(w, "  kei runtime service uninstall")
