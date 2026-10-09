@@ -10,7 +10,7 @@ import (
 	"github.com/HaikeiLabs/kei-connector-contracts/harnessmatch"
 )
 
-// Bundle is the unsigned policy-bundle/v1 payload fetched by both the CLI and runtime.
+// Bundle is an unsigned policy bundle fetched by the CLI and runtime.
 type Bundle struct {
 	Schema         string `json:"schema"`
 	BundleID       string `json:"bundle_id"`

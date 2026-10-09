@@ -235,6 +235,66 @@ func TestHarnessListFollowsAIPPageTokens(t *testing.T) {
 	}
 }
 
+func TestFetchHarnessBundleFallsBackToV1(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/runtime/whoami" {
+			_, _ = w.Write([]byte(`{"id":"runtime-id","org_id":"org-id","platform":"cli"}`))
+			return
+		}
+		requests++
+		if requests == 1 {
+			if got := r.Header.Get("Accept"); got != "application/vnd.kei.policy-bundle.v2+json, application/vnd.kei.policy-bundle.v1+json" {
+				t.Errorf("initial Accept = %q", got)
+			}
+			w.WriteHeader(http.StatusNotAcceptable)
+			return
+		}
+		if got := r.Header.Get("Accept"); got != "application/vnd.kei.policy-bundle.v1+json" {
+			t.Errorf("fallback Accept = %q", got)
+		}
+		_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v1","bundle_id":"b","bundle_version":1,"policy_revision":1,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harnesses":[],"policy_set":{"policies":[]}}`))
+	}))
+	defer server.Close()
+	bundle, _, err := fetchHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "runtime-secret"}, server.Client())
+	if err != nil {
+		t.Fatalf("fetchHarnessBundle: %v", err)
+	}
+	if bundle.Schema != "kei.policy-bundle/v1" || requests != 2 {
+		t.Fatalf("bundle schema=%q, bundle requests=%d", bundle.Schema, requests)
+	}
+}
+
+func TestFetchHarnessBundleUsesV2HarnessPolicies(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/runtime/whoami" {
+			_, _ = w.Write([]byte(`{"id":"runtime-id","org_id":"org-id","platform":"cli"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v2","bundle_id":"b","bundle_version":1,"policy_revision":1,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harness_match_semantics":"kei.harness-match/v1","harnesses":[],"policy_set":{"harness_policies":[{"policy_id":"p1","name":"Allow Git","src_pattern":"user:123","dst_pattern":"shell:git","action":"permit"}]}}`))
+	}))
+	defer server.Close()
+	bundle, _, err := fetchHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "runtime-secret"}, server.Client())
+	if err != nil {
+		t.Fatalf("fetchHarnessBundle: %v", err)
+	}
+	var set struct {
+		Policies []struct {
+			ID         string `json:"id"`
+			SrcPattern string `json:"src_pattern"`
+			DstPattern string `json:"dst_pattern"`
+			Effect     string `json:"effect"`
+			Enabled    bool   `json:"enabled"`
+		} `json:"policies"`
+	}
+	if err := json.Unmarshal(bundle.PolicySet, &set); err != nil {
+		t.Fatal(err)
+	}
+	if bundle.Schema != "kei.policy-bundle/v2" || len(set.Policies) != 1 || set.Policies[0].ID != "p1" || set.Policies[0].DstPattern != "shell:git" || !set.Policies[0].Enabled {
+		t.Fatalf("v2 bundle policy set = %#v (schema %s)", set, bundle.Schema)
+	}
+}
+
 func TestHarnessSyncFetchesBundleWritesManagedConfigWithBackupAndHook(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

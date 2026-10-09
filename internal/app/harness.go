@@ -492,6 +492,7 @@ func fetchHarnessBundle(ctx context.Context, config runtimeConfig, client *http.
 		return bundle, nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+config.RuntimeToken)
+	req.Header.Set("Accept", "application/vnd.kei.policy-bundle.v2+json, application/vnd.kei.policy-bundle.v1+json")
 	resp, err := client.Do(req)
 	if err != nil {
 		return bundle, nil, fmt.Errorf("fetch bundle: %w", err)
@@ -501,11 +502,57 @@ func fetchHarnessBundle(ctx context.Context, config runtimeConfig, client *http.
 	if readErr != nil {
 		return bundle, nil, fmt.Errorf("read bundle: %w", readErr)
 	}
+	// Older catalogs may reject v2 negotiation. Retry explicitly as v1; do not
+	// mask authentication, authorization, or transient server failures.
+	if resp.StatusCode == http.StatusNotAcceptable || resp.StatusCode == http.StatusUnsupportedMediaType {
+		req, err = http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return bundle, nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+config.RuntimeToken)
+		req.Header.Set("Accept", "application/vnd.kei.policy-bundle.v1+json")
+		resp, err = client.Do(req)
+		if err != nil {
+			return bundle, nil, fmt.Errorf("fetch v1 bundle: %w", err)
+		}
+		payload, readErr = io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		_ = resp.Body.Close()
+		if readErr != nil {
+			return bundle, nil, fmt.Errorf("read v1 bundle: %w", readErr)
+		}
+	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return bundle, nil, fmt.Errorf("fetch bundle: %s", harnessResponseError(payload, resp.StatusCode, nil))
 	}
-	if err := json.Unmarshal(payload, &bundle); err != nil || bundle.Schema != "kei.policy-bundle/v1" || bundle.BundleID == "" || bundle.BundleVersion < 1 || bundle.PolicyRevision < 1 || bundle.NotAfter.IsZero() {
+	if err := json.Unmarshal(payload, &bundle); err != nil || (bundle.Schema != "kei.policy-bundle/v1" && bundle.Schema != "kei.policy-bundle/v2") || bundle.BundleID == "" || bundle.BundleVersion < 1 || bundle.PolicyRevision < 1 || bundle.NotAfter.IsZero() {
 		return harness.Bundle{}, nil, errors.New("invalid policy bundle")
+	}
+	if bundle.Schema == "kei.policy-bundle/v2" {
+		var v2 struct {
+			PolicySet struct {
+				HarnessPolicies []struct {
+					PolicyID   string `json:"policy_id"`
+					Name       string `json:"name"`
+					SrcPattern string `json:"src_pattern"`
+					DstPattern string `json:"dst_pattern"`
+					Action     string `json:"action"`
+					Scope      struct {
+						AgentID *string `json:"agent_id"`
+					} `json:"scope"`
+				} `json:"harness_policies"`
+			} `json:"policy_set"`
+		}
+		if err := json.Unmarshal(payload, &v2); err != nil {
+			return harness.Bundle{}, nil, errors.New("invalid v2 harness policies")
+		}
+		policies := make([]map[string]any, 0, len(v2.PolicySet.HarnessPolicies))
+		for _, p := range v2.PolicySet.HarnessPolicies {
+			policies = append(policies, map[string]any{"id": p.PolicyID, "name": p.Name, "src_pattern": p.SrcPattern, "dst_pattern": p.DstPattern, "effect": p.Action, "enabled": true, "scope": p.Scope})
+		}
+		bundle.PolicySet, err = json.Marshal(map[string]any{"policies": policies})
+		if err != nil {
+			return harness.Bundle{}, nil, errors.New("invalid v2 harness policies")
+		}
 	}
 	digest := sha256.Sum256(payload)
 	bundle.PayloadDigest = "sha256:" + hex.EncodeToString(digest[:])
