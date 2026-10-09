@@ -1208,12 +1208,27 @@ func TestFeedbackSubmitsDescriptionAndEvidenceAfterConfirmation(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(feedbackSubmissionResponse{ReportID: "feedback-123", ReceivedAt: "2026-10-07T00:00:00Z"})
 	}))
 	defer server.Close()
-	t.Setenv("KEI_WEB_URL", server.URL)
-	store := &memoryCredentialStore{server: server.URL, token: "cli-session-token"}
+	apiBaseURL := "https://api.example.test"
+	t.Setenv("KEI_WEB_URL", apiBaseURL)
+	store := &memoryCredentialStore{server: apiBaseURL, token: "cli-session-token"}
+	var targetURL string
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		targetURL = request.URL.String()
+		forwarded := request.Clone(request.Context())
+		forwardedURL := *request.URL
+		forwardedURL.Scheme = "http"
+		forwardedURL.Host = server.Listener.Addr().String()
+		forwarded.URL = &forwardedURL
+		forwarded.Host = forwardedURL.Host
+		return server.Client().Do(forwarded)
+	})}
 	var stdout, stderr bytes.Buffer
-	code := runFeedbackCommand([]string{"--description", "The session stopped unexpectedly.", "--session", path, "--yes"}, &stdout, &stderr, strings.NewReader(""), server.Client(), store, "1.2.3")
+	code := runFeedbackCommand([]string{"--description", "The session stopped unexpectedly.", "--session", path, "--yes"}, &stdout, &stderr, strings.NewReader(""), client, store, "1.2.3")
 	if code != 0 {
 		t.Fatalf("feedback exit = %d, stderr = %s", code, stderr.String())
+	}
+	if targetURL != "https://app.example.test/api/bug-reports" {
+		t.Fatalf("feedback URL = %q", targetURL)
 	}
 	if !strings.Contains(stdout.String(), "session.jsonl") || !strings.Contains(stdout.String(), "Feedback submitted: feedback-123") {
 		t.Fatalf("feedback output = %q", stdout.String())
