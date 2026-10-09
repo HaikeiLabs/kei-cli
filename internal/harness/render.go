@@ -82,6 +82,7 @@ type bundlePolicy struct {
 	DstPattern string `json:"dst_pattern"`
 	Effect     string `json:"effect"`
 	Action     string `json:"action"`
+	Priority   int    `json:"priority"`
 	Enabled    bool   `json:"enabled"`
 	Scope      struct {
 		AgentID *string `json:"agent_id"`
@@ -142,6 +143,7 @@ func render(s nativeSyntax, harnessID string, b Bundle) (Rendered, error) {
 		ScopedElsewhere:        entries.OtherHarness.Count,
 		ScopedElsewhereExample: entries.OtherHarness.Example,
 		PersonSourcesSkipped:   personSkipped,
+		PermitsWithheld:        entries.Withheld,
 		BundleVersion:          b.BundleVersion,
 		BundleDigest:           b.PayloadDigest,
 		NotAfter:               b.NotAfter,
@@ -164,11 +166,26 @@ type nativeEntries struct {
 	// PersonSources counts enabled user:, email: and group: sourced policies
 	// that did not name the subject (all of them when there is no subject).
 	PersonSources int
+	// Withheld names the permits not rendered because a skipped
+	// higher-precedence deny overlaps them (ADR-029 §4).
+	Withheld []string
+}
+
+// renderedPermit is a permit the walk would render, kept until every skipped
+// deny is known.
+type renderedPermit struct {
+	policy bundlePolicy
+	entry  string
 }
 
 func nativePermissionEntries(s nativeSyntax, harnessID string, harness *BundleHarness, subject *BundleSubject, policies []bundlePolicy) nativeEntries {
 	kind := s.kind
 	var out nativeEntries
+	var permits []renderedPermit
+	// skippedDenies are the denies with a human source the renderer cannot
+	// resolve. Each still decides before every lower-precedence policy, so an
+	// overlapping lower permit is withheld rather than rendered as an allow.
+	var skippedDenies []bundlePolicy
 	for _, policy := range policies {
 		effect := policy.Effect
 		if effect == "" {
@@ -191,6 +208,9 @@ func nativePermissionEntries(s nativeSyntax, harnessID string, harness *BundleHa
 		}
 		if human && !applies && isPersonSource(policy.SrcPattern) {
 			out.PersonSources++
+		}
+		if human && !applies && effect == "deny" && (scope == nil || *scope == call.AgentID) {
+			skippedDenies = append(skippedDenies, policy)
 		}
 		if !applies {
 			if strings.HasPrefix(policy.SrcPattern, "harness:") {
@@ -266,15 +286,102 @@ func nativePermissionEntries(s nativeSyntax, harnessID string, harness *BundleHa
 			continue
 		}
 		if result.Outcome == harnessmatch.OutcomePermit {
-			out.Allows = append(out.Allows, entry)
+			permits = append(permits, renderedPermit{policy: policy, entry: entry})
 		} else {
 			out.Denies = append(out.Denies, entry)
 		}
 	}
+	for _, permit := range permits {
+		if blockedBySkippedDeny(permit.policy, skippedDenies) {
+			out.Withheld = append(out.Withheld, policyDisplayName(permit.policy))
+			continue
+		}
+		out.Allows = append(out.Allows, permit.entry)
+	}
 	sort.Strings(out.Allows)
 	sort.Strings(out.Denies)
 	sort.Strings(out.Unenforceable)
+	sort.Strings(out.Withheld)
 	return out
+}
+
+// blockedBySkippedDeny reports whether a skipped deny precedes permit and
+// overlaps its dst.
+func blockedBySkippedDeny(permit bundlePolicy, denies []bundlePolicy) bool {
+	for _, deny := range denies {
+		if precedes(deny, permit) && dstOverlaps(deny.DstPattern, permit.DstPattern) {
+			return true
+		}
+	}
+	return false
+}
+
+// precedes reports whether a decides before b under ADR-028 §2: priority
+// descending, deny before permit at equal priority, then id ascending.
+func precedes(a, b bundlePolicy) bool {
+	if a.Priority != b.Priority {
+		return a.Priority > b.Priority
+	}
+	if ad, bd := policyEffect(a) == "deny", policyEffect(b) == "deny"; ad != bd {
+		return ad
+	}
+	return a.ID < b.ID
+}
+
+func policyEffect(p bundlePolicy) string {
+	if p.Effect != "" {
+		return p.Effect
+	}
+	return p.Action
+}
+
+// dstOverlaps reports whether some call could match both a deny's dst and a
+// rendered permit's dst (shell:, skill: or path:). It errs toward overlap: a
+// false positive only withholds a permit, so the harness asks.
+func dstOverlaps(deny, permit string) bool {
+	if deny == "*" {
+		return true
+	}
+	dScheme, dValue, _ := strings.Cut(deny, ":")
+	pScheme, pValue, _ := strings.Cut(permit, ":")
+	if dScheme == "tool" {
+		// A deny on the shell tool itself, or on every tool, covers every
+		// shell command.
+		return pScheme == "shell" && (dValue == "*" || strings.HasSuffix(dValue, ".bash") || strings.HasSuffix(dValue, ".shell"))
+	}
+	if dScheme != pScheme {
+		return false
+	}
+	switch dScheme {
+	case "shell":
+		d, p := strings.Fields(dValue), strings.Fields(pValue)
+		if len(d) == 0 || d[0] == "*" {
+			return true
+		}
+		n := min(len(d), len(p))
+		return slices.Equal(d[:n], p[:n])
+	case "skill":
+		return dValue == "*" || pValue == "*" || dValue == pValue
+	case "path":
+		return globsOverlap(strings.Split(dValue, "/"), strings.Split(pValue, "/"))
+	}
+	return false
+}
+
+// globsOverlap reports whether two path globs could match a common path. A
+// ** or ~ segment overlaps anything that follows; a segment holding * is
+// taken to overlap any segment.
+func globsOverlap(a, b []string) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return len(a) == len(b)
+	}
+	if a[0] == "**" || b[0] == "**" || a[0] == "*" && len(a) == 1 || b[0] == "*" && len(b) == 1 || a[0] == "~" || b[0] == "~" {
+		return true
+	}
+	if a[0] != b[0] && !strings.Contains(a[0], "*") && !strings.Contains(b[0], "*") {
+		return false
+	}
+	return globsOverlap(a[1:], b[1:])
 }
 
 // isPersonSource reports whether src names a person or group, the sources

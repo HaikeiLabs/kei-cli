@@ -162,6 +162,9 @@ func printRenderHints(out io.Writer, displayName string, r Rendered) {
 	if r.ScopedElsewhere > 0 {
 		fmt.Fprintf(out, "%s: %d policies scoped to another harness (e.g. %s); widen src to harness:* to share them\n", displayName, r.ScopedElsewhere, r.ScopedElsewhereExample)
 	}
+	for _, name := range r.PermitsWithheld {
+		fmt.Fprintf(out, "not rendered in %s: %s (a higher-precedence user:/group: deny overlaps it; the harness will ask)\n", displayName, name)
+	}
 	if r.PersonSourcesSkipped > 0 {
 		fmt.Fprintf(out, "%s: %d user:/group: policies not rendered; the v1 policy bundle carries no subject (upgrade the catalog to serve v2)\n", displayName, r.PersonSourcesSkipped)
 	}

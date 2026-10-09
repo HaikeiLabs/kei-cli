@@ -1,0 +1,69 @@
+{
+  "subject": {"user_id": "usr-fixture-dev", "email": "dev@example.com", "groups": ["release_eng"]},
+  "cases": [
+    {
+      "name": "v1-group-deny-withholds-star-permit",
+      "schema": "kei.policy-bundle/v1",
+      "with_subject": true,
+      "policies": [
+        {"id": "p-deny-push", "name": "release_eng: deny git push", "src_pattern": "group:release_eng", "dst_pattern": "shell:git push", "effect": "deny", "priority": 20, "enabled": true},
+        {"id": "p-allow-git", "name": "allow git", "src_pattern": "*", "dst_pattern": "shell:git", "effect": "permit", "priority": 10, "enabled": true},
+        {"id": "p-allow-go", "name": "allow go test", "src_pattern": "*", "dst_pattern": "shell:go test", "effect": "permit", "priority": 10, "enabled": true}
+      ]
+    },
+    {
+      "name": "v2-no-subject-group-deny-withholds-star-permit",
+      "schema": "kei.policy-bundle/v2",
+      "with_subject": false,
+      "policies": [
+        {"id": "p-deny-push", "name": "release_eng: deny git push", "src_pattern": "group:release_eng", "dst_pattern": "shell:git push", "effect": "deny", "priority": 20, "enabled": true},
+        {"id": "p-allow-git", "name": "allow git", "src_pattern": "*", "dst_pattern": "shell:git", "effect": "permit", "priority": 10, "enabled": true},
+        {"id": "p-allow-go", "name": "allow go test", "src_pattern": "*", "dst_pattern": "shell:go test", "effect": "permit", "priority": 10, "enabled": true}
+      ]
+    },
+    {
+      "name": "v2-subject-other-group-deny-withholds-star-permit",
+      "schema": "kei.policy-bundle/v2",
+      "with_subject": true,
+      "policies": [
+        {"id": "p-deny-push", "name": "contractors: deny git push", "src_pattern": "group:contractors", "dst_pattern": "shell:git push", "effect": "deny", "priority": 20, "enabled": true},
+        {"id": "p-allow-git", "name": "allow git", "src_pattern": "*", "dst_pattern": "shell:git", "effect": "permit", "priority": 10, "enabled": true}
+      ]
+    },
+    {
+      "name": "v2-subject-group-matches-renders-deny",
+      "schema": "kei.policy-bundle/v2",
+      "with_subject": true,
+      "policies": [
+        {"id": "p-deny-push", "name": "release_eng: deny git push", "src_pattern": "group:release_eng", "dst_pattern": "shell:git push", "effect": "deny", "priority": 20, "enabled": true},
+        {"id": "p-allow-git", "name": "allow git", "src_pattern": "*", "dst_pattern": "shell:git", "effect": "permit", "priority": 10, "enabled": true},
+        {"id": "p-allow-go", "name": "allow go test", "src_pattern": "*", "dst_pattern": "shell:go test", "effect": "permit", "priority": 10, "enabled": true}
+      ]
+    },
+    {
+      "name": "non-overlapping-or-higher-permits-still-render",
+      "schema": "kei.policy-bundle/v1",
+      "with_subject": false,
+      "policies": [
+        {"id": "p-deny-rm", "name": "release_eng: deny rm", "src_pattern": "group:release_eng", "dst_pattern": "shell:rm", "effect": "deny", "priority": 20, "enabled": true},
+        {"id": "p-allow-git", "name": "allow git", "src_pattern": "*", "dst_pattern": "shell:git", "effect": "permit", "priority": 10, "enabled": true},
+        {"id": "p-deny-make", "name": "release_eng: deny make", "src_pattern": "group:release_eng", "dst_pattern": "shell:make", "effect": "deny", "priority": 5, "enabled": true},
+        {"id": "p-allow-make", "name": "allow make", "src_pattern": "*", "dst_pattern": "shell:make", "effect": "permit", "priority": 10, "enabled": true},
+        {"id": "p-deny-other-agent", "name": "release_eng: deny go on another agent", "src_pattern": "group:release_eng", "dst_pattern": "shell:go", "effect": "deny", "priority": 20, "enabled": true, "scope": {"agent_id": "agent-other"}},
+        {"id": "p-allow-go", "name": "allow go test", "src_pattern": "*", "dst_pattern": "shell:go test", "effect": "permit", "priority": 10, "enabled": true}
+      ]
+    },
+    {
+      "name": "equal-priority-skipped-deny-precedes-permit",
+      "schema": "kei.policy-bundle/v2",
+      "with_subject": false,
+      "policies": [
+        {"id": "z-deny-git", "name": "user: deny git", "src_pattern": "user:usr-fixture-dev", "dst_pattern": "shell:git status --porcelain", "effect": "deny", "priority": 10, "enabled": true},
+        {"id": "a-allow-git-status", "name": "allow git status", "src_pattern": "*", "dst_pattern": "shell:git status", "effect": "permit", "priority": 10, "enabled": true},
+        {"id": "p-deny-skill", "name": "release_eng: deny deploy skill", "src_pattern": "group:release_eng", "dst_pattern": "skill:deploy", "effect": "deny", "priority": 20, "enabled": true},
+        {"id": "p-allow-skill", "name": "allow deploy skill", "src_pattern": "*", "dst_pattern": "skill:deploy", "effect": "permit", "priority": 10, "enabled": true},
+        {"id": "p-allow-lint", "name": "allow lint skill", "src_pattern": "*", "dst_pattern": "skill:lint", "effect": "permit", "priority": 10, "enabled": true}
+      ]
+    }
+  ]
+}
