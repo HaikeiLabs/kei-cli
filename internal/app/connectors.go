@@ -233,28 +233,7 @@ func (s *connectorSession) doPath(method, path string, body any) ([]byte, error)
 }
 
 func connectorErrorMessage(payload []byte) string {
-	var aip struct {
-		Reason  string `json:"reason"`
-		Message string `json:"message"`
-	}
-	if json.Unmarshal(payload, &aip) == nil && aip.Message != "" {
-		if aip.Reason != "" {
-			return aip.Reason + ": " + aip.Message
-		}
-		return aip.Message
-	}
-	var structured struct {
-		Error struct {
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if json.Unmarshal(payload, &structured) == nil && structured.Error.Message != "" {
-		return structured.Error.Message
-	}
-	if message := strings.TrimSpace(string(payload)); message != "" {
-		return message
-	}
-	return "request failed"
+	return apiErrorMessage(payload)
 }
 
 // connectorState is the connection state shown to an admin.
