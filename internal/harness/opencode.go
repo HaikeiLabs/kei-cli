@@ -159,7 +159,14 @@ func opencodeNonPrompting(config []byte) bool {
 	return false
 }
 
-const opencodePlugin = "// managed by kei harness sync\nconst report = async (phase, event) => { try { const child = Bun.spawn(['kei-proxy','hook','opencode'], { stdin: 'pipe', stdout: 'ignore', stderr: 'ignore' }); child.stdin.write(JSON.stringify({phase, ...event})); child.stdin.end(); } catch {} };\nexport const KeiAudit = async () => ({ 'tool.execute.before': async (event) => { void report('pre', event); }, 'tool.execute.after': async (event) => { void report('post', event); }, 'permission.ask': async (event) => { void report('ask', event); }, 'permission.replied': async (event) => { void report('permission_reply', event); } });\n"
+// opencodePlugin is the audit hook Kei installs for OpenCode. It uses
+// OpenCode's real hook signatures: tool.execute.before/after receive
+// (input, output), where input carries tool/sessionID/callID and output
+// carries the args (before) or the result (after). The payload uses the JSON
+// keys kei-proxy's opencode hook parser reads (tool_name, session_id,
+// tool_use_id, tool_input); with the old single-(event) form only the first
+// argument was forwarded and tool_name was empty, so every event was dropped.
+const opencodePlugin = "// managed by kei harness sync\nconst report = async (payload) => { try { const child = Bun.spawn(['kei-proxy','hook','opencode'], { stdin: 'pipe', stdout: 'ignore', stderr: 'ignore' }); child.stdin.write(JSON.stringify(payload)); child.stdin.end(); } catch {} };\nexport const KeiAudit = async () => ({ 'tool.execute.before': async (input, output) => { void report({ phase: 'pre', tool_name: input?.tool, session_id: input?.sessionID, tool_use_id: input?.callID, tool_input: output?.args }); }, 'tool.execute.after': async (input, output) => { void report({ phase: 'post', tool_name: input?.tool, session_id: input?.sessionID, tool_use_id: input?.callID, tool_input: input?.args }); }, 'permission.ask': async (input, output) => { void report({ phase: 'ask', tool_name: input?.type || input?.tool, native_decision: output?.status }); } });\n"
 
 func (openCode) HookSpec(env Env) *HookSpec {
 	if _, err := env.home(); err != nil {
