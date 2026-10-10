@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -53,6 +54,10 @@ type Env struct {
 	HomeErr error
 	Getenv  func(string) string
 	Getwd   func() (string, error)
+	// RunCmd runs name with args under a short timeout and returns its stdout.
+	// Nil runs it via os/exec. Tests inject a stub so the real binary is never
+	// invoked.
+	RunCmd func(ctx context.Context, name string, args ...string) (string, error)
 }
 
 // OSEnv is the environment of the running process.
@@ -78,6 +83,24 @@ func (e Env) getwd() (string, error) {
 		return "", errors.New("working directory unavailable")
 	}
 	return e.Getwd()
+}
+
+// runCmd runs name with args under a short timeout and returns its stdout,
+// using e.RunCmd when set and os/exec otherwise.
+func (e Env) runCmd(ctx context.Context, name string, args ...string) (string, error) {
+	if e.RunCmd != nil {
+		return e.RunCmd(ctx, name, args...)
+	}
+	return runCmdExec(ctx, name, args...)
+}
+
+// runCmdExec runs name with args via os/exec under a short timeout and returns
+// its stdout.
+func runCmdExec(ctx context.Context, name string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, name, args...).Output()
+	return string(out), err
 }
 
 // Target is one native store a harness renders into. Exactly one of Path (a
