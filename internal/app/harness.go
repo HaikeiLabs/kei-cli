@@ -363,7 +363,7 @@ func responseError(payload []byte, status int, err error) string {
 		return err.Error()
 	}
 	if len(payload) != 0 {
-		return policyErrorMessage(payload)
+		return apiErrorMessage(payload)
 	}
 	return fmt.Sprintf("request failed (HTTP %d)", status)
 }

@@ -1275,3 +1275,103 @@ func TestFeedbackRejectsOversizedEvidenceBeforeConfirmation(t *testing.T) {
 		t.Fatalf("exit = %d, requests = %d, stderr = %q", code, requests, stderr.String())
 	}
 }
+
+func TestAIPErrorUnmarshalJSON(t *testing.T) {
+	tests := []struct {
+		name       string
+		json       string
+		wantOK     bool
+		wantCode   int
+		wantReason string
+		wantMsg    string
+	}{
+		{
+			name:       "wrapped body with details reason",
+			json:       `{"error":{"code":400,"message":"not yet approved","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"AUTHORIZATION_PENDING"}]}}`,
+			wantOK:     true,
+			wantCode:   400,
+			wantReason: "AUTHORIZATION_PENDING",
+			wantMsg:    "not yet approved",
+		},
+		{
+			name:       "flat body with error reason",
+			json:       `{"error":{"code":400,"reason":"SLOW_DOWN","message":"too fast"}}`,
+			wantOK:     true,
+			wantCode:   400,
+			wantReason: "SLOW_DOWN",
+			wantMsg:    "too fast",
+		},
+		{
+			name:       "wrapped body with both top-level reason and details (identity transitional)",
+			json:       `{"error":{"code":400,"reason":"TOP_LEVEL","message":"transitional","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"ERROR_INFO_REASON"}]}}`,
+			wantOK:     true,
+			wantCode:   400,
+			wantReason: "ERROR_INFO_REASON",
+			wantMsg:    "transitional",
+		},
+		{
+			name:       "wrapped body falls back to details[0] when no ErrorInfo match",
+			json:       `{"error":{"code":403,"message":"denied","details":[{"@type":"type.googleapis.com/google.rpc.QuotaFailure","reason":"RATE_LIMITED"}]}}`,
+			wantOK:     true,
+			wantCode:   403,
+			wantReason: "RATE_LIMITED",
+			wantMsg:    "denied",
+		},
+		{
+			name:   "unrecognized body",
+			json:   `{"foo":"bar"}`,
+			wantOK: false,
+		},
+		{
+			name:   "plain text",
+			json:   `not json`,
+			wantOK: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var ae aipError
+			err := json.Unmarshal([]byte(tc.json), &ae)
+			if !tc.wantOK {
+				if err == nil {
+					t.Fatal("expected unmarshal error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected unmarshal error: %v", err)
+			}
+			if ae.Detail.Code != tc.wantCode {
+				t.Errorf("Code = %d, want %d", ae.Detail.Code, tc.wantCode)
+			}
+			if ae.Detail.Reason != tc.wantReason {
+				t.Errorf("Reason = %q, want %q", ae.Detail.Reason, tc.wantReason)
+			}
+			if ae.Detail.Message != tc.wantMsg {
+				t.Errorf("Message = %q, want %q", ae.Detail.Message, tc.wantMsg)
+			}
+		})
+	}
+}
+
+func TestExchangeDeviceAuthorizationUnrecognizedBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"unrecognized":true}`))
+	}))
+	defer server.Close()
+
+	_, err := exchangeDeviceAuthorization(context.Background(), server.Client(), server.URL, "device-code")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	var sErr *httpStatusError
+	if !errors.As(err, &sErr) {
+		t.Fatalf("error type = %T, want *httpStatusError", err)
+	}
+	if sErr.StatusCode != 400 {
+		t.Errorf("StatusCode = %d, want 400", sErr.StatusCode)
+	}
+}

@@ -108,6 +108,61 @@ func (e *aipError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Detail.Reason, e.Detail.Message)
 }
 
+func (e *aipError) UnmarshalJSON(data []byte) error {
+	// Try AIP-193 wrapped first: {"error":{"code":N,"message":"M","details":[{"@type":"...","reason":"R"}]}}
+	var wrapped struct {
+		Error struct {
+			Code    int    `json:"code"`
+			Reason  string `json:"reason"`
+			Message string `json:"message"`
+			Details []struct {
+				Type   string `json:"@type"`
+				Reason string `json:"reason"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(data, &wrapped); err == nil && wrapped.Error.Message != "" {
+		reason := ""
+		for _, d := range wrapped.Error.Details {
+			if strings.HasSuffix(d.Type, "google.rpc.ErrorInfo") && d.Reason != "" {
+				reason = d.Reason
+				break
+			}
+		}
+		if reason == "" && len(wrapped.Error.Details) > 0 {
+			reason = wrapped.Error.Details[0].Reason
+		}
+		if reason == "" {
+			reason = wrapped.Error.Reason
+		}
+		e.Detail = aipErrorDetail{
+			Code:    wrapped.Error.Code,
+			Reason:  reason,
+			Message: wrapped.Error.Message,
+		}
+		return nil
+	}
+
+	// Try flat AIP: {"error":{"code":N,"reason":"R","message":"M"}}
+	var flat struct {
+		Error struct {
+			Code    int    `json:"code"`
+			Reason  string `json:"reason"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(data, &flat); err == nil && flat.Error.Reason != "" {
+		e.Detail = aipErrorDetail{
+			Code:    flat.Error.Code,
+			Reason:  flat.Error.Reason,
+			Message: flat.Error.Message,
+		}
+		return nil
+	}
+
+	return fmt.Errorf("unrecognized error body: %s", string(data))
+}
+
 type aipErrorDetail struct {
 	Code    int    `json:"code"`
 	Reason  string `json:"reason"`

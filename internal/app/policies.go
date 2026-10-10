@@ -165,28 +165,7 @@ func (s *policySession) do(method, path string, body any, extraQuery url.Values)
 }
 
 func policyErrorMessage(payload []byte) string {
-	var aip struct {
-		Reason  string `json:"reason"`
-		Message string `json:"message"`
-	}
-	if json.Unmarshal(payload, &aip) == nil && aip.Message != "" {
-		if aip.Reason != "" {
-			return aip.Reason + ": " + aip.Message
-		}
-		return aip.Message
-	}
-	var structured struct {
-		Error struct {
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if json.Unmarshal(payload, &structured) == nil && structured.Error.Message != "" {
-		return structured.Error.Message
-	}
-	if message := strings.TrimSpace(string(payload)); message != "" {
-		return message
-	}
-	return "request failed"
+	return apiErrorMessage(payload)
 }
 
 func runPoliciesCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
