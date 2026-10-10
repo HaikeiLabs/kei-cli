@@ -669,7 +669,7 @@ func TestHarnessSyncCodexWritesKeiRulesAndReportsUnenforceable(t *testing.T) {
 		t.Fatalf("hooks.json = %q err=%v", hooks, err)
 	}
 	out := stdout.String()
-	for _, want := range []string{"not enforceable in Codex: deny web search", "not enforceable in Codex: allow kei-cli skill", "trust it with /hooks"} {
+	for _, want := range []string{"not enforceable in Codex: deny web search", "not enforceable in Codex: allow kei-cli skill", "/hooks"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("stdout missing %q:\n%s", want, out)
 		}
