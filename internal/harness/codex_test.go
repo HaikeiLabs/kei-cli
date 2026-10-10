@@ -159,3 +159,147 @@ func TestCodexImportRulesReadsRulesDirectory(t *testing.T) {
 		t.Fatalf("rules = %+v, want %+v", rules, want)
 	}
 }
+
+// HAI-467: Codex 0.159+ expects hooks grouped by matcher. Each event maps to a
+// list of groups, each group must have at least a "hooks" key.
+func TestCodexHookSpecProducesGroupedShape(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	env := hermeticEnv(home, nil)
+	hs := codex{}.HookSpec(env)
+	if hs == nil {
+		t.Fatal("HookSpec returned nil")
+	}
+	raw, ok := hs.Files[filepath.Join(home, ".codex", "hooks.json")]
+	if !ok {
+		t.Fatal("hooks.json not in HookSpec files")
+	}
+	var doc struct {
+		Hooks map[string][]struct {
+			Hooks []struct {
+				Command string `json:"command"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("unmarshal hooks.json: %v\nraw:\n%s", err, raw)
+	}
+	for _, event := range []string{"PreToolUse", "PostToolUse"} {
+		groups, ok := doc.Hooks[event]
+		if !ok {
+			t.Fatalf("hooks.json missing event %q", event)
+		}
+		if len(groups) != 1 {
+			t.Fatalf("hooks.%s: want 1 group, got %d", event, len(groups))
+		}
+		if len(groups[0].Hooks) != 1 {
+			t.Fatalf("hooks.%s[0].hooks: want 1 hook, got %d", event, len(groups[0].Hooks))
+		}
+		if groups[0].Hooks[0].Command != "kei-proxy hook codex" {
+			t.Fatalf("hooks.%s[0].hooks[0].command = %q, want \"kei-proxy hook codex\"", event, groups[0].Hooks[0].Command)
+		}
+	}
+}
+
+// HAI-467: re-sync over an existing flat-format Kei entry plus a third-party
+// SessionStart group replaces the flat entry with the grouped shape and
+// preserves the non-Kei group.
+func TestCodexHookSpecResyncReplacesFlatEntry(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate an existing hooks.json written by an older kei-cli (flat format)
+	// alongside a third-party SessionStart group.
+	oldCfg := []byte(`{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "type": "command",
+        "command": "kei-proxy hook codex",
+        "timeout": 5
+      }
+    ],
+    "PostToolUse": [
+      {
+        "type": "command",
+        "command": "kei-proxy hook codex",
+        "timeout": 5
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "other-tool hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}`)
+	env := hermeticEnv(home, nil)
+	hs := codex{}.HookSpec(env)
+	if hs == nil {
+		t.Fatal("HookSpec returned nil")
+	}
+	spec, ok := hs.Files[filepath.Join(home, ".codex", "hooks.json")]
+	if !ok {
+		t.Fatal("hooks.json not in HookSpec files")
+	}
+	merged, err := codex{}.mergeHook(oldCfg, spec)
+	if err != nil {
+		t.Fatalf("mergeHook: %v", err)
+	}
+	var doc struct {
+		Hooks map[string][]json.RawMessage `json:"hooks"`
+	}
+	if err := json.Unmarshal(merged, &doc); err != nil {
+		t.Fatalf("unmarshal merged hooks.json: %v\nraw:\n%s", err, merged)
+	}
+	// SessionStart must be preserved (one group, command "other-tool hook").
+	sessionGroups, ok := doc.Hooks["SessionStart"]
+	if !ok {
+		t.Fatal("SessionStart missing after merge")
+	}
+	if len(sessionGroups) != 1 {
+		t.Fatalf("SessionStart: want 1 group, got %d", len(sessionGroups))
+	}
+	var sessionGroup struct {
+		Hooks []struct {
+			Command string `json:"command"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(sessionGroups[0], &sessionGroup); err != nil {
+		t.Fatalf("unmarshal SessionStart group: %v", err)
+	}
+	if len(sessionGroup.Hooks) != 1 || sessionGroup.Hooks[0].Command != "other-tool hook" {
+		t.Fatalf("SessionStart hook = %+v, want command \"other-tool hook\"", sessionGroup.Hooks)
+	}
+	// PreToolUse and PostToolUse must each be a single group with a
+	// kei-proxy command nested inside (grouped, not flat).
+	for _, event := range []string{"PreToolUse", "PostToolUse"} {
+		groups, ok := doc.Hooks[event]
+		if !ok {
+			t.Fatalf("%s missing after merge", event)
+		}
+		if len(groups) != 1 {
+			t.Fatalf("%s: want 1 group, got %d", event, len(groups))
+		}
+		var group struct {
+			Hooks []struct {
+				Command string `json:"command"`
+			} `json:"hooks"`
+		}
+		if err := json.Unmarshal(groups[0], &group); err != nil {
+			t.Fatalf("unmarshal %s group: %v", event, err)
+		}
+		if len(group.Hooks) != 1 || group.Hooks[0].Command != "kei-proxy hook codex" {
+			t.Fatalf("%s[0].hooks[0].command = %+v, want \"kei-proxy hook codex\"", event, group.Hooks)
+		}
+	}
+}

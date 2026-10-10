@@ -52,7 +52,7 @@ func (c codex) Apply(_ context.Context, r Rendered, opts ApplyOpts) (Result, err
 			result.Warnings = append(result.Warnings, nonPromptingWarning(c.Kind()))
 		}
 	}
-	result.Notes = append(result.Notes, "Codex may skip the reporting hook until you trust it with /hooks.")
+	result.Notes = append(result.Notes, "Codex runs new hooks only after you trust them: open Codex and run /hooks to approve the Kei hooks.")
 	return result, nil
 }
 
@@ -75,7 +75,8 @@ func (codex) HookSpec(env Env) *HookSpec {
 	}
 	command := "kei-proxy hook codex"
 	hook := map[string]any{"type": "command", "command": command, "timeout": 5}
-	spec := mustJSON(map[string]any{"hooks": map[string]any{"PreToolUse": []any{hook}, "PostToolUse": []any{hook}}})
+	group := map[string]any{"hooks": []any{hook}}
+	spec := mustJSON(map[string]any{"hooks": map[string]any{"PreToolUse": []any{group}, "PostToolUse": []any{group}}})
 	return &HookSpec{Files: map[string][]byte{filepath.Join(env.Home, ".codex", "hooks.json"): spec}}
 }
 
