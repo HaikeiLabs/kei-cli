@@ -6,11 +6,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
 // claudeCode renders into ~/.claude/settings.json: permissions.allow/deny
-// entries plus the PreToolUse/PostToolUse audit hook.
+// entries plus the report-only audit hooks on the Claude Code events. On a
+// Claude Code >= 2.1.119 it renders all seven (PreToolUse, PermissionRequest,
+// PermissionDenied, PostToolUse, PostToolUseFailure, Stop, SessionEnd;
+// HAI-469); on an older or unknown install it renders only PreToolUse and
+// PostToolUse, because an unrecognized hook event name made older versions
+// ignore the whole settings.json.
 type claudeCode struct{}
 
 var claudeSyntax = nativeSyntax{
@@ -58,6 +64,7 @@ func (c claudeCode) Apply(_ context.Context, r Rendered, opts ApplyOpts) (Result
 		if claudeNonPrompting(config) {
 			result.Warnings = append(result.Warnings, nonPromptingWarning(c.Kind()))
 		}
+		result.Warnings = append(result.Warnings, claudeVersionWarnings(opts.Env)...)
 	}
 	return result, nil
 }
@@ -74,6 +81,107 @@ func claudeNonPrompting(config []byte) bool {
 	return false
 }
 
+// claudeHookEvent is one Claude Code hook event Kei renders: its name and the
+// matcher ("" for session-level events, which take none).
+type claudeHookEvent struct {
+	name    string
+	matcher string
+}
+
+// claudeHookEventsLegacy is the pre-HAI-469 set: the two events older Claude
+// Code versions recognize.
+var claudeHookEventsLegacy = []claudeHookEvent{
+	{name: "PreToolUse", matcher: "*"},
+	{name: "PostToolUse", matcher: "*"},
+}
+
+// claudeHookEventsFull is the HAI-469 set, rendered only on a Claude Code that
+// recognizes every event (>= claudeFullEventsMin).
+var claudeHookEventsFull = []claudeHookEvent{
+	{name: "PreToolUse", matcher: "*"},
+	{name: "PermissionRequest", matcher: "*"},
+	{name: "PermissionDenied", matcher: "*"},
+	{name: "PostToolUse", matcher: "*"},
+	{name: "PostToolUseFailure", matcher: "*"},
+	{name: "Stop", matcher: ""},
+	{name: "SessionEnd", matcher: ""},
+}
+
+// claudeFullEventsMin is the minimum Claude Code version that recognizes all
+// seven hook events (HAI-469). Before 2.1.101 an unrecognized hook event name
+// made the whole settings.json ignored, and PostToolUseFailure is not
+// documented before 2.1.119, so an older or unknown install renders only the
+// legacy two.
+var claudeFullEventsMin = [3]int{2, 1, 119}
+
+// atLeastClaudeFullEvents reports whether major.minor.patch is at least
+// claudeFullEventsMin.
+func atLeastClaudeFullEvents(major, minor, patch int) bool {
+	got := [3]int{major, minor, patch}
+	for i := range claudeFullEventsMin {
+		if got[i] != claudeFullEventsMin[i] {
+			return got[i] > claudeFullEventsMin[i]
+		}
+	}
+	return true
+}
+
+// claudeCodeVersionInfo reports the installed Claude Code version: the trimmed
+// version string (for warnings) and a parsed major.minor.patch (for
+// comparison). known is false when it could not be determined (no binary, a
+// timeout, or unparseable output).
+func claudeCodeVersionInfo(env Env) (version string, major, minor, patch int, known bool) {
+	out, err := env.runCmd(context.Background(), "claude", "--version")
+	if err != nil {
+		return "", 0, 0, 0, false
+	}
+	return parseClaudeVersion(strings.TrimSpace(out))
+}
+
+// parseClaudeVersion extracts the leading semver from `claude --version`
+// output such as "2.1.296 (Claude Code)".
+func parseClaudeVersion(out string) (version string, major, minor, patch int, known bool) {
+	start := -1
+	for i := 0; i < len(out); i++ {
+		if out[i] >= '0' && out[i] <= '9' {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		return "", 0, 0, 0, false
+	}
+	end := start
+	for end < len(out) && (out[end] >= '0' && out[end] <= '9' || out[end] == '.') {
+		end++
+	}
+	parts := strings.Split(out[start:end], ".")
+	if len(parts) != 3 {
+		return "", 0, 0, 0, false
+	}
+	major, err1 := strconv.Atoi(parts[0])
+	minor, err2 := strconv.Atoi(parts[1])
+	patch, err3 := strconv.Atoi(parts[2])
+	if err1 != nil || err2 != nil || err3 != nil {
+		return "", 0, 0, 0, false
+	}
+	return out[start:end], major, minor, patch, true
+}
+
+// claudeVersionWarnings returns the HAI-469 warning when the installed Claude
+// Code is too old (or unknown) to render all seven hook events.
+func claudeVersionWarnings(env Env) []string {
+	version, major, minor, patch, known := claudeCodeVersionInfo(env)
+	if known && atLeastClaudeFullEvents(major, minor, patch) {
+		return nil
+	}
+	label := "unknown"
+	if known {
+		label = version
+	}
+	return []string{fmt.Sprintf("Claude Code %s is older than 2.1.119; rendering PreToolUse/PostToolUse only. Upgrade Claude Code to record native decisions (HAI-469).", label)}
+}
+
 func (claudeCode) HookSpec(env Env) *HookSpec {
 	if _, err := env.home(); err != nil {
 		return nil
@@ -81,8 +189,34 @@ func (claudeCode) HookSpec(env Env) *HookSpec {
 	// HP-C11: desktop harnesses are sessions of the runtime installation keyed
 	// by kind, so the hook no longer carries a --harness uuid.
 	command := "kei-proxy hook claude"
-	hook := map[string]any{"type": "command", "command": command, "timeout": 5}
-	spec := mustJSON(map[string]any{"PreToolUse": []any{map[string]any{"matcher": "*", "hooks": []any{hook}}}, "PostToolUse": []any{map[string]any{"matcher": "*", "hooks": []any{hook}}}})
+	hook := &orderedObject{values: map[string]any{}}
+	hook.set("type", "command")
+	hook.set("command", command)
+	hook.set("timeout", 5)
+	// HAI-469: observe Claude Code's native permission decisions. Render all
+	// seven events only when the installed Claude Code recognizes them; an
+	// unrecognized event name made older versions ignore the whole
+	// settings.json (fixed in 2.1.101), so an older or unknown install gets the
+	// previous two. The five tool-level events carry a "*" matcher; Stop and
+	// SessionEnd are session-level and have none. The hook tells the events
+	// apart by hook_event_name, so one command serves them all.
+	events := claudeHookEventsLegacy
+	if _, major, minor, patch, known := claudeCodeVersionInfo(env); known && atLeastClaudeFullEvents(major, minor, patch) {
+		events = claudeHookEventsFull
+	}
+	root := &orderedObject{values: map[string]any{}}
+	for _, e := range events {
+		entry := &orderedObject{values: map[string]any{}}
+		if e.matcher != "" {
+			entry.set("matcher", e.matcher)
+		}
+		entry.set("hooks", []any{hook})
+		root.set(e.name, []any{entry})
+	}
+	spec, err := marshalOrdered(root, "  ")
+	if err != nil {
+		return nil
+	}
 	return &HookSpec{Files: map[string][]byte{claudeSettingsPath(env): spec}}
 }
 
