@@ -1,0 +1,43 @@
+[
+  {
+    "uuid": "conv-uuid-1111",
+    "name": "Fix the login bug",
+    "created_at": "2026-10-01T10:00:00Z",
+    "chat_messages": [
+      {
+        "sender": "human",
+        "text": "Why does login fail? My token is kh_live_fixturetoken123456"
+      },
+      {
+        "sender": "assistant",
+        "text": "Let me check the auth flow."
+      },
+      {
+        "sender": "human",
+        "content": [
+          { "type": "text", "text": "It still fails." },
+          { "type": "image", "url": "https://example.com/ignored.png" }
+        ]
+      },
+      {
+        "sender": "assistant",
+        "text": "Fixed. The redirect URI was wrong."
+      }
+    ]
+  },
+  {
+    "uuid": "conv-uuid-2222",
+    "name": "Weekly summary",
+    "created_at": "2026-10-02T09:30:00Z",
+    "chat_messages": [
+      {
+        "sender": "human",
+        "text": "Summarize my week."
+      },
+      {
+        "sender": "assistant",
+        "text": "You shipped three features."
+      }
+    ]
+  }
+]

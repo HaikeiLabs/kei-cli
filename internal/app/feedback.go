@@ -45,11 +45,11 @@ func runFeedbackCommand(args []string, stdout, stderr io.Writer, stdin io.Reader
 	description := flags.String("description", "", "describe what happened and what you expected")
 	yes := flags.Bool("yes", false, "submit without asking for confirmation")
 	var files feedbackFiles
-	flags.Var(&files, "file", "attach an evidence file (repeatable)")
+	flags.Var(&files, "file", "attach an evidence file (repeatable); with --export claude-desktop, the claude.ai export .zip or its conversations.json")
 	flags.Var(&files, "screenshot", "attach a screenshot (repeatable)")
 	var sessions feedbackFiles
-	flags.Var(&sessions, "session", "attach a session transcript file (repeatable), or a single session ID when --export is set")
-	export := flags.String("export", "", "locate and attach a redacted harness transcript: claude, codex, or opencode")
+	flags.Var(&sessions, "session", "attach a session transcript file (repeatable), or a single session ID (uuid or exact name) when --export is set")
+	export := flags.String("export", "", "locate and attach a redacted harness transcript: claude, claude-desktop, codex, or opencode")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -63,11 +63,21 @@ func runFeedbackCommand(args []string, stdout, stderr io.Writer, stdin io.Reader
 		return 2
 	}
 
-	// Build the evidence list. --file and --screenshot are attached as-is.
-	// Session transcripts are never sent unredacted: with --export the harness
-	// transcript is located and redacted; without it each --session file path
-	// is redacted into a temporary copy before upload.
-	allFiles := append([]string(nil), files...)
+	if *export != "" && *export != "claude" && *export != "claude-desktop" && *export != "codex" && *export != "opencode" {
+		fmt.Fprintln(stderr, "feedback: --export must be claude, claude-desktop, codex, or opencode")
+		return 2
+	}
+
+	// Build the evidence list. --file and --screenshot are attached as-is,
+	// except that with --export claude-desktop the single --file is the
+	// claude.ai export to parse, never an attachment. Session transcripts are
+	// never sent unredacted: with --export the transcript is located, rendered
+	// and redacted; without it each --session file path is redacted into a
+	// temporary copy before upload.
+	allFiles := []string(nil)
+	if *export != "claude-desktop" {
+		allFiles = append(allFiles, files...)
+	}
 	deps := feedbackTranscriptDeps()
 	redactionCountsByPath := map[string]map[string]int{}
 	displayNameByPath := map[string]string{}
@@ -98,10 +108,6 @@ func runFeedbackCommand(args []string, stdout, stderr io.Writer, stdin io.Reader
 	}
 
 	if *export != "" {
-		if *export != "claude" && *export != "codex" && *export != "opencode" {
-			fmt.Fprintln(stderr, "feedback: --export must be claude, codex, or opencode")
-			return 2
-		}
 		if len(sessions) > 1 {
 			fmt.Fprintln(stderr, "feedback: --export accepts at most one --session (a session ID)")
 			return 2
@@ -110,7 +116,27 @@ func runFeedbackCommand(args []string, stdout, stderr io.Writer, stdin io.Reader
 		if len(sessions) == 1 {
 			sessionID = sessions[0]
 		}
-		path, counts, sourceName, leak, cleanup, err := exportTranscript(context.Background(), *export, sessionID, deps)
+		var (
+			path       string
+			counts     map[string]int
+			sourceName string
+			leak       bool
+			cleanup    func()
+			err        error
+		)
+		if *export == "claude-desktop" {
+			if len(files) != 1 {
+				fmt.Fprintln(stderr, "feedback: --export claude-desktop requires exactly one --file (the export .zip or its conversations.json)")
+				return 2
+			}
+			path, counts, sourceName, leak, cleanup, err = exportClaudeDesktopTranscript(context.Background(), files[0], sessionID, deps, stdout)
+			if errors.Is(err, errClaudeDesktopNeedsSelection) {
+				fmt.Fprintln(stderr, "feedback: pick one conversation with --session <UUID or NAME> and re-run")
+				return 2
+			}
+		} else {
+			path, counts, sourceName, leak, cleanup, err = exportTranscript(context.Background(), *export, sessionID, deps)
+		}
 		if err != nil {
 			fmt.Fprintf(stderr, "feedback: %v\n", err)
 			return 1

@@ -234,7 +234,7 @@ func PrintUsage(w io.Writer) {
 	fmt.Fprintln(w, "  kei runtime service install [--config PATH]")
 	fmt.Fprintln(w, "  kei runtime service uninstall")
 	fmt.Fprintln(w, "  kei runtime service status")
-	fmt.Fprintln(w, "  kei feedback --description TEXT [--file PATH] [--screenshot PATH] [--session PATH] [--export claude|codex|opencode] [--yes] (--session: repeatable file paths, or one session ID with --export; transcripts are redacted before upload)")
+	fmt.Fprintln(w, "  kei feedback --description TEXT [--file PATH] [--screenshot PATH] [--session PATH] [--export claude|claude-desktop|codex|opencode] [--yes] (--session: repeatable file paths, or one session ID with --export; --export claude-desktop takes --file ZIP_OR_CONVERSATIONS_JSON and --session UUID_OR_NAME; transcripts are redacted before upload)")
 	fmt.Fprintln(w, "users connect their own accounts through their chat harness")
 }
 
