@@ -327,6 +327,47 @@ func TestOpencodeConfigName(t *testing.T) {
 	}
 }
 
+// The rendered plugin must use OpenCode's real (input, output) hook
+// signatures and forward the JSON keys kei-proxy's opencode hook parser reads
+// (tool_name, session_id, tool_use_id, tool_input). With the old
+// single-(event) form only the first argument was forwarded and tool_name was
+// empty, so the parser dropped every event and no audit record was written
+// (HAI-468).
+func TestOpencodePluginForwardsParserFields(t *testing.T) {
+	home := t.TempDir()
+	spec := openCode{}.HookSpec(hermeticEnv(home, map[string]string{}))
+	if spec == nil {
+		t.Fatal("HookSpec returned nil")
+	}
+	path := filepath.Join(home, ".config", "opencode", "plugins", "kei-audit.js")
+	plugin, ok := spec.Files[path]
+	if !ok {
+		t.Fatalf("plugin not installed at %s; files = %v", path, spec.Files)
+	}
+	js := string(plugin)
+
+	for _, want := range []string{
+		"'tool.execute.before': async (input, output)",
+		"'tool.execute.after': async (input, output)",
+		"'permission.ask': async (input, output)",
+		"tool_name: input?.tool",
+		"session_id: input?.sessionID",
+		"tool_use_id: input?.callID",
+		"tool_input: output?.args",
+		"tool_input: input?.args",
+		"native_decision: output?.status",
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("plugin missing %q\n%s", want, js)
+		}
+	}
+	// permission.replied does not exist in OpenCode 1.18.x; it must not be
+	// registered.
+	if strings.Contains(js, "permission.replied") {
+		t.Errorf("plugin still registers the removed permission.replied hook\n%s", js)
+	}
+}
+
 // With no --file, import reads opencode.json from the env's config dir, which
 // honours XDG_CONFIG_HOME.
 func TestOpenCodeImportRulesDefaultsToEnvConfigDir(t *testing.T) {
