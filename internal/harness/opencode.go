@@ -244,7 +244,7 @@ func (openCode) missingEntries(path string, cfg []byte, allows, denies []string)
 }
 
 func mergeOpenCodePermissions(cfg []byte, allows, denies []string) ([]byte, error) {
-	root, keep, err := permissionRoot(cfg, allows, denies)
+	root, keep, err := permissionRoot(cfg, allows, denies, "permission")
 	if err != nil || keep != nil {
 		return keep, err
 	}
@@ -315,31 +315,37 @@ func (openCode) removeManaged(config []byte, allows, denies []string) ([]byte, e
 	if len(allows) == 0 && len(denies) == 0 {
 		return config, nil
 	}
-	var root map[string]any
-	if err := json.Unmarshal(config, &root); err != nil {
+	root, err := parseTopLevel(config, map[string]bool{"permission": true})
+	if err != nil {
 		return nil, err
 	}
-	permission, ok := root["permission"].(map[string]any)
+	permission, ok := root.get("permission")
+	permObj, ok := permission.(*orderedObject)
 	if !ok {
 		return config, nil
 	}
-	bash, ok := permission["bash"].(map[string]any)
+	bash, ok := permObj.get("bash")
+	bashObj, ok := bash.(*orderedObject)
 	if !ok {
 		return config, nil
 	}
 	for _, entry := range allows {
-		if bash[entry] == "allow" {
-			delete(bash, entry)
+		if v, ok := bashObj.get(entry); ok {
+			if s, ok := v.(string); ok && s == "allow" {
+				bashObj.delete(entry)
+			}
 		}
 	}
 	for _, entry := range denies {
-		if bash[entry] == "deny" {
-			delete(bash, entry)
+		if v, ok := bashObj.get(entry); ok {
+			if s, ok := v.(string); ok && s == "deny" {
+				bashObj.delete(entry)
+			}
 		}
 	}
-	permission["bash"] = bash
-	root["permission"] = permission
-	return json.MarshalIndent(root, "", "  ")
+	permObj.set("bash", bashObj)
+	root.set("permission", permObj)
+	return marshalOrdered(root, "  ")
 }
 
 // mergeHook writes the audit plugin whole; it is a Kei-owned file.
