@@ -194,6 +194,18 @@ to the same bug-report endpoint as Console reports. Requests are limited to
 secrets and email addresses by the server. Review images and other binary
 attachments yourself before confirming; their contents are not redacted.
 
+`--export` attaches a redacted transcript from a coding harness:
+`kei feedback --export claude [--session ID]` (without `--session` the latest
+session for the current directory is used), and likewise for `codex` and
+`opencode`. Claude Code sessions run from the Claude Desktop app already work
+with `--export claude` (the same `~/.claude/projects` files). Plain Claude
+Desktop chats (claude.ai) use `--export claude-desktop --file EXPORT`, where
+EXPORT is the data export `.zip` or its `conversations.json`; pick one
+conversation with `--session UUID_OR_NAME`, or re-run without `--session` to
+list up to 20 conversations. Exported transcripts go through the same
+redaction, preview and confirmation as any other transcript and are never
+uploaded unredacted.
+
 ## Manage installations
 
 List runtime installations for an organization (the CLI does not persist an org ID, so `--org` is required):
