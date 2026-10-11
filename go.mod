@@ -3,7 +3,8 @@ module github.com/HaikeiLabs/kei-cli
 go 1.27.0
 
 require (
-	github.com/HaikeiLabs/kei-connector-contracts v0.7.0
+	filippo.io/age v1.3.2
+	github.com/HaikeiLabs/kei-connector-contracts v0.7.1-0.20261011003645-db78ebf61ef9
 	github.com/google/uuid v1.6.0
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/zalando/go-keyring v0.2.5
@@ -11,7 +12,6 @@ require (
 )
 
 require (
-	filippo.io/age v1.3.2 // indirect
 	filippo.io/hpke v0.4.0 // indirect
 	github.com/alessio/shellescape v1.4.1 // indirect
 	github.com/danieljoos/wincred v1.2.0 // indirect
