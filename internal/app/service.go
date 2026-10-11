@@ -47,12 +47,16 @@ func runServiceCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 
 // serviceDefinitionPath returns the canonical service definition file path
 // for the current platform.
-func serviceDefinitionPath() string {
+func serviceDefinitionPath() string { return serviceDefinitionPathFor(runtime.GOOS) }
+
+// serviceDefinitionPathFor returns the service definition file path for goos,
+// or "" when goos has no supported service manager.
+func serviceDefinitionPathFor(goos string) string {
 	home, err := userHomeDirFn()
 	if err != nil {
 		return ""
 	}
-	switch runtime.GOOS {
+	switch goos {
 	case "darwin":
 		return filepath.Join(home, "Library", "LaunchAgents", "com.haikeilabs.kei-runtime.plist")
 	case "linux":
@@ -63,8 +67,11 @@ func serviceDefinitionPath() string {
 }
 
 // serviceName returns the canonical service name for the current platform.
-func serviceName() string {
-	switch runtime.GOOS {
+func serviceName() string { return serviceNameFor(runtime.GOOS) }
+
+// serviceNameFor returns the service name for goos.
+func serviceNameFor(goos string) string {
+	switch goos {
 	case "darwin":
 		return "com.haikeilabs.kei-runtime"
 	case "linux":
@@ -146,14 +153,20 @@ func isLaunchdServiceLoaded(name string) bool {
 	return cmd.Run() == nil
 }
 
+// launchdLogPath is where the LaunchAgent writes the runtime's stdout and
+// stderr.
+func launchdLogPath(home string) string {
+	return filepath.Join(home, "Library", "Logs", "kei-runtime.log")
+}
+
 func installLaunchdService(path, keiBinary, configPath string, stdout io.Writer) error {
 	name := serviceName()
 	home, err := userHomeDirFn()
 	if err != nil {
 		return fmt.Errorf("determine home directory: %w", err)
 	}
-	logDir := filepath.Join(home, "Library", "Logs")
-	logFile := filepath.Join(logDir, "kei-runtime.log")
+	logFile := launchdLogPath(home)
+	logDir := filepath.Dir(logFile)
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		return fmt.Errorf("create Logs directory: %w", err)
 	}
