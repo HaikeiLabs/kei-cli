@@ -27,7 +27,8 @@ import (
 
 // offeredConnectorProviders are the providers Kei has built connectors for,
 // in the setup schema's display order (HAI-222). s3 is not a connector, and
-// http_api and notion are not offered yet. The console refuses the same set.
+// notion is not offered yet. http_api is the generic connector a named API
+// such as crm is registered as (HAI-384). The console refuses the same set.
 var offeredConnectorProviders = []contract.Provider{
 	contract.ProviderGmail,
 	contract.ProviderGoogle,
@@ -35,6 +36,7 @@ var offeredConnectorProviders = []contract.Provider{
 	contract.ProviderGitHub,
 	contract.ProviderTito,
 	contract.ProviderCRM,
+	contract.ProviderHTTPAPI,
 }
 
 // openConnectorConsentURL opens a shared connector's OAuth consent page.
@@ -60,6 +62,7 @@ type connectorCreateRequest struct {
 	Policy           connectorPolicy           `json:"policy"`
 	Capabilities     []contract.Capability     `json:"capabilities"`
 	Config           map[string]any            `json:"config,omitempty"`
+	HTTPAPI          *contract.HTTPAPI         `json:"http_api,omitempty"`
 }
 
 // contractMetadata is the connector the catalog would store for this request,
@@ -70,20 +73,22 @@ func (c connectorCreateRequest) contractMetadata(id, orgID, workspaceID, created
 		Status: contract.StatusPending, CredentialSource: c.CredentialSource, CredentialRef: c.CredentialRef,
 		AccountModel: c.AccountModel, Scopes: c.Scopes, Resources: c.Resources, Capabilities: c.Capabilities,
 		Policy:    contract.PolicyAttributes{AllowedActions: c.Policy.AllowedActions, AllowedResources: c.Policy.AllowedResources},
-		CreatedBy: createdBy, Config: c.Config,
+		CreatedBy: createdBy, Config: c.Config, HTTPAPI: c.HTTPAPI,
 	}
 }
 
 // connector is the part of a catalog connector the CLI renders. Secret values
 // are never part of it.
 type connector struct {
-	ID               string         `json:"id"`
-	Name             string         `json:"name"`
-	Provider         string         `json:"provider"`
-	Status           string         `json:"status"`
-	CredentialSource string         `json:"credential_source"`
-	AccountModel     string         `json:"account_model"`
-	Config           map[string]any `json:"config"`
+	ID               string            `json:"id"`
+	Name             string            `json:"name"`
+	Provider         string            `json:"provider"`
+	Status           string            `json:"status"`
+	CredentialSource string            `json:"credential_source"`
+	CredentialRef    string            `json:"credential_ref"`
+	AccountModel     string            `json:"account_model"`
+	Config           map[string]any    `json:"config"`
+	HTTPAPI          *contract.HTTPAPI `json:"http_api"`
 	Capabilities     []struct {
 		Name string `json:"name"`
 	} `json:"capabilities"`
@@ -339,6 +344,12 @@ func runConnectorsGet(args []string, stdout, stderr io.Writer, client *http.Clie
 		}
 		fmt.Fprintf(stdout, "Capabilities: %s\n", strings.Join(names, ", "))
 	}
+	if c.CredentialSource == string(contract.CredentialSourceOpaqueRef) && c.CredentialRef != "" {
+		fmt.Fprintf(stdout, "Secret ref:  %s\n", c.CredentialRef)
+	}
+	if c.HTTPAPI != nil {
+		printHTTPAPI(stdout, c.HTTPAPI)
+	}
 	if c.CredentialSource == string(contract.CredentialSourceOpaqueRef) {
 		if secrets, err := session.do(http.MethodGet, "/"+url.PathEscape(id)+"/secrets", nil); err == nil {
 			var list struct {
@@ -491,13 +502,14 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	flags := flag.NewFlagSet("connectors create", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	workspace := connectorWorkspaceFlag(flags)
-	providerFlag := flags.String("provider", "", "provider: gmail, google_drive, linear, github, tito, or crm")
+	providerFlag := flags.String("provider", "", "provider: gmail, google_drive, linear, github, tito, crm, or http_api")
 	name := flags.String("name", "", "connector name (letters, digits, and . _ : / -)")
 	accountModelFlag := flags.String("account-model", "", "OAuth account model: per_user, shared, or domain_delegation (gmail, google_drive)")
 	values := setupValues{}
 	flags.Var(values, "set", "non-secret setup field as name=value (repeatable)")
 	credentialRef := flags.String("credential-ref", "", "existing secret-manager reference for the provider's secret field")
 	capabilitiesFlag := flags.String("capabilities", "", "comma-separated capabilities (default: the provider's read capabilities)")
+	httpAPI := registerHTTPAPIFlags(flags)
 	jsonOutput := flags.Bool("json", false, "output as JSON")
 	if id, err := parseConnectorFlags(flags, args); err != nil || id != "" {
 		fmt.Fprintln(stderr, "connectors create accepts no positional arguments")
@@ -514,6 +526,9 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	}
 	if *name == "" {
 		fmt.Fprintln(stderr, "connectors create requires --name")
+		return 2
+	}
+	if !httpAPI.check(provider, stderr) {
 		return 2
 	}
 	baseURL, token, ok := loadCLIWebTokenAndBaseURL(store, stderr)
@@ -541,6 +556,12 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	if err := setup.ValidateConfig(provider, model, config); err != nil {
 		return fail(err)
 	}
+	var registration *contract.HTTPAPI
+	if provider == contract.ProviderHTTPAPI {
+		if registration, err = httpAPI.registration(); err != nil {
+			return fail(err)
+		}
+	}
 
 	// A secret is read (without echo on a terminal) and validated before any
 	// request, then sealed to the workspace's runtime keys; plaintext never
@@ -557,7 +578,7 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	if *capabilitiesFlag != "" {
 		capabilityNames = splitList(*capabilitiesFlag)
 	}
-	request, err := buildConnectorCreateRequest(provider, model, *name, config, *credentialRef, capabilityNames)
+	request, err := buildConnectorCreateRequest(provider, model, *name, config, registration, *credentialRef, capabilityNames)
 	if err != nil {
 		return fail(err)
 	}
@@ -662,6 +683,9 @@ func collectSetupConfig(provider contract.Provider, fields []setup.SetupField, v
 		if field.Secret {
 			return nil, fmt.Errorf("secret field %q is never accepted as a flag; enter it at the prompt or on stdin, or pass --credential-ref", name)
 		}
+		if field.Location != setup.SetupLocationConfig {
+			return nil, fmt.Errorf("setup field %q is not set with --set; use its own flags", name)
+		}
 	}
 	config := map[string]any{}
 	for _, field := range fields {
@@ -754,10 +778,13 @@ func validateSecretValue(field setup.SetupField, value string) error {
 // body and runs the catalog's own create check on it (contract.Metadata
 // validation plus the setup schema), so an invalid connector never leaves the
 // CLI.
-func buildConnectorCreateRequest(provider contract.Provider, model contract.AccountModel, name string, config map[string]any, credentialRef string, capabilityNames []string) (connectorCreateRequest, error) {
+func buildConnectorCreateRequest(provider contract.Provider, model contract.AccountModel, name string, config map[string]any, httpAPI *contract.HTTPAPI, credentialRef string, capabilityNames []string) (connectorCreateRequest, error) {
 	schema, ok := setup.SetupSchemaFor(provider)
 	if !ok || !slices.Contains(offeredConnectorProviders, provider) {
 		return connectorCreateRequest{}, fmt.Errorf("provider %q cannot be set up", provider)
+	}
+	if (provider == contract.ProviderHTTPAPI) != (httpAPI != nil) {
+		return connectorCreateRequest{}, errors.New("an http_api registration is required for, and only valid on, provider http_api")
 	}
 	source, err := credentialSourceFor(schema, model)
 	if err != nil {
@@ -782,7 +809,7 @@ func buildConnectorCreateRequest(provider contract.Provider, model contract.Acco
 		}
 	}
 
-	capabilities, err := connectorCapabilities(provider, config, capabilityNames)
+	capabilities, err := connectorCapabilities(provider, config, httpAPI, capabilityNames)
 	if err != nil {
 		return connectorCreateRequest{}, err
 	}
@@ -800,7 +827,7 @@ func buildConnectorCreateRequest(provider contract.Provider, model contract.Acco
 	request := connectorCreateRequest{
 		Name: name, Provider: provider, CredentialSource: source, CredentialRef: credentialRef,
 		AccountModel: model, Scopes: scopes, Resources: []string{}, Capabilities: capabilities, Config: config,
-		Policy: connectorPolicy{AllowedActions: actions, AllowedResources: []string{}},
+		Policy: connectorPolicy{AllowedActions: actions, AllowedResources: []string{}}, HTTPAPI: httpAPI,
 	}
 	m := request.contractMetadata(uuid.NewString(), "org", "workspace", "cli")
 	if m.CredentialRef == "" {
@@ -827,8 +854,10 @@ func credentialSourceFor(schema setup.SetupSchema, model contract.AccountModel) 
 // connectorCapabilities returns the named capabilities, or by default the
 // provider's read capabilities. A crm connector's defaults are limited to the
 // resources its config allows, because the Worker rejects an assertion that
-// declares a capability for a resource it does not serve.
-func connectorCapabilities(provider contract.Provider, config map[string]any, names []string) ([]contract.Capability, error) {
+// declares a capability for a resource it does not serve. An http_api
+// connector's defaults are the contract's capabilities for its allowed
+// methods, reads and writes alike: the methods are the admin's explicit choice.
+func connectorCapabilities(provider contract.Provider, config map[string]any, httpAPI *contract.HTTPAPI, names []string) ([]contract.Capability, error) {
 	defined := contract.CapabilitiesFor(provider)
 	if len(names) > 0 {
 		capabilities := make([]contract.Capability, 0, len(names))
@@ -843,13 +872,25 @@ func connectorCapabilities(provider contract.Provider, config map[string]any, na
 	}
 	var capabilities []contract.Capability
 	for _, capability := range defined {
-		if capability.Action != contract.ActionRead {
+		switch {
+		case provider == contract.ProviderHTTPAPI:
+			if !httpAPIMethodAllowed(httpAPI, capability.Name) {
+				continue
+			}
+		case capability.Action != contract.ActionRead:
 			continue
-		}
-		if provider == contract.ProviderCRM && !crmResourceAllowed(config, capability.Name) {
+		case provider == contract.ProviderCRM && !crmResourceAllowed(config, capability.Name):
 			continue
 		}
 		capabilities = append(capabilities, capability)
+	}
+	if provider == contract.ProviderHTTPAPI {
+		for _, method := range httpAPI.AllowedMethods {
+			name := "http." + strings.ToLower(string(method))
+			if !slices.ContainsFunc(capabilities, func(c contract.Capability) bool { return c.Name == name }) {
+				return nil, fmt.Errorf("HTTP method %s has no capability in this kei's connector contract; upgrade kei", method)
+			}
+		}
 	}
 	return capabilities, nil
 }

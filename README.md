@@ -283,7 +283,8 @@ development and testing.
 Connector setup renders from the `kei.connector-setup/v1` schema in
 `kei-connector-contracts` v0.3.0, the same definition the console uses. The
 CLI offers the providers Kei has built connectors for: `gmail`,
-`google_drive`, `linear`, `github`, `tito`, and `crm`.
+`google_drive`, `linear`, `github`, `tito`, `crm`, and the generic
+`http_api`.
 
 ```sh
 # OAuth: pick the account model (per_user is the default).
@@ -296,8 +297,15 @@ kei connectors create --workspace Main --provider tito --name events --set accou
 <secret-manager read> | kei connectors create --workspace Main --provider tito --name events --set account_slug=acme
 kei connectors reconnect CONNECTOR_ID --workspace Main   # replaces the secret (a new generation)
 
+# Generic HTTP API (http_api): name it, register its https base URL and the
+# methods and paths agents may call. The shared API key is read without echo,
+# sealed, and stored under a kei:// reference the catalog assigns.
+<secret-manager read> | kei connectors create --workspace Main --provider http_api --name crm \
+  --base-url https://crm.example.com --methods GET,HEAD,POST,PATCH \
+  --paths '/api/investors,/api/investors/*' --query limit,cursor --auth-header X-KEI-API-Key
+
 kei connectors list --workspace Main
-kei connectors get CONNECTOR_ID --workspace Main
+kei connectors get CONNECTOR_ID --workspace Main   # http_api: base URL, methods, paths, auth header, secret ref
 kei connectors delete CONNECTOR_ID --workspace Main --yes   # revokes the connector
 ```
 
@@ -309,6 +317,15 @@ and only the sealed copies are sent. The runtime stores the secret in the
 tenant secret manager, and the connector becomes connected when it does. To
 use a secret that is already in your secret manager, pass `--credential-ref
 REF` instead.
+
+An `http_api` connector's methods choose its capabilities: each allowed method
+declares the connector contract's `http.<method>` capability, so `POST` and
+`PATCH` are writes (they need a kei built against kei-connector-contracts
+v0.8.0 or later). The registration is checked against the contract before
+anything is sent: an https public host without credentials, a relative path
+pattern, and a valid header name. The key goes in `Authorization: Bearer`
+unless `--auth-header`/`--auth-scheme` say otherwise; the header is always
+redacted.
 
 ## Manage model profiles and the credential store
 
