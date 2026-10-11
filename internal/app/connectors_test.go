@@ -116,7 +116,7 @@ func createdResponse(w http.ResponseWriter, r consoleRequest) {
 }
 
 func TestConnectorsOfferedProvidersMatchTicketAndHaveSetupSchemas(t *testing.T) {
-	want := []string{"crm", "github", "gmail", "google_drive", "linear", "tito"}
+	want := []string{"crm", "github", "gmail", "google_drive", "http_api", "linear", "tito"}
 	var got []string
 	for _, provider := range offeredConnectorProviders {
 		got = append(got, string(provider))
@@ -126,7 +126,7 @@ func TestConnectorsOfferedProvidersMatchTicketAndHaveSetupSchemas(t *testing.T) 
 	}
 	sort.Strings(got)
 	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("offered providers = %v, want %v (no s3, http_api, or notion)", got, want)
+		t.Fatalf("offered providers = %v, want %v (no s3 or notion)", got, want)
 	}
 }
 
@@ -160,7 +160,11 @@ func TestConnectorsCreateRequestsPassTheContractCatalogCheck(t *testing.T) {
 						config[field.Name] = "events@example.com"
 					}
 				}
-				request, err := buildConnectorCreateRequest(provider, model, "events", config, credentialRef, nil)
+				var registration *contract.HTTPAPI
+				if provider == contract.ProviderHTTPAPI {
+					registration = testHTTPAPIRegistration()
+				}
+				request, err := buildConnectorCreateRequest(provider, model, "events", config, registration, credentialRef, nil)
 				if err != nil {
 					t.Fatalf("build: %v", err)
 				}
@@ -452,18 +456,29 @@ func TestConnectorsCreateDomainDelegationWithCredentialRef(t *testing.T) {
 
 func TestConnectorsCreateRejectsLocallyBeforeSending(t *testing.T) {
 	cases := map[string][]string{
-		"s3 is not a connector":      {"--provider", "s3", "--name", "x"},
-		"http_api not offered":       {"--provider", "http_api", "--name", "x"},
-		"crm base_url must be https": {"--provider", "crm", "--name", "crm", "--set", "base_url=http://crm.example.com", "--set", "assertion_audience=kei-crm", "--credential-ref", "kei/crm"},
-		"unknown field":              {"--provider", "tito", "--name", "x", "--set", "bogus=1", "--set", "account_slug=acme", "--credential-ref", "kei/t"},
-		"secret field via --set":     {"--provider", "tito", "--name", "x", "--set", "account_slug=acme", "--set", "api_token=abc"},
-		"account model not allowed":  {"--provider", "linear", "--name", "x", "--account-model", "domain_delegation"},
-		"account model on tito":      {"--provider", "tito", "--name", "x", "--account-model", "shared", "--set", "account_slug=acme", "--credential-ref", "kei/t"},
-		"missing required config":    {"--provider", "tito", "--name", "x", "--credential-ref", "kei/t"},
-		"name must be an identifier": {"--provider", "linear", "--name", "has spaces"},
-		"ref that is a URL":          {"--provider", "tito", "--name", "x", "--set", "account_slug=acme", "--credential-ref", "https://vault.example.com/x"},
-		"credential-ref on oauth":    {"--provider", "linear", "--name", "x", "--credential-ref", "kei/t"},
-		"capability not in contract": {"--provider", "linear", "--name", "x", "--capabilities", "issue.delete"},
+		"s3 is not a connector":       {"--provider", "s3", "--name", "x"},
+		"http_api without base url":   {"--provider", "http_api", "--name", "crm", "--credential-ref", "kei/crm"},
+		"base url on another":         {"--provider", "tito", "--name", "x", "--set", "account_slug=acme", "--credential-ref", "kei/t", "--base-url", "https://api.example.com"},
+		"methods on another":          {"--provider", "tito", "--name", "x", "--set", "account_slug=acme", "--credential-ref", "kei/t", "--methods", "GET"},
+		"http_api base url not https": {"--provider", "http_api", "--name", "crm", "--base-url", "http://api.example.com", "--credential-ref", "kei/crm"},
+		"http_api private host":       {"--provider", "http_api", "--name", "crm", "--base-url", "https://10.0.0.1", "--credential-ref", "kei/crm"},
+		"http_api base url with key":  {"--provider", "http_api", "--name", "crm", "--base-url", "https://user:pw@api.example.com", "--credential-ref", "kei/crm"},
+		"http_api method not allowed": {"--provider", "http_api", "--name", "crm", "--base-url", "https://api.example.com", "--methods", "GET,DELETE", "--credential-ref", "kei/crm"},
+		"http_api no methods":         {"--provider", "http_api", "--name", "crm", "--base-url", "https://api.example.com", "--methods", "", "--credential-ref", "kei/crm"},
+		"http_api relative path":      {"--provider", "http_api", "--name", "crm", "--base-url", "https://api.example.com", "--paths", "api/*", "--credential-ref", "kei/crm"},
+		"http_api bad auth header":    {"--provider", "http_api", "--name", "crm", "--base-url", "https://api.example.com", "--auth-header", "X Key", "--credential-ref", "kei/crm"},
+		"http_api block via --set":    {"--provider", "http_api", "--name", "crm", "--base-url", "https://api.example.com", "--set", "http_api=x", "--credential-ref", "kei/crm"},
+		"http_api kei:// ref":         {"--provider", "http_api", "--name", "crm", "--base-url", "https://api.example.com", "--credential-ref", "kei://connectors/x/api_key"},
+		"crm base_url must be https":  {"--provider", "crm", "--name", "crm", "--set", "base_url=http://crm.example.com", "--set", "assertion_audience=kei-crm", "--credential-ref", "kei/crm"},
+		"unknown field":               {"--provider", "tito", "--name", "x", "--set", "bogus=1", "--set", "account_slug=acme", "--credential-ref", "kei/t"},
+		"secret field via --set":      {"--provider", "tito", "--name", "x", "--set", "account_slug=acme", "--set", "api_token=abc"},
+		"account model not allowed":   {"--provider", "linear", "--name", "x", "--account-model", "domain_delegation"},
+		"account model on tito":       {"--provider", "tito", "--name", "x", "--account-model", "shared", "--set", "account_slug=acme", "--credential-ref", "kei/t"},
+		"missing required config":     {"--provider", "tito", "--name", "x", "--credential-ref", "kei/t"},
+		"name must be an identifier":  {"--provider", "linear", "--name", "has spaces"},
+		"ref that is a URL":           {"--provider", "tito", "--name", "x", "--set", "account_slug=acme", "--credential-ref", "https://vault.example.com/x"},
+		"credential-ref on oauth":     {"--provider", "linear", "--name", "x", "--credential-ref", "kei/t"},
+		"capability not in contract":  {"--provider", "linear", "--name", "x", "--capabilities", "issue.delete"},
 	}
 	for name, args := range cases {
 		t.Run(name, func(t *testing.T) {
