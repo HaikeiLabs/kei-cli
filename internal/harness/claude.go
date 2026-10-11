@@ -122,7 +122,7 @@ func claudePresent(cfg []byte, key string) map[string]bool {
 }
 
 func mergeClaudePermissions(cfg []byte, allows, denies []string) ([]byte, error) {
-	root, keep, err := permissionRoot(cfg, allows, denies)
+	root, keep, err := permissionRoot(cfg, allows, denies, "permissions")
 	if err != nil || keep != nil {
 		return keep, err
 	}
@@ -164,16 +164,18 @@ func (claudeCode) removeManaged(config []byte, allows, denies []string) ([]byte,
 	if len(allows) == 0 && len(denies) == 0 {
 		return config, nil
 	}
-	var root map[string]any
-	if err := json.Unmarshal(config, &root); err != nil {
+	root, err := parseTopLevel(config, map[string]bool{"permissions": true})
+	if err != nil {
 		return nil, err
 	}
-	permissions, ok := root["permissions"].(map[string]any)
+	permissions, ok := root.get("permissions")
+	permObj, ok := permissions.(*orderedObject)
 	if !ok {
 		return config, nil
 	}
 	for key, entries := range map[string][]string{"allow": allows, "deny": denies} {
-		values, ok := permissions[key].([]any)
+		values, ok := permObj.get(key)
+		arr, ok := values.([]any)
 		if !ok {
 			continue
 		}
@@ -181,18 +183,18 @@ func (claudeCode) removeManaged(config []byte, allows, denies []string) ([]byte,
 		for _, s := range entries {
 			remove[s]++
 		}
-		kept := make([]any, 0, len(values))
-		for _, entry := range values {
+		kept := make([]any, 0, len(arr))
+		for _, entry := range arr {
 			if s, ok := entry.(string); ok && remove[s] > 0 {
 				remove[s]--
 				continue
 			}
 			kept = append(kept, entry)
 		}
-		permissions[key] = kept
+		permObj.set(key, kept)
 	}
-	root["permissions"] = permissions
-	return json.MarshalIndent(root, "", "  ")
+	root.set("permissions", permObj)
+	return marshalOrdered(root, "  ")
 }
 
 func (c claudeCode) mergeHook(cfg, spec []byte) ([]byte, error) {

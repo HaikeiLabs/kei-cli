@@ -31,6 +31,20 @@ func (o *orderedObject) set(key string, value any) {
 	o.values[key] = value
 }
 
+// delete removes a key, keeping the remaining keys in order.
+func (o *orderedObject) delete(key string) {
+	if _, exists := o.values[key]; !exists {
+		return
+	}
+	delete(o.values, key)
+	for i, k := range o.keys {
+		if k == key {
+			o.keys = append(o.keys[:i], o.keys[i+1:]...)
+			break
+		}
+	}
+}
+
 // decodeOrdered reads a single JSON value from dec, preserving object key
 // order at every nesting level.
 func decodeOrdered(dec *json.Decoder) (any, error) {
@@ -94,6 +108,51 @@ func parseOrdered(data []byte) (any, error) {
 	return decodeOrdered(dec)
 }
 
+// parseTopLevel parses a JSON object, keeping the original raw bytes for every
+// key not in managed and parsing the managed keys into a mutable ordered
+// structure. A later marshalOrdered therefore writes the unmanaged keys back
+// byte-for-byte — same escaping, same whitespace — so the renderer only ever
+// changes the subtrees it owns.
+func parseTopLevel(data []byte, managed map[string]bool) (*orderedObject, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return nil, fmt.Errorf("settings root is not a JSON object")
+	}
+	obj := &orderedObject{values: map[string]any{}}
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		key, ok := keyTok.(string)
+		if !ok {
+			return nil, fmt.Errorf("expected object key string, got %v", keyTok)
+		}
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return nil, err
+		}
+		if managed[key] {
+			parsed, err := parseOrdered(raw)
+			if err != nil {
+				return nil, err
+			}
+			obj.set(key, parsed)
+		} else {
+			obj.set(key, raw)
+		}
+	}
+	if _, err := dec.Token(); err != nil { // consume '}'
+		return nil, err
+	}
+	return obj, nil
+}
+
 // marshalOrdered marshals an order-preserving structure to indented JSON.
 // It mirrors json.MarshalIndent's layout (two-space indent, a space after the
 // colon) but preserves key order and does not escape <, >, or & (the
@@ -154,6 +213,10 @@ func marshalOrderedAt(v any, indent string, depth int) ([]byte, error) {
 		buf.WriteString(strings.Repeat(indent, depth))
 		buf.WriteByte(']')
 		return buf.Bytes(), nil
+	case json.RawMessage:
+		// A value the renderer does not manage: write the original bytes back
+		// verbatim so its escaping and whitespace are untouched.
+		return []byte(t), nil
 	default:
 		var buf bytes.Buffer
 		enc := json.NewEncoder(&buf)

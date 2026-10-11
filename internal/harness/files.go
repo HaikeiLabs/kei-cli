@@ -210,13 +210,11 @@ func nonPromptingWarning(kind string) string {
 func mergeHookJSON(kind string, cfg, spec []byte, nested bool) ([]byte, error) {
 	var current *orderedObject
 	if len(cfg) > 0 {
-		parsed, err := parseOrdered(cfg)
+		// Only the hooks subtree is managed; every other key keeps its
+		// original bytes so the hook merge does not reformat the file.
+		obj, err := parseTopLevel(cfg, map[string]bool{"hooks": true})
 		if err != nil {
 			return nil, fmt.Errorf("decode %s config: %w", kind, err)
-		}
-		obj, ok := parsed.(*orderedObject)
-		if !ok {
-			return nil, fmt.Errorf("%s config root is not a JSON object", kind)
 		}
 		current = obj
 	} else {
@@ -298,9 +296,11 @@ func containsKeiHookCommand(value any) bool {
 	}
 }
 
-// permissionRoot parses a JSON settings file for a permission merge. With no
-// entries to merge it returns the bytes to keep instead of a root.
-func permissionRoot(cfg []byte, allows, denies []string) (*orderedObject, []byte, error) {
+// permissionRoot parses a JSON settings file for a permission merge, keeping
+// the original raw bytes for every key except managedKey so a re-marshal only
+// changes the managed subtree. With no entries to merge it returns the bytes
+// to keep instead of a root.
+func permissionRoot(cfg []byte, allows, denies []string, managedKey string) (*orderedObject, []byte, error) {
 	if len(allows) == 0 && len(denies) == 0 {
 		if len(cfg) > 0 {
 			// No Kei-managed entries but a config exists: leave it untouched.
@@ -315,13 +315,9 @@ func permissionRoot(cfg []byte, allows, denies []string) (*orderedObject, []byte
 	if len(cfg) == 0 {
 		return &orderedObject{values: map[string]any{}}, nil, nil
 	}
-	parsed, err := parseOrdered(cfg)
+	obj, err := parseTopLevel(cfg, map[string]bool{managedKey: true})
 	if err != nil {
 		return nil, nil, err
-	}
-	obj, ok := parsed.(*orderedObject)
-	if !ok {
-		return nil, nil, fmt.Errorf("settings root is not a JSON object")
 	}
 	return obj, nil, nil
 }

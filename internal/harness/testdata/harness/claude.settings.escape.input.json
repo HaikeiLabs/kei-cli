@@ -1,0 +1,10 @@
+{
+  "model": "claude-sonnet-4-5",
+  "env": {
+    "GREETING": "a \u0026 b \u003c c",
+    "NAME": "caf\u00e9"
+  },
+  "permissions": {
+    "allow": ["Bash(user:*)"]
+  }
+}
