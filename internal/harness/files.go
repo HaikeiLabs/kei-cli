@@ -55,7 +55,12 @@ func applyFiles(f fileHarness, r Rendered, opts ApplyOpts) (Result, error) {
 		return Result{}, fmt.Errorf("bundle payload changed without a version increase")
 	}
 	ledger := syncLedger{HarnessID: f.Kind(), Kind: f.Kind(), Bundle: r.BundleVersion, Digest: r.BundleDigest, NotAfter: r.NotAfter, Files: map[string]fileLedger{}}
+	// inputs holds each file's bytes as they are on disk: the diff, the
+	// no-change check and the backup compare against them. stripped holds
+	// the same files with the previous sync's entries removed, which is
+	// what the render merges into (HAI-508).
 	inputs := map[string][]byte{}
+	stripped := map[string][]byte{}
 	reapplied := 0
 	for _, target := range targets {
 		if target.Remote() {
@@ -66,6 +71,7 @@ func applyFiles(f fileHarness, r Rendered, opts ApplyOpts) (Result, error) {
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return Result{}, err
 		}
+		inputs[path] = cfg
 		if previous, ok := prior.Files[path]; ok {
 			reapplied += countReapplied(f, path, cfg, previous, r)
 			if len(cfg) > 0 {
@@ -75,12 +81,12 @@ func applyFiles(f fileHarness, r Rendered, opts ApplyOpts) (Result, error) {
 				}
 			}
 		}
-		inputs[path] = cfg
+		stripped[path] = cfg
 	}
 	outputs := map[string][]byte{}
 	allows := map[string][]string{}
 	denies := map[string][]string{}
-	for path, cfg := range inputs {
+	for path, cfg := range stripped {
 		out, allowed, denied, err := f.renderFile(path, cfg, r)
 		if err != nil {
 			return Result{}, err
@@ -94,7 +100,7 @@ func applyFiles(f fileHarness, r Rendered, opts ApplyOpts) (Result, error) {
 		for path, content := range hook.Files {
 			base := outputs[path]
 			if len(base) == 0 {
-				base = inputs[path]
+				base = stripped[path]
 			}
 			merged, err := f.mergeHook(base, content)
 			if err != nil {

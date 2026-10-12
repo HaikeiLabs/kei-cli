@@ -31,6 +31,23 @@ func (o *orderedObject) set(key string, value any) {
 	o.values[key] = value
 }
 
+// setBefore stores a new key directly before the key before, or at the end
+// when before is absent. An existing key is updated in place.
+func (o *orderedObject) setBefore(key, before string, value any) {
+	if _, exists := o.values[key]; exists {
+		o.values[key] = value
+		return
+	}
+	for i, k := range o.keys {
+		if k == before {
+			o.keys = append(o.keys[:i], append([]string{key}, o.keys[i:]...)...)
+			o.values[key] = value
+			return
+		}
+	}
+	o.set(key, value)
+}
+
 // delete removes a key, keeping the remaining keys in order.
 func (o *orderedObject) delete(key string) {
 	if _, exists := o.values[key]; !exists {

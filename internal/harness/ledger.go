@@ -42,6 +42,10 @@ func writeLedger(path string, ledger syncLedger) error {
 	if err != nil {
 		return err
 	}
+	// A sync that changed nothing leaves the ledger untouched too.
+	if current, err := os.ReadFile(path); err == nil && bytes.Equal(current, b) {
+		return nil
+	}
 	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}

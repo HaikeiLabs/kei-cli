@@ -315,10 +315,15 @@ func mergeOpenCodePermissions(cfg []byte, allows, denies []string) ([]byte, erro
 				// user-defined "*" key is left untouched.
 				return
 			}
-			for _, pattern := range []string{entry, entry + " *"} {
-				if _, exists := bashObj.get(pattern); !exists {
-					bashObj.set(pattern, decision)
-				}
+			// The bare prefix goes directly before its "prefix *" twin. The
+			// ledger tracks only the bare prefix, so a re-sync strips it but
+			// keeps the twin; restoring it in place keeps the file unchanged
+			// (HAI-508).
+			if _, exists := bashObj.get(entry); !exists {
+				bashObj.setBefore(entry, entry+" *", decision)
+			}
+			if _, exists := bashObj.get(entry + " *"); !exists {
+				bashObj.set(entry+" *", decision)
 			}
 		}
 	}
