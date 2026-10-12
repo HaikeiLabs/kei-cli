@@ -14,7 +14,9 @@ import (
 // dry-run diff shows only the Kei-managed permissions/hooks entries.
 func TestClaudeRenderPreservesUnmanagedBytes(t *testing.T) {
 	home := t.TempDir()
-	env := hermeticEnv(home, nil)
+	// A recent Claude Code so the full seven-event hook set is rendered
+	// deterministically (HAI-469) without running the real binary.
+	env := claudeEnv(home, "2.1.296 (Claude Code)\n")
 	path := claudeSettingsPath(env)
 
 	input, err := os.ReadFile(filepath.Join("testdata", "harness", "claude.settings.escape.input.json"))
