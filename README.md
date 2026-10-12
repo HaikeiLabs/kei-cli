@@ -336,6 +336,21 @@ pattern, and a valid header name. The key goes in `Authorization: Bearer`
 unless `--auth-header`/`--auth-scheme` say otherwise; the header is always
 redacted.
 
+## Manage policies
+
+```sh
+kei policies list --workspace Main
+kei policies create --workspace Main --name deny-env --src-pattern 'harness:claude' --dst-pattern 'path:*.env' --effect deny
+kei policies update deny-env --workspace Main --priority 100   # ID or name
+kei policies delete deny-env --workspace Main --yes
+```
+
+A policy with no agent applies to every agent in its workspace. **`--agent-id`
+isn't supported yet:** the server rejected `agent_id` on create with 400
+"invalid request body" (HAI-513), so `create` and `update` now refuse the flag
+before sending anything. Create the policy without it and set the agent in the
+console. The flag comes back once the server accepts `agent_id`.
+
 ## Manage model profiles and the credential store
 
 Model profiles and the credential store are organization resources in the

@@ -82,15 +82,14 @@ func (p *policy) UnmarshalJSON(data []byte) error {
 }
 
 type createPolicyRequest struct {
-	Name        string  `json:"name"`
-	Description string  `json:"description,omitempty"`
-	SrcPattern  string  `json:"src_pattern"`
-	DstPattern  string  `json:"dst_pattern"`
-	Effect      string  `json:"effect"`
-	Action      string  `json:"action"`
-	Priority    int     `json:"priority"`
-	Enabled     bool    `json:"enabled"`
-	AgentID     *string `json:"agent_id,omitempty"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	SrcPattern  string `json:"src_pattern"`
+	DstPattern  string `json:"dst_pattern"`
+	Effect      string `json:"effect"`
+	Action      string `json:"action"`
+	Priority    int    `json:"priority"`
+	Enabled     bool   `json:"enabled"`
 }
 
 type updatePolicyRequest struct {
@@ -418,6 +417,11 @@ func runPoliciesGet(args []string, stdout, stderr io.Writer, client *http.Client
 	return 0
 }
 
+// agentIDUnsupported is the --agent-id error until the catalog accepts
+// agent_id on policy create and update (HAI-513). Before that it rejected the
+// field with 400 "invalid request body".
+const agentIDUnsupported = "--agent-id isn't supported by the server yet (HAI-513); create the policy without it and set the agent in the console"
+
 func runPoliciesCreate(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("policies create", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -428,7 +432,7 @@ func runPoliciesCreate(args []string, stdout, stderr io.Writer, client *http.Cli
 	effect := flags.String("effect", "", "effect: permit or deny")
 	priority := flags.Int("priority", 0, "priority (higher = more specific)")
 	description := flags.String("description", "", "policy description")
-	agentID := flags.String("agent-id", "", "optional agent ID")
+	agentID := flags.String("agent-id", "", "agent ID (not supported by the server yet, HAI-513)")
 	jsonOutput := flags.Bool("json", false, "output as JSON")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		fmt.Fprintln(stderr, "policies create accepts no positional arguments")
@@ -438,6 +442,10 @@ func runPoliciesCreate(args []string, stdout, stderr io.Writer, client *http.Cli
 		fmt.Fprintln(stderr, "policies create requires --name, --src-pattern, --dst-pattern, and --effect")
 		return 2
 	}
+	if *agentID != "" {
+		fmt.Fprintln(stderr, "policies create: "+agentIDUnsupported)
+		return 2
+	}
 	if *effect != "permit" && *effect != "deny" {
 		fmt.Fprintln(stderr, "policies create: --effect must be permit or deny")
 		return 2
@@ -445,14 +453,6 @@ func runPoliciesCreate(args []string, stdout, stderr io.Writer, client *http.Cli
 	ws, ok := requirePoliciesWorkspace("create", *workspace, stderr)
 	if !ok {
 		return 2
-	}
-	var agent *string
-	if *agentID != "" {
-		if _, err := uuid.Parse(*agentID); err != nil {
-			fmt.Fprintln(stderr, "policies create: --agent-id must be a UUID")
-			return 2
-		}
-		agent = agentID
 	}
 	session, ok := openPolicySession("create", ws, stderr, client, store)
 	if !ok {
@@ -467,7 +467,6 @@ func runPoliciesCreate(args []string, stdout, stderr io.Writer, client *http.Cli
 		Action:      *effect,
 		Priority:    *priority,
 		Enabled:     true,
-		AgentID:     agent,
 	}
 	payload, err := session.do(http.MethodPost, "", request, nil)
 	if err != nil {
@@ -498,9 +497,14 @@ func runPoliciesUpdate(args []string, stdout, stderr io.Writer, client *http.Cli
 	priority := flags.Int("priority", 0, "priority")
 	enabled := flags.Bool("enabled", false, "enabled")
 	description := flags.String("description", "", "policy description")
+	agentID := flags.String("agent-id", "", "agent ID (not supported by the server yet, HAI-513)")
 	jsonOutput := flags.Bool("json", false, "output as JSON")
 	id, err := parsePolicyFlags(flags, args)
 	if err != nil {
+		return 2
+	}
+	if *agentID != "" {
+		fmt.Fprintln(stderr, "policies update: "+agentIDUnsupported)
 		return 2
 	}
 	if id == "" {
