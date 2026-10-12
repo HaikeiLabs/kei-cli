@@ -261,13 +261,14 @@ func TestCodexHookSpecResyncReplacesFlatEntry(t *testing.T) {
 	if err := json.Unmarshal(merged, &doc); err != nil {
 		t.Fatalf("unmarshal merged hooks.json: %v\nraw:\n%s", err, merged)
 	}
-	// SessionStart must be preserved (one group, command "other-tool hook").
+	// The third-party SessionStart group must be preserved first (command
+	// "other-tool hook"); the Kei SessionStart group follows it (HAI-497).
 	sessionGroups, ok := doc.Hooks["SessionStart"]
 	if !ok {
 		t.Fatal("SessionStart missing after merge")
 	}
-	if len(sessionGroups) != 1 {
-		t.Fatalf("SessionStart: want 1 group, got %d", len(sessionGroups))
+	if len(sessionGroups) != 2 {
+		t.Fatalf("SessionStart: want 2 groups, got %d", len(sessionGroups))
 	}
 	var sessionGroup struct {
 		Hooks []struct {

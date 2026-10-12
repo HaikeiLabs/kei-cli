@@ -2,10 +2,12 @@ package harness
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -51,6 +53,13 @@ func (c codex) Apply(_ context.Context, r Rendered, opts ApplyOpts) (Result, err
 		if codexNonPrompting(config) {
 			result.Warnings = append(result.Warnings, nonPromptingWarning(c.Kind()))
 		}
+		if !opts.DryRun {
+			hooksPath := filepath.Join(opts.Env.Home, ".codex", "hooks.json")
+			hooks, _ := os.ReadFile(hooksPath)
+			if untrusted := codexUntrustedKeiHooks(hooksPath, hooks, config); len(untrusted) > 0 {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("Codex skips untrusted hooks, and the Kei hooks for %s are not trusted yet.", strings.Join(untrusted, ", ")))
+			}
+		}
 	}
 	result.Notes = append(result.Notes, "Codex runs new hooks only after you trust them: open Codex and run /hooks to approve the Kei hooks.")
 	return result, nil
@@ -76,8 +85,122 @@ func (codex) HookSpec(env Env) *HookSpec {
 	command := "kei-proxy hook codex"
 	hook := map[string]any{"type": "command", "command": command, "timeout": 5}
 	group := map[string]any{"hooks": []any{hook}}
-	spec := mustJSON(map[string]any{"hooks": map[string]any{"PreToolUse": []any{group}, "PostToolUse": []any{group}}})
+	events := map[string]any{}
+	for _, event := range codexHookEvents {
+		events[event.name] = []any{group}
+	}
+	spec := mustJSON(map[string]any{"hooks": events})
 	return &HookSpec{Files: map[string][]byte{filepath.Join(env.Home, ".codex", "hooks.json"): spec}}
+}
+
+// codexHookEvents are the Codex hook events Kei reports, each with the label
+// Codex uses for it in a [hooks.state] key: the tool calls, and the session
+// start, turn end and session end. PermissionRequest is not rendered: it has
+// no tool_use_id, so kei-proxy would record it as a second pre event.
+var codexHookEvents = []struct{ name, stateLabel string }{
+	{"PreToolUse", "pre_tool_use"},
+	{"PostToolUse", "post_tool_use"},
+	{"SessionStart", "session_start"},
+	{"Stop", "stop"},
+	{"SessionEnd", "session_end"},
+}
+
+// codexUntrustedKeiHooks returns the events whose Kei hook in hooksJSON has
+// no trusted hash in config.toml. Codex keys hook trust by
+// "<hooks.json path>:<event label>:<group index>:<handler index>" and skips
+// a hook with no trusted hash. A recorded hash is taken as trusted: Codex's
+// hash is not recomputed here, so a hook changed since it was trusted is not
+// reported.
+func codexUntrustedKeiHooks(hooksPath string, hooksJSON, config []byte) []string {
+	var doc struct {
+		Hooks map[string][]struct {
+			Hooks []struct {
+				Command string `json:"command"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if json.Unmarshal(hooksJSON, &doc) != nil {
+		return nil
+	}
+	trusted := codexTrustedHookKeys(config)
+	var untrusted []string
+	for _, event := range codexHookEvents {
+		for gi, group := range doc.Hooks[event.name] {
+			for hi, handler := range group.Hooks {
+				key := fmt.Sprintf("%s:%s:%d:%d", hooksPath, event.stateLabel, gi, hi)
+				if strings.HasPrefix(handler.Command, "kei-proxy hook ") && !trusted[key] && !slices.Contains(untrusted, event.name) {
+					untrusted = append(untrusted, event.name)
+				}
+			}
+		}
+	}
+	return untrusted
+}
+
+// codexTrustedHookKeys returns the [hooks.state] keys in config.toml that
+// carry a trusted_hash, written as [hooks.state."<key>"] tables (Codex's
+// form) or as dotted or inline entries under [hooks.state].
+func codexTrustedHookKeys(config []byte) map[string]bool {
+	trusted := map[string]bool{}
+	table, inState := "", false
+	for _, line := range strings.Split(string(config), "\n") {
+		if header, ok := tomlTableHeader(line); ok {
+			table, inState = "", header == "hooks.state"
+			if rest, ok := strings.CutPrefix(header, "hooks.state."); ok {
+				if key, after, ok := tomlKey(rest); ok && after == "" {
+					table = key
+				}
+			}
+			continue
+		}
+		name, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		name = strings.TrimSpace(name)
+		switch {
+		case table != "" && name == "trusted_hash":
+			trusted[table] = true
+		case inState:
+			key, after, ok := tomlKey(name)
+			if ok && (strings.TrimSpace(after) == ".trusted_hash" || (after == "" && strings.Contains(value, "trusted_hash"))) {
+				trusted[key] = true
+			}
+		}
+	}
+	return trusted
+}
+
+// tomlKey reads the first key segment of s (double-quoted, single-quoted or
+// bare) and returns it with the rest of s after it.
+func tomlKey(s string) (string, string, bool) {
+	s = strings.TrimSpace(s)
+	switch {
+	case strings.HasPrefix(s, `"`):
+		for i := 1; i < len(s); i++ {
+			if s[i] == '\\' {
+				i++
+				continue
+			}
+			if s[i] == '"' {
+				key, err := strconv.Unquote(s[:i+1])
+				return key, strings.TrimSpace(s[i+1:]), err == nil
+			}
+		}
+		return "", "", false
+	case strings.HasPrefix(s, "'"):
+		end := strings.Index(s[1:], "'")
+		if end < 0 {
+			return "", "", false
+		}
+		return s[1 : end+1], strings.TrimSpace(s[end+2:]), true
+	default:
+		key, rest, found := strings.Cut(s, ".")
+		if found {
+			rest = "." + rest
+		}
+		return strings.TrimSpace(key), strings.TrimSpace(rest), key != ""
+	}
 }
 
 func (codex) renderFile(path string, cfg []byte, r Rendered) ([]byte, []string, []string, error) {

@@ -159,14 +159,42 @@ func opencodeNonPrompting(config []byte) bool {
 	return false
 }
 
-// opencodePlugin is the audit hook Kei installs for OpenCode. It uses
-// OpenCode's real hook signatures: tool.execute.before/after receive
-// (input, output), where input carries tool/sessionID/callID and output
-// carries the args (before) or the result (after). The payload uses the JSON
-// keys kei-proxy's opencode hook parser reads (tool_name, session_id,
-// tool_use_id, tool_input); with the old single-(event) form only the first
-// argument was forwarded and tool_name was empty, so every event was dropped.
-const opencodePlugin = "// managed by kei harness sync\nconst report = async (payload) => { try { const child = Bun.spawn(['kei-proxy','hook','opencode'], { stdin: 'pipe', stdout: 'ignore', stderr: 'ignore' }); child.stdin.write(JSON.stringify(payload)); child.stdin.end(); } catch {} };\nexport const KeiAudit = async () => ({ 'tool.execute.before': async (input, output) => { void report({ phase: 'pre', tool_name: input?.tool, session_id: input?.sessionID, tool_use_id: input?.callID, tool_input: output?.args }); }, 'tool.execute.after': async (input, output) => { void report({ phase: 'post', tool_name: input?.tool, session_id: input?.sessionID, tool_use_id: input?.callID, tool_input: input?.args }); }, 'permission.ask': async (input, output) => { void report({ phase: 'ask', tool_name: input?.type || input?.tool, native_decision: output?.status }); } });\n"
+// opencodePlugin is the audit hook Kei installs for OpenCode, written against
+// the @opencode-ai/plugin 1.19 Hooks interface. tool.execute.before/after
+// receive (input, output): input carries tool/sessionID/callID, the before
+// output carries the args and the after input carries them again.
+// permission.ask receives the Permission (id, type, sessionID, callID) and its
+// output status. Session lifecycle and permission replies arrive only as bus
+// events on the event hook: session.created, session.idle and session.deleted
+// are sent with the hook_event_name kei-proxy already treats as session-level
+// (SessionStart, Stop, SessionEnd), and permission.replied is paired with its
+// ask by permission id. Every other bus event returns before anything is
+// spawned. The payload uses the JSON keys kei-proxy's opencode hook parser
+// reads (tool_name, session_id, tool_use_id, tool_input). Reporting is
+// fire-and-forget: the child is never awaited and nothing throws.
+const opencodePlugin = `// managed by kei harness sync
+const report = async (payload) => { try { const child = Bun.spawn(['kei-proxy', 'hook', 'opencode'], { stdin: 'pipe', stdout: 'ignore', stderr: 'ignore' }); child.stdin.write(JSON.stringify(payload)); child.stdin.end(); } catch {} };
+const sessionEvents = { 'session.created': 'SessionStart', 'session.idle': 'Stop', 'session.deleted': 'SessionEnd' };
+const replies = { once: 'approved', always: 'approved', reject: 'denied' };
+const asks = new Map();
+const remember = (permission) => { try { if (!permission?.id) return; if (asks.size >= 256) asks.delete(asks.keys().next().value); asks.set(permission.id, { tool_name: permission.type, tool_use_id: permission.callID }); } catch {} };
+const onEvent = (event) => {
+  const lifecycle = sessionEvents[event?.type];
+  if (lifecycle) { const p = event.properties ?? {}; void report({ hook_event_name: lifecycle, session_id: p.info?.id ?? p.sessionID }); return; }
+  if (event?.type !== 'permission.replied') return;
+  const p = event.properties ?? {};
+  const ask = asks.get(p.permissionID);
+  if (!ask) return;
+  asks.delete(p.permissionID);
+  void report({ phase: 'permission_reply', tool_name: ask.tool_name, session_id: p.sessionID, tool_use_id: ask.tool_use_id, native_decision: replies[p.response] ?? 'unknown' });
+};
+export const KeiAudit = async () => ({
+  'tool.execute.before': async (input, output) => { void report({ phase: 'pre', tool_name: input?.tool, session_id: input?.sessionID, tool_use_id: input?.callID, tool_input: output?.args }); },
+  'tool.execute.after': async (input, output) => { void report({ phase: 'post', tool_name: input?.tool, session_id: input?.sessionID, tool_use_id: input?.callID, tool_input: input?.args }); },
+  'permission.ask': async (input, output) => { remember(input); void report({ phase: 'ask', tool_name: input?.type, session_id: input?.sessionID, tool_use_id: input?.callID, native_decision: output?.status }); },
+  event: async (input) => { try { onEvent(input?.event); } catch {} },
+});
+`
 
 func (openCode) HookSpec(env Env) *HookSpec {
 	if _, err := env.home(); err != nil {

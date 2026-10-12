@@ -361,11 +361,20 @@ func TestOpencodePluginForwardsParserFields(t *testing.T) {
 			t.Errorf("plugin missing %q\n%s", want, js)
 		}
 	}
-	// permission.replied does not exist in OpenCode 1.18.x; it must not be
-	// registered.
-	if strings.Contains(js, "permission.replied") {
-		t.Errorf("plugin still registers the removed permission.replied hook\n%s", js)
+	// permission.replied is a bus event in @opencode-ai/plugin 1.19, not a
+	// hook; it must not be registered as one.
+	if strings.Contains(js, "'permission.replied': async") {
+		t.Errorf("plugin registers permission.replied as a hook\n%s", js)
 	}
+}
+
+// TestOpencodePluginMatchesGolden pins the exact plugin, including the event
+// hook that reports session lifecycle and permission replies (HAI-497).
+func TestOpencodePluginMatchesGolden(t *testing.T) {
+	home := t.TempDir()
+	spec := openCode{}.HookSpec(hermeticEnv(home, map[string]string{}))
+	got := spec.Files[filepath.Join(home, ".config", "opencode", "plugins", "kei-audit.js")]
+	assertGolden(t, filepath.Join("testdata", "harness", "opencode.plugin.golden.js"), got)
 }
 
 // With no --file, import reads opencode.json from the env's config dir, which
