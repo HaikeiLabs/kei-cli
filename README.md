@@ -283,8 +283,8 @@ development and testing.
 Connector setup renders from the `kei.connector-setup/v1` schema in
 `kei-connector-contracts` v0.3.0, the same definition the console uses. The
 CLI offers the providers Kei has built connectors for: `gmail`,
-`google_drive`, `linear`, `github`, `tito`, `crm`, and the generic
-`http_api`.
+`google_drive`, `linear`, `github`, `tito`, `skills_repo`, `crm`, and the
+generic `http_api`.
 
 ```sh
 # OAuth: pick the account model (per_user is the default).
@@ -296,6 +296,15 @@ kei connectors reconnect CONNECTOR_ID --workspace Main   # opens the consent pag
 kei connectors create --workspace Main --provider tito --name events --set account_slug=acme
 <secret-manager read> | kei connectors create --workspace Main --provider tito --name events --set account_slug=acme
 kei connectors reconnect CONNECTOR_ID --workspace Main   # replaces the secret (a new generation)
+
+# Skills repository (skills_repo): the workspace's agent skill source on GitHub.
+# ref defaults to main and subdirectory to skills/ ("/" is the repository root).
+# Users read it with their own GitHub OAuth (per_user), or pass --credential-ref
+# for a shared token already in your secret manager.
+kei connectors create --workspace Main --provider skills_repo --name org-skills \
+  --set repo_url=https://github.com/HaikeiLabs/skills [--set ref=v1.2.0] [--set subdirectory=skills/]
+kei connectors create --workspace Main --provider skills_repo --name org-skills \
+  --set repo_url=https://github.com/HaikeiLabs/skills --credential-ref kei/prod/skills/github-token
 
 # Generic HTTP API (http_api): name it, register its https base URL and the
 # methods and paths agents may call. The shared API key is read without echo,

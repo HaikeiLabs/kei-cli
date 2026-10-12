@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -116,7 +117,7 @@ func createdResponse(w http.ResponseWriter, r consoleRequest) {
 }
 
 func TestConnectorsOfferedProvidersMatchTicketAndHaveSetupSchemas(t *testing.T) {
-	want := []string{"crm", "github", "gmail", "google_drive", "http_api", "linear", "tito"}
+	want := []string{"crm", "github", "gmail", "google_drive", "http_api", "linear", "skills_repo", "tito"}
 	var got []string
 	for _, provider := range offeredConnectorProviders {
 		got = append(got, string(provider))
@@ -158,6 +159,8 @@ func TestConnectorsCreateRequestsPassTheContractCatalogCheck(t *testing.T) {
 						config[field.Name] = "kei-crm"
 					case field.Name == "impersonate_email":
 						config[field.Name] = "events@example.com"
+					case field.Name == "repo_url":
+						config[field.Name] = "https://github.com/HaikeiLabs/skills"
 					}
 				}
 				var registration *contract.HTTPAPI
@@ -332,6 +335,137 @@ func TestConnectorsCreateSharedSecretWithCredentialRef(t *testing.T) {
 	caps, _ := req.Body["capabilities"].([]any)
 	if len(caps) == 0 {
 		t.Fatal("no capabilities declared")
+	}
+}
+
+func TestConnectorsCreateSkillsRepoPerUserWithDefaults(t *testing.T) {
+	fake, server, store := newFakeConsole(t, createdResponse)
+	store.token = workspaceTestToken()
+	code, stdout, stderr := runConnectors(t, server, store, "", "create", "--workspace", testWorkspaceID, "--provider", "skills_repo", "--name", "org-skills", "--set", "repo_url=https://github.com/HaikeiLabs/skills")
+	if code != 0 {
+		t.Fatalf("exit = %d stderr=%s", code, stderr)
+	}
+	req := fake.only(t)
+	if req.Method != http.MethodPost || req.Path != "/api/v1/data-connectors" || req.Query != "workspace_id="+testWorkspaceID {
+		t.Fatalf("request = %s %s?%s", req.Method, req.Path, req.Query)
+	}
+	if req.Body["provider"] != "skills_repo" || req.Body["credential_source"] != "oauth" || req.Body["account_model"] != "per_user" {
+		t.Fatalf("body = %v", req.Body)
+	}
+	if ref, _ := req.Body["credential_ref"].(string); !strings.HasPrefix(ref, "kei/oauth/skills_repo/") {
+		t.Fatalf("credential_ref = %q, want a unique OAuth reference", ref)
+	}
+	config, _ := req.Body["config"].(map[string]any)
+	if len(config) != 3 || config["repo_url"] != "https://github.com/HaikeiLabs/skills" || config["ref"] != "main" || config["subdirectory"] != "skills/" {
+		t.Fatalf("config = %v, want repo_url plus the schema defaults ref=main subdirectory=skills/", req.Body["config"])
+	}
+	caps, _ := req.Body["capabilities"].([]any)
+	var names []string
+	for _, c := range caps {
+		capability, _ := c.(map[string]any)
+		names = append(names, fmt.Sprint(capability["name"], ":", capability["action"]))
+	}
+	if strings.Join(names, ",") != "skills.list:read,skills.fetch:read" {
+		t.Fatalf("capabilities = %v", names)
+	}
+	if scopes, _ := req.Body["scopes"].([]any); len(scopes) != 2 {
+		t.Fatalf("scopes = %v", req.Body["scopes"])
+	}
+	if !strings.Contains(stdout, testConnectorID) || !strings.Contains(stdout, "users connect their own accounts") {
+		t.Fatalf("stdout = %q", stdout)
+	}
+}
+
+func TestConnectorsCreateSkillsRepoExplicitRefAndSubdirectory(t *testing.T) {
+	fake, server, store := newFakeConsole(t, createdResponse)
+	store.token = workspaceTestToken()
+	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", testWorkspaceID, "--provider", "skills_repo", "--name", "org-skills",
+		"--account-model", "per_user", "--set", "repo_url=https://github.com/HaikeiLabs/skills", "--set", "ref=v1.2.0", "--set", "subdirectory=/")
+	if code != 0 {
+		t.Fatalf("exit = %d stderr=%s", code, stderr)
+	}
+	config, _ := fake.only(t).Body["config"].(map[string]any)
+	if config["ref"] != "v1.2.0" || config["subdirectory"] != "/" {
+		t.Fatalf("config = %v", config)
+	}
+}
+
+func TestConnectorsCreateSkillsRepoSharedTokenByCredentialRef(t *testing.T) {
+	fake, server, store := newFakeConsole(t, createdResponse)
+	store.token = workspaceTestToken()
+	code, stdout, stderr := runConnectors(t, server, store, "", "create", "--workspace", testWorkspaceID, "--provider", "skills_repo", "--name", "org-skills",
+		"--set", "repo_url=https://github.com/HaikeiLabs/skills", "--credential-ref", "kei/prod/skills/github-token")
+	if code != 0 {
+		t.Fatalf("exit = %d stderr=%s", code, stderr)
+	}
+	req := fake.only(t)
+	if req.Body["credential_source"] != "opaque_ref" || req.Body["credential_ref"] != "kei/prod/skills/github-token" {
+		t.Fatalf("body = %v", req.Body)
+	}
+	if _, present := req.Body["account_model"]; present {
+		t.Fatalf("the opaque_ref path has no account model: %v", req.Body)
+	}
+	if config, _ := req.Body["config"].(map[string]any); len(config) != 3 || config["token"] != nil {
+		t.Fatalf("config = %v, want only the non-secret fields", req.Body["config"])
+	}
+	if !strings.Contains(stdout, "kei connectors reconnect "+testConnectorID) {
+		t.Fatalf("stdout = %q", stdout)
+	}
+}
+
+func TestConnectorsCreateSkillsRepoRejectsLocallyBeforeSending(t *testing.T) {
+	for name, args := range map[string][]string{
+		"http repo_url":       {"--set", "repo_url=http://github.com/HaikeiLabs/skills"},
+		"non-GitHub repo_url": {"--set", "repo_url=https://gitlab.com/HaikeiLabs/skills"},
+		"repo_url with path":  {"--set", "repo_url=https://github.com/HaikeiLabs/skills/tree/main"},
+		"bad ref":             {"--set", "repo_url=https://github.com/HaikeiLabs/skills", "--set", "ref=-main"},
+		"token as a flag":     {"--set", "repo_url=https://github.com/HaikeiLabs/skills", "--set", "token=ghp_not-a-real-token-0123456789"},
+		"shared account":      {"--set", "repo_url=https://github.com/HaikeiLabs/skills", "--account-model", "shared"},
+		"oauth with ref":      {"--set", "repo_url=https://github.com/HaikeiLabs/skills", "--account-model", "per_user", "--credential-ref", "kei/prod/skills/github-token"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake, server, store := newFakeConsole(t, failOnRequest(t))
+			store.token = workspaceTestToken()
+			base := []string{"create", "--workspace", testWorkspaceID, "--provider", "skills_repo", "--name", "org-skills"}
+			code, stdout, stderr := runConnectors(t, server, store, "", append(base, args...)...)
+			if code == 0 || fake.count() != 0 {
+				t.Fatalf("exit = %d requests = %d stderr=%q", code, fake.count(), stderr)
+			}
+			if strings.Contains(stdout+stderr, "ghp_not-a-real-token") {
+				t.Fatal("output echoed a secret value")
+			}
+		})
+	}
+}
+
+func TestConnectorsListAndGetRenderSkillsRepo(t *testing.T) {
+	const skillsJSON = `{"id":"` + testConnectorID + `","name":"org-skills","provider":"skills_repo","status":"active","credential_source":"oauth","account_model":"per_user",` +
+		`"capabilities":[{"name":"skills.list"},{"name":"skills.fetch"}],"config":{"repo_url":"https://github.com/HaikeiLabs/skills","ref":"main","subdirectory":"skills/"}}`
+	_, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		if r.Path == "/api/v1/data-connectors" {
+			_, _ = w.Write([]byte("[" + skillsJSON + "]"))
+			return
+		}
+		_, _ = w.Write([]byte(skillsJSON))
+	})
+	store.token = workspaceTestToken()
+	code, stdout, stderr := runConnectors(t, server, store, "", "list", "--workspace", testWorkspaceID)
+	if code != 0 {
+		t.Fatalf("list exit = %d stderr=%s", code, stderr)
+	}
+	for _, want := range []string{testConnectorID, "org-skills", "skills_repo", "connected", "per_user"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("list output missing %q:\n%s", want, stdout)
+		}
+	}
+	code, stdout, stderr = runConnectors(t, server, store, "", "get", testConnectorID, "--workspace", testWorkspaceID)
+	if code != 0 {
+		t.Fatalf("get exit = %d stderr=%s", code, stderr)
+	}
+	for _, want := range []string{"skills_repo", "oauth (per_user)", "skills.list, skills.fetch", "repo_url: https://github.com/HaikeiLabs/skills", "ref: main", "subdirectory: skills/"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("get output missing %q:\n%s", want, stdout)
+		}
 	}
 }
 

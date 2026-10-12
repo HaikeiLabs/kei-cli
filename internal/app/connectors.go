@@ -28,13 +28,15 @@ import (
 // offeredConnectorProviders are the providers Kei has built connectors for,
 // in the setup schema's display order (HAI-222). s3 is not a connector, and
 // notion is not offered yet. http_api is the generic connector a named API
-// such as crm is registered as (HAI-384). The console refuses the same set.
+// such as crm is registered as (HAI-384). skills_repo is the workspace's agent
+// skill source (HAI-431). The console refuses the same set.
 var offeredConnectorProviders = []contract.Provider{
 	contract.ProviderGmail,
 	contract.ProviderGoogle,
 	contract.ProviderLinear,
 	contract.ProviderGitHub,
 	contract.ProviderTito,
+	contract.ProviderSkillsRepo,
 	contract.ProviderCRM,
 	contract.ProviderHTTPAPI,
 }
@@ -502,9 +504,9 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	flags := flag.NewFlagSet("connectors create", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	workspace := connectorWorkspaceFlag(flags)
-	providerFlag := flags.String("provider", "", "provider: gmail, google_drive, linear, github, tito, crm, or http_api")
+	providerFlag := flags.String("provider", "", "provider: gmail, google_drive, linear, github, tito, skills_repo, crm, or http_api")
 	name := flags.String("name", "", "connector name (letters, digits, and . _ : / -)")
-	accountModelFlag := flags.String("account-model", "", "OAuth account model: per_user, shared, or domain_delegation (gmail, google_drive)")
+	accountModelFlag := flags.String("account-model", "", "OAuth account model: per_user, shared, or domain_delegation (gmail, google_drive); skills_repo takes per_user, or --credential-ref instead")
 	values := setupValues{}
 	flags.Var(values, "set", "non-secret setup field as name=value (repeatable)")
 	credentialRef := flags.String("credential-ref", "", "existing secret-manager reference for the provider's secret field")
@@ -543,7 +545,7 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 		return 1
 	}
 
-	model, err := chooseAccountModel(provider, contract.AccountModel(*accountModelFlag), interactive, reader, stdout)
+	model, err := chooseAccountModel(provider, contract.AccountModel(*accountModelFlag), *credentialRef != "", interactive, reader, stdout)
 	if err != nil {
 		return fail(err)
 	}
@@ -643,12 +645,19 @@ func isTerminalReader(r io.Reader) bool {
 	return ok && term.IsTerminal(int(file.Fd()))
 }
 
-func chooseAccountModel(provider contract.Provider, requested contract.AccountModel, interactive bool, reader *bufio.Reader, stdout io.Writer) (contract.AccountModel, error) {
+// chooseAccountModel picks the account model, or none. A provider that offers
+// both OAuth and a shared-secret token without an account model (skills_repo)
+// takes the shared-secret path when --credential-ref is given and no account
+// model is requested.
+func chooseAccountModel(provider contract.Provider, requested contract.AccountModel, byCredentialRef, interactive bool, reader *bufio.Reader, stdout io.Writer) (contract.AccountModel, error) {
 	allowed := contract.AccountModelsFor(provider)
 	if len(allowed) == 0 {
 		if requested != "" {
 			return "", fmt.Errorf("provider %q has no account model; do not pass --account-model", provider)
 		}
+		return "", nil
+	}
+	if requested == "" && byCredentialRef && offersSharedSecretWithoutAccountModel(provider) {
 		return "", nil
 	}
 	if requested == "" {
@@ -665,6 +674,13 @@ func chooseAccountModel(provider contract.Provider, requested contract.AccountMo
 		return "", fmt.Errorf("account model %q is not allowed for provider %q", requested, provider)
 	}
 	return requested, nil
+}
+
+func offersSharedSecretWithoutAccountModel(provider contract.Provider) bool {
+	schema, ok := setup.SetupSchemaFor(provider)
+	return ok && slices.ContainsFunc(schema.Auth, func(auth setup.SetupAuth) bool {
+		return auth.CredentialSource == contract.CredentialSourceOpaqueRef && len(auth.AccountModels) == 0
+	})
 }
 
 // collectSetupConfig builds the non-secret config from --set values, then
