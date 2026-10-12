@@ -1,0 +1,49 @@
+-- dry run --
+Skills for Claude Code in $ROOT/home/.claude/skills (dry run):
+  install demo 1.0.0
+  install lint 2.1.0
+-- install --
+Skills for Claude Code in $ROOT/home/.claude/skills:
+  install demo 1.0.0
+  install lint 2.1.0
+-- tree --
+== home/.claude/skills/demo/SKILL.md -rw-r--r--
+---
+name: demo
+description: demo skill
+version: 1.0.0
+---
+# demo
+== home/.claude/skills/demo/scripts/run.sh -rwxr-xr-x
+#!/bin/sh
+echo demo
+== home/.claude/skills/lint/SKILL.md -rw-r--r--
+---
+name: lint
+description: lint skill
+version: 2.1.0
+---
+# lint
+== home/.config/kei/harness-sync/claude_code.json -rw-------
+{
+  "harness_id": "",
+  "kind": "",
+  "bundle_version": 0,
+  "bundle_digest": "",
+  "not_after": "0001-01-01T00:00:00Z",
+  "files": null,
+  "skills": {
+    "$ROOT/home/.claude/skills/demo": {
+      "name": "demo",
+      "version": "1.0.0",
+      "digest": "sha256:ccfb9fbddfaf8adc4cc04f3ac683c2cebec8427672951adefc240df1abb07929",
+      "commit": "c0ffee"
+    },
+    "$ROOT/home/.claude/skills/lint": {
+      "name": "lint",
+      "version": "2.1.0",
+      "digest": "sha256:d79c3563fa8a4d0be560f700a80f4aa988c266b68ade71b458a69d5694ba0e4b",
+      "commit": "c0ffee"
+    }
+  }
+}

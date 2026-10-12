@@ -196,6 +196,15 @@ export const KeiAudit = async () => ({
 });
 `
 
+// SkillDirs is the skills folder of the resolved OpenCode config dir
+// (OPENCODE_CONFIG, then $XDG_CONFIG_HOME, then ~/.config).
+func (openCode) SkillDirs(env Env) []string {
+	if _, err := env.home(); err != nil {
+		return nil
+	}
+	return []string{filepath.Join(opencodeConfigDir(env), "skills")}
+}
+
 func (openCode) HookSpec(env Env) *HookSpec {
 	if _, err := env.home(); err != nil {
 		return nil

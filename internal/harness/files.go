@@ -54,7 +54,7 @@ func applyFiles(f fileHarness, r Rendered, opts ApplyOpts) (Result, error) {
 	if prior.Bundle == r.BundleVersion && prior.Digest != "" && prior.Digest != r.BundleDigest {
 		return Result{}, fmt.Errorf("bundle payload changed without a version increase")
 	}
-	ledger := syncLedger{HarnessID: f.Kind(), Kind: f.Kind(), Bundle: r.BundleVersion, Digest: r.BundleDigest, NotAfter: r.NotAfter, Files: map[string]fileLedger{}}
+	ledger := syncLedger{HarnessID: f.Kind(), Kind: f.Kind(), Bundle: r.BundleVersion, Digest: r.BundleDigest, NotAfter: r.NotAfter, Files: map[string]fileLedger{}, Skills: prior.Skills}
 	// inputs holds each file's bytes as they are on disk: the diff, the
 	// no-change check and the backup compare against them. stripped holds
 	// the same files with the previous sync's entries removed, which is

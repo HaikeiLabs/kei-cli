@@ -20,6 +20,8 @@ type syncLedger struct {
 	NotAfter  time.Time             `json:"not_after"`
 	Files     map[string]fileLedger `json:"files"`
 	MCP       *mcpLedger            `json:"mcp_servers,omitempty"`
+	// Skills are the Kei-managed skill copies, keyed by install path.
+	Skills map[string]skillLedger `json:"skills,omitempty"`
 }
 type fileLedger struct {
 	Hash         string   `json:"hash"`

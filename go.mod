@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	filippo.io/age v1.3.2
-	github.com/HaikeiLabs/kei-connector-contracts v0.7.1-0.20261011003645-db78ebf61ef9
+	github.com/HaikeiLabs/kei-connector-contracts v0.8.0
 	github.com/google/uuid v1.6.0
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/zalando/go-keyring v0.2.5

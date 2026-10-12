@@ -29,6 +29,7 @@ func (h doctorHarness) Render(harness.Bundle) (harness.Rendered, error) {
 func (h doctorHarness) Apply(context.Context, harness.Rendered, harness.ApplyOpts) (harness.Result, error) {
 	return harness.Result{}, nil
 }
+func (h doctorHarness) SkillDirs(harness.Env) []string                          { return nil }
 func (h doctorHarness) ImportRules(harness.Env, string) ([]harness.Rule, error) { return nil, nil }
 func (h doctorHarness) HookSpec(harness.Env) *harness.HookSpec {
 	if h.hook == nil {

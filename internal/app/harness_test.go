@@ -719,6 +719,7 @@ type remoteHarness struct {
 func (remoteHarness) Kind() string                           { return "remote_test" }
 func (remoteHarness) Detect(harness.Env) bool                { return true }
 func (remoteHarness) HookSpec(harness.Env) *harness.HookSpec { return nil }
+func (remoteHarness) SkillDirs(harness.Env) []string         { return nil }
 func (remoteHarness) ImportRules(harness.Env, string) ([]harness.Rule, error) {
 	return nil, harness.ErrNoNativeStore
 }
