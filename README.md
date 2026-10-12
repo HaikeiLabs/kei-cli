@@ -343,13 +343,18 @@ kei policies list --workspace Main
 kei policies create --workspace Main --name deny-env --src-pattern 'harness:claude' --dst-pattern 'path:*.env' --effect deny
 kei policies update deny-env --workspace Main --priority 100   # ID or name
 kei policies delete deny-env --workspace Main --yes
+
+# Scope a policy to one agent, move it to another, or clear it.
+kei policies create --workspace Main --name deny-env-bot --src-pattern 'harness:claude' --dst-pattern 'path:*.env' --effect deny --agent-id AGENT_ID
+kei policies update deny-env-bot --workspace Main --agent-id OTHER_AGENT_ID
+kei policies update deny-env-bot --workspace Main --agent-id ''   # back to every agent
 ```
 
-A policy with no agent applies to every agent in its workspace. **`--agent-id`
-isn't supported yet:** the server rejected `agent_id` on create with 400
-"invalid request body" (HAI-513), so `create` and `update` now refuse the flag
-before sending anything. Create the policy without it and set the agent in the
-console. The flag comes back once the server accepts `agent_id`.
+A policy with no agent applies to every agent in its workspace. With
+`--agent-id`, it applies only to that agent, which must be a ready agent in the
+same workspace; otherwise the server returns 400 with the reason. This needs a
+catalog with HAI-513 deployed. Older catalogs reject `agent_id` with 400
+"invalid request body".
 
 ## Manage model profiles and the credential store
 
