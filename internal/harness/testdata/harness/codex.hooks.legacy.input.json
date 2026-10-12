@@ -1,0 +1,39 @@
+{
+  "description": "herdr and user hooks",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "type": "command",
+        "command": "kei-proxy hook codex",
+        "timeout": 5
+      },
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/bin/my-bash-guard",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "type": "command",
+        "command": "kei-proxy hook codex",
+        "timeout": 5
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "herdr agent hook codex session-start"
+          }
+        ]
+      }
+    ]
+  }
+}
