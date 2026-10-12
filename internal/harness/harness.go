@@ -32,6 +32,10 @@ type Harness interface {
 	// HookSpec is the report-only audit hook the harness installs (HP-C6), or
 	// nil when it has none.
 	HookSpec(env Env) *HookSpec
+	// SkillDirs are the directories the harness loads skills from, where
+	// Kei installs the org skills the bundle permits (HAI-429, HAI-431).
+	// None means the harness has no skill dir.
+	SkillDirs(env Env) []string
 	// ImportRules reads native allow/deny rules from path, or from the
 	// harness's default location when path is empty.
 	ImportRules(env Env, path string) ([]Rule, error)

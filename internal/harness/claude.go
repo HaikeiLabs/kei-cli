@@ -182,6 +182,13 @@ func claudeVersionWarnings(env Env) []string {
 	return []string{fmt.Sprintf("Claude Code %s is older than 2.1.119; rendering PreToolUse/PostToolUse only. Upgrade Claude Code to record native decisions (HAI-469).", label)}
 }
 
+func (claudeCode) SkillDirs(env Env) []string {
+	if _, err := env.home(); err != nil {
+		return nil
+	}
+	return []string{filepath.Join(env.Home, ".claude", "skills")}
+}
+
 func (claudeCode) HookSpec(env Env) *HookSpec {
 	if _, err := env.home(); err != nil {
 		return nil

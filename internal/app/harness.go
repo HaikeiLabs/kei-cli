@@ -591,6 +591,9 @@ func fetchHarnessBundle(ctx context.Context, config runtimeConfig, client *http.
 						AgentID *string `json:"agent_id"`
 					} `json:"scope"`
 				} `json:"harness_policies"`
+				// Connectors are the workspace's connector descriptors; the
+				// skills step reads the skills_repo ones (HAI-431).
+				Connectors json.RawMessage `json:"connectors"`
 			} `json:"policy_set"`
 		}
 		if err := json.Unmarshal(payload, &v2); err != nil {
@@ -600,7 +603,11 @@ func fetchHarnessBundle(ctx context.Context, config runtimeConfig, client *http.
 		for _, p := range v2.PolicySet.HarnessPolicies {
 			policies = append(policies, map[string]any{"id": p.PolicyID, "name": p.Name, "src_pattern": p.SrcPattern, "dst_pattern": p.DstPattern, "effect": p.Action, "enabled": true, "scope": p.Scope})
 		}
-		bundle.PolicySet, err = json.Marshal(map[string]any{"policies": policies})
+		set := map[string]any{"policies": policies}
+		if len(v2.PolicySet.Connectors) > 0 {
+			set["connectors"] = v2.PolicySet.Connectors
+		}
+		bundle.PolicySet, err = json.Marshal(set)
 		if err != nil {
 			return harness.Bundle{}, nil, errors.New("invalid v2 harness policies")
 		}
@@ -681,6 +688,14 @@ func syncHarnessBundle(ctx context.Context, config runtimeConfig, kindFilter str
 			}
 		}
 		printLines(stdout, result.Notes)
+	}
+	// HAI-431: after rendering, install the org skills the bundle permits
+	// into each harness's skill dir, read through kei-proxy. The permission
+	// entries are already in force, so a skills failure (a deny, or a
+	// kei-proxy without skills_repo) is reported without failing the sync;
+	// kei skills install exits non-zero on it.
+	if err := installOrgSkills(ctx, config, bundle, harnesses, dryRun, true, stdout, stderr, env, now()); err != nil {
+		fmt.Fprintf(stderr, "harness sync: skills not installed: %v (retry with kei skills install)\n", err)
 	}
 	return 0
 }

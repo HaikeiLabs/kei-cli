@@ -78,6 +78,13 @@ func codexNonPrompting(config []byte) bool {
 	return nonPrompting
 }
 
+func (codex) SkillDirs(env Env) []string {
+	if _, err := env.home(); err != nil {
+		return nil
+	}
+	return []string{filepath.Join(env.Home, ".codex", "skills")}
+}
+
 func (codex) HookSpec(env Env) *HookSpec {
 	if _, err := env.home(); err != nil {
 		return nil

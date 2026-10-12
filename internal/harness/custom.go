@@ -12,6 +12,7 @@ func (custom) Detect(Env) bool                         { return false }
 func (custom) Targets(Env) ([]Target, error)           { return nil, nil }
 func (custom) Render(Bundle) (Rendered, error)         { return Rendered{Kind: "custom"}, nil }
 func (custom) HookSpec(Env) *HookSpec                  { return nil }
+func (custom) SkillDirs(Env) []string                  { return nil }
 func (custom) ImportRules(Env, string) ([]Rule, error) { return nil, ErrNoNativeStore }
 
 func (custom) Apply(context.Context, Rendered, ApplyOpts) (Result, error) {

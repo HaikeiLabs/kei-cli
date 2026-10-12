@@ -45,6 +45,7 @@ const openWebUIFunctionsPath = "/api/v1/functions/"
 func (OpenWebUI) Kind() string                            { return "openwebui" }
 func (OpenWebUI) Detect(Env) bool                         { return false }
 func (OpenWebUI) HookSpec(Env) *HookSpec                  { return nil }
+func (OpenWebUI) SkillDirs(Env) []string                  { return nil }
 func (OpenWebUI) ImportRules(Env, string) ([]Rule, error) { return nil, ErrNoNativeStore }
 
 // Targets is the Open WebUI functions API, or nothing when no URL is set.

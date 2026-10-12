@@ -203,6 +203,8 @@ func Main(version, command string, args []string, stdout, stderr io.Writer, stdi
 		return runPoliciesCommand(args, stdout, stderr, stdin, &http.Client{Timeout: 30 * time.Second}, osKeychainStore{})
 	case "harness":
 		return runHarnessCommand(args, stdout, stderr, &http.Client{Timeout: 30 * time.Second}, osKeychainStore{})
+	case "skills":
+		return runSkillsCommand(args, stdout, stderr, &http.Client{Timeout: 30 * time.Second})
 	case "audit":
 		return runAuditCommand(args, stdout, stderr, stdin, &http.Client{Timeout: 15 * time.Second}, osKeychainStore{})
 	case "doctor":
@@ -231,6 +233,7 @@ func PrintUsage(w io.Writer) {
 	fmt.Fprintln(w, "  kei audit decrypt --record ID --identity PATH (--out FILE | --stdout)")
 	fmt.Fprintln(w, "  See https://github.com/HaikeiLabs/kei/blob/main/docs/adr/030-audit-args-encryption.md")
 	fmt.Fprintln(w, "  kei harness add|list|remove|sync [--installation ID] [--harness kind] [--dry-run | --check [--json]]")
+	fmt.Fprintln(w, "  kei skills install [--harness KIND] [--dry-run] (installs the org skills the policy bundle permits, read through kei-proxy; also run by kei harness sync)")
 	fmt.Fprintln(w, "  kei harness sync --harness openwebui --url BASE_URL (read-only; admin token from OPENWEBUI_ADMIN_TOKEN; exit 1 on drift)")
 	fmt.Fprintln(w, "  kei doctor (checks the runtime service, heartbeat, harness hooks and policy bundle; exit 1 on any FAIL)")
 	fmt.Fprintln(w, "  kei runtime heartbeat")
