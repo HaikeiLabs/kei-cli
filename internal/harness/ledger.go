@@ -19,6 +19,7 @@ type syncLedger struct {
 	Digest    string                `json:"bundle_digest"`
 	NotAfter  time.Time             `json:"not_after"`
 	Files     map[string]fileLedger `json:"files"`
+	MCP       *mcpLedger            `json:"mcp_servers,omitempty"`
 }
 type fileLedger struct {
 	Hash         string   `json:"hash"`

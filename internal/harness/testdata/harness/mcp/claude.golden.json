@@ -1,0 +1,24 @@
+{
+  "numStartups": 12,
+  "mcpServers": {
+    "my-local": {"command": "npx", "args": ["-y", "@me/server"]},
+    "github": {"type": "http", "url": "https://api.githubcopilot.com/mcp/"},
+    "linear": {
+      "type": "http",
+      "url": "http://127.0.0.1:8086/mcp/linear",
+      "headers": {
+        "Authorization": "Bearer ${KEI_MCP_ROUTE_KEY}"
+      }
+    },
+    "notion": {
+      "type": "http",
+      "url": "http://127.0.0.1:8086/mcp/notion",
+      "headers": {
+        "Authorization": "Bearer ${KEI_MCP_ROUTE_KEY}"
+      }
+    }
+  },
+  "projects": {
+    "/work/app": {"allowedTools": []}
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "my-local": {"type": "local", "command": ["npx", "-y", "@me/server"]},
+    "retired": {"type": "remote", "url": "http://127.0.0.1:8085/mcp/retired", "enabled": true},
+    "legacy-stdio": {"type": "local", "command": ["kei-proxy", "mcp", "legacy-stdio"]},
+    "github": {"type": "remote", "url": "https://api.githubcopilot.com/mcp/"}
+  },
+  "permission": {"bash": {"git status": "allow"}}
+}

@@ -120,6 +120,11 @@ type Rendered struct {
 	// higher-precedence deny the renderer skipped (a user:/email:/group:
 	// source it cannot resolve) overlaps them; the harness asks instead.
 	PermitsWithheld []string
+	// MCPConnectors are the slugs of the bound mcp connectors, rendered as
+	// remote servers behind kei-proxy's /mcp route; MCPInvalid are the mcp
+	// connector slugs that are not a valid server name.
+	MCPConnectors []string
+	MCPInvalid    []string
 	// The bundle identity, kept so Apply can refuse a rollback.
 	BundleVersion int64
 	BundleDigest  string

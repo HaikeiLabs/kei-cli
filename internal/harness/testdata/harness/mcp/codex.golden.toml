@@ -1,0 +1,22 @@
+model = "gpt-5"
+approval_policy = "on-request"
+
+[mcp_servers.my-local]
+command = "npx"
+args = ["-y", "@me/server"]
+
+[mcp_servers.github]
+url = "https://api.githubcopilot.com/mcp/"
+
+[profiles.fast]
+model = "gpt-5-mini"
+
+[mcp_servers.linear]
+# managed by kei harness sync
+url = "http://127.0.0.1:8086/mcp/linear"
+bearer_token_env_var = "KEI_MCP_ROUTE_KEY"
+
+[mcp_servers.notion]
+# managed by kei harness sync
+url = "http://127.0.0.1:8086/mcp/notion"
+bearer_token_env_var = "KEI_MCP_ROUTE_KEY"
