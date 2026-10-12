@@ -1,0 +1,19 @@
+{
+  "numStartups": 12,
+  "mcpServers": {
+    "my-local": {"command": "npx", "args": ["-y", "@me/server"]},
+    "retired": {
+      "type": "http",
+      "url": "http://127.0.0.1:8085/mcp/retired"
+    },
+    "legacy-stdio": {
+      "type": "stdio",
+      "command": "kei-proxy",
+      "args": ["mcp", "legacy-stdio"]
+    },
+    "github": {"type": "http", "url": "https://api.githubcopilot.com/mcp/"}
+  },
+  "projects": {
+    "/work/app": {"allowedTools": []}
+  }
+}

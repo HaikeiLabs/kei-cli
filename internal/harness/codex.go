@@ -336,3 +336,94 @@ func parseCodexLine(line string) (Rule, bool) {
 
 	return Rule{Name: "codex-" + truncateName(strings.Join(tokens, " "), 50), Dst: "shell:" + strings.Join(tokens, " "), Effect: effect}, true
 }
+
+// mcpConfigPath is Codex's config.toml, whose [mcp_servers.<name>] tables are
+// its MCP servers.
+func (codex) mcpConfigPath(env Env) string {
+	return filepath.Join(env.Home, ".codex", "config.toml")
+}
+
+// codexMCPMarker marks a server table Kei renders.
+const codexMCPMarker = "# managed by kei harness sync"
+
+// mergeMCPServers edits config.toml as lines so every byte outside the
+// removed and added tables is kept: it drops each [mcp_servers.<name>] table
+// (and its subtables) named in remove, then appends a streamable HTTP server
+// table for each server the user's config does not already name.
+func (codex) mergeMCPServers(cfg []byte, remove []string, servers []mcpServer) ([]byte, []string, []string, error) {
+	if len(remove) == 0 && len(servers) == 0 {
+		return cfg, nil, nil, nil
+	}
+	removing := map[string]bool{}
+	for _, name := range remove {
+		removing[name] = true
+	}
+	var kept strings.Builder
+	present := map[string]bool{}
+	dropping := false
+	for _, line := range strings.SplitAfter(string(cfg), "\n") {
+		if table, ok := tomlTableHeader(line); ok {
+			name, isServer := codexMCPServerName(table)
+			dropping = isServer && removing[name]
+			if isServer && !dropping {
+				present[name] = true
+			}
+		}
+		if !dropping {
+			kept.WriteString(line)
+		}
+	}
+	out := strings.TrimRight(kept.String(), "\n")
+	if out != "" {
+		out += "\n"
+	}
+	var added, skipped []string
+	for _, server := range servers {
+		if present[server.Name] {
+			skipped = append(skipped, server.Name)
+			continue
+		}
+		if out != "" {
+			out += "\n"
+		}
+		out += fmt.Sprintf("[mcp_servers.%s]\n%s\nurl = %s\nbearer_token_env_var = \"KEI_MCP_ROUTE_KEY\"\n", server.Name, codexMCPMarker, strconv.Quote(server.URL))
+		added = append(added, server.Name)
+	}
+	return []byte(out), added, skipped, nil
+}
+
+// tomlTableHeader returns the key of a [table] or [[array]] header line.
+func tomlTableHeader(line string) (string, bool) {
+	line = strings.TrimSpace(line)
+	open, close := "[", "]"
+	if strings.HasPrefix(line, "[[") {
+		open, close = "[[", "]]"
+	} else if !strings.HasPrefix(line, "[") {
+		return "", false
+	}
+	end := strings.Index(line, close)
+	if end < len(open) {
+		return "", false
+	}
+	return strings.TrimSpace(line[len(open):end]), true
+}
+
+// codexMCPServerName returns the server a table key under mcp_servers names
+// (mcp_servers.<name> or one of its subtables), bare or double-quoted.
+func codexMCPServerName(table string) (string, bool) {
+	rest, ok := strings.CutPrefix(table, "mcp_servers.")
+	if !ok {
+		return "", false
+	}
+	rest = strings.TrimSpace(rest)
+	if strings.HasPrefix(rest, `"`) {
+		end := strings.Index(rest[1:], `"`)
+		if end < 0 {
+			return "", false
+		}
+		name, err := strconv.Unquote(rest[:end+2])
+		return name, err == nil
+	}
+	name, _, _ := strings.Cut(rest, ".")
+	return strings.TrimSpace(name), name != ""
+}

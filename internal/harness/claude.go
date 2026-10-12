@@ -409,3 +409,16 @@ func extractBashPattern(entry string) string {
 	}
 	return rest[:end]
 }
+
+// mcpConfigPath is Claude Code's user config, whose mcpServers apply in
+// every project.
+func (claudeCode) mcpConfigPath(env Env) string {
+	return filepath.Join(env.Home, ".claude.json")
+}
+
+// mergeMCPServers renders each server as an http (streamable HTTP) server.
+func (claudeCode) mergeMCPServers(cfg []byte, remove []string, servers []mcpServer) ([]byte, []string, []string, error) {
+	return mergeMCPServersJSON(cfg, "mcpServers", remove, servers, func(s mcpServer) *orderedObject {
+		return orderedEntry("type", "http", "url", s.URL, "headers", orderedEntry("Authorization", "Bearer ${KEI_MCP_ROUTE_KEY}"))
+	})
+}

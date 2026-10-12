@@ -103,10 +103,18 @@ func applyFiles(f fileHarness, r Rendered, opts ApplyOpts) (Result, error) {
 			outputs[path] = merged
 		}
 	}
+	// The MCP-servers step may add a config that is not one of the targets;
+	// only its managed server names are recorded, never its content.
+	ledger.MCP, err = applyMCPServers(f, r, opts.Env, opts.Out, prior.MCP, inputs, outputs)
+	if err != nil {
+		return Result{}, err
+	}
 	for path, managed := range outputs {
 		cfg := inputs[path]
-		digest := sha256.Sum256(managed)
-		ledger.Files[path] = fileLedger{Hash: hex.EncodeToString(digest[:]), Content: managed, AllowEntries: allows[path], DenyEntries: denies[path]}
+		if _, target := allows[path]; target {
+			digest := sha256.Sum256(managed)
+			ledger.Files[path] = fileLedger{Hash: hex.EncodeToString(digest[:]), Content: managed, AllowEntries: allows[path], DenyEntries: denies[path]}
+		}
 		if bytes.Equal(cfg, managed) {
 			continue
 		}

@@ -1,0 +1,22 @@
+model = "gpt-5"
+approval_policy = "on-request"
+
+[mcp_servers.my-local]
+command = "npx"
+args = ["-y", "@me/server"]
+
+[mcp_servers.retired]
+url = "http://127.0.0.1:8085/mcp/retired"
+
+[mcp_servers.legacy-stdio]
+command = "kei-proxy"
+args = ["mcp", "legacy-stdio"]
+
+[mcp_servers.legacy-stdio.env]
+KEI_MODE = "stdio"
+
+[mcp_servers.github]
+url = "https://api.githubcopilot.com/mcp/"
+
+[profiles.fast]
+model = "gpt-5-mini"

@@ -31,7 +31,9 @@ type Bundle struct {
 	Harnesses             []BundleHarness `json:"harnesses"`
 	PolicySet             json.RawMessage `json:"policy_set"`
 	Subject               *BundleSubject  `json:"subject"`
-	PayloadDigest         string          `json:"-"`
+	// Connectors are the connectors bound to the workspace (TODO(HAI-485)).
+	Connectors    []BundleConnector `json:"connectors"`
+	PayloadDigest string            `json:"-"`
 }
 
 // BundleSubject is the installation's principal as the control plane resolved
@@ -135,6 +137,7 @@ func render(s nativeSyntax, harnessID string, b Bundle) (Rendered, error) {
 	if b.Schema != BundleSchemaV2 {
 		personSkipped = entries.PersonSources
 	}
+	mcpConnectors, mcpInvalid := renderMCPConnectors(b.Connectors)
 	return Rendered{
 		Kind:                   s.kind,
 		Allows:                 entries.Allows,
@@ -144,6 +147,8 @@ func render(s nativeSyntax, harnessID string, b Bundle) (Rendered, error) {
 		ScopedElsewhereExample: entries.OtherHarness.Example,
 		PersonSourcesSkipped:   personSkipped,
 		PermitsWithheld:        entries.Withheld,
+		MCPConnectors:          mcpConnectors,
+		MCPInvalid:             mcpInvalid,
 		BundleVersion:          b.BundleVersion,
 		BundleDigest:           b.PayloadDigest,
 		NotAfter:               b.NotAfter,

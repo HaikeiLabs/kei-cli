@@ -418,3 +418,16 @@ func opencodeRule(tool, pattern, value string) Rule {
 	}
 	return Rule{Name: "opencode-" + truncateName(tool+"-"+pattern, 50), Dst: dst, Effect: effect}
 }
+
+// mcpConfigPath is the resolved opencode.json, the file the permissions go to.
+func (openCode) mcpConfigPath(env Env) string {
+	path, _ := opencodeConfigPath(env)
+	return path
+}
+
+// mergeMCPServers renders each server as an enabled remote server.
+func (openCode) mergeMCPServers(cfg []byte, remove []string, servers []mcpServer) ([]byte, []string, []string, error) {
+	return mergeMCPServersJSON(cfg, "mcp", remove, servers, func(s mcpServer) *orderedObject {
+		return orderedEntry("type", "remote", "url", s.URL, "enabled", true, "headers", orderedEntry("Authorization", "Bearer {env:KEI_MCP_ROUTE_KEY}"))
+	})
+}
