@@ -90,10 +90,16 @@ func (codex) HookSpec(env Env) *HookSpec {
 		return nil
 	}
 	command := "kei-proxy hook codex"
-	hook := map[string]any{"type": "command", "command": command, "timeout": 5}
-	group := map[string]any{"hooks": []any{hook}}
 	events := map[string]any{}
 	for _, event := range codexHookEvents {
+		// Codex clamps SessionEnd hooks to 3s and prints a warning when the
+		// declared timeout exceeds it, so declare 3 for that event only.
+		timeout := 5
+		if event.name == "SessionEnd" {
+			timeout = 3
+		}
+		hook := map[string]any{"type": "command", "command": command, "timeout": timeout}
+		group := map[string]any{"hooks": []any{hook}}
 		events[event.name] = []any{group}
 	}
 	spec := mustJSON(map[string]any{"hooks": events})

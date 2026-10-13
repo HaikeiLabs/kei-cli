@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -118,6 +119,9 @@ func installedPair(t *testing.T, keiVersion, proxyVersion string) (string, strin
 
 func runTestUpgrade(t *testing.T, args []string, current string, client *http.Client) (int, string, string) {
 	t.Helper()
+	// Isolate from any real Kei runtime service in the user's home so the
+	// upgrade's service restart is a no-op unless a test opts in.
+	t.Setenv("HOME", t.TempDir())
 	var stdout, stderr bytes.Buffer
 	code := runUpgradeCommand(args, &stdout, &stderr, client, func() (string, error) { return current, nil }, func(string) string { return "https://release.test" })
 	return code, stdout.String(), stderr.String()
@@ -168,6 +172,83 @@ func TestUpgradeLatestNewer(t *testing.T) {
 	}
 	if data, err := os.ReadFile(proxy); err != nil || string(data) != bundled {
 		t.Fatalf("proxy binary = %q, err=%v", data, err)
+	}
+}
+
+// TestUpgradeRestartsServiceWhenInstalled proves a real upgrade restarts the
+// runtime service (through the sysCommand seam) and reports the new versions.
+func TestUpgradeRestartsServiceWhenInstalled(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	svcPath := serviceDefinitionPath()
+	if svcPath == "" {
+		t.Skip("unsupported platform")
+	}
+	if err := os.MkdirAll(filepath.Dir(svcPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(svcPath, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var gotName string
+	var gotArgs []string
+	oldSysCommand := sysCommand
+	sysCommand = func(name string, args ...string) *exec.Cmd {
+		gotName, gotArgs = name, args
+		return exec.Command("true")
+	}
+	defer func() { sysCommand = oldSysCommand }()
+
+	current, _ := installedPair(t, "0.1.0", "0.2.4")
+	cliArchive, cliSum := releaseTestBundle(t, "kei", "new-binary", "kei-proxy", versionScriptBody("kei-proxy", "0.2.5"))
+	var requested []string
+	var stdout, stderr bytes.Buffer
+	code := runUpgradeCommand(nil, &stdout, &stderr, releaseTestClient(releaseTestHandler("0.2.0", cliArchive, cliSum, &requested)), func() (string, error) { return current, nil }, func(string) string { return "https://release.test" })
+	if code != 0 {
+		t.Fatalf("upgrade exit = %d, stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Restarted the Kei runtime service; it now runs kei 0.2.0 / kei-proxy 0.2.5.") {
+		t.Fatalf("upgrade output = %q", stdout.String())
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		if gotName != "launchctl" || !strings.Contains(strings.Join(gotArgs, " "), "kickstart") {
+			t.Fatalf("expected launchctl kickstart, got %s %v", gotName, gotArgs)
+		}
+	case "linux":
+		if gotName != "systemctl" || !strings.Contains(strings.Join(gotArgs, " "), "restart") {
+			t.Fatalf("expected systemctl restart, got %s %v", gotName, gotArgs)
+		}
+	default:
+		t.Skip("unsupported platform")
+	}
+}
+
+// TestUpgradeDoesNotRestartServiceWhenNotInstalled proves an upgrade that
+// replaces the binaries does not install or touch an uninstalled service.
+func TestUpgradeDoesNotRestartServiceWhenNotInstalled(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	called := false
+	oldSysCommand := sysCommand
+	sysCommand = func(name string, args ...string) *exec.Cmd {
+		called = true
+		return exec.Command("true")
+	}
+	defer func() { sysCommand = oldSysCommand }()
+
+	current, _ := installedPair(t, "0.1.0", "0.2.4")
+	cliArchive, cliSum := releaseTestBundle(t, "kei", "new-binary", "kei-proxy", versionScriptBody("kei-proxy", "0.2.5"))
+	var requested []string
+	var stdout, stderr bytes.Buffer
+	code := runUpgradeCommand(nil, &stdout, &stderr, releaseTestClient(releaseTestHandler("0.2.0", cliArchive, cliSum, &requested)), func() (string, error) { return current, nil }, func(string) string { return "https://release.test" })
+	if code != 0 {
+		t.Fatalf("upgrade exit = %d, stderr=%s", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "Restarted the Kei runtime service") {
+		t.Fatalf("upgrade output = %q", stdout.String())
+	}
+	if called {
+		t.Fatalf("sysCommand must not run when the service is not installed")
 	}
 }
 

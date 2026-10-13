@@ -74,8 +74,13 @@ func fakeDoctorProbes(t *testing.T, files map[string][]byte) doctorProbes {
 			return runtimeConfig{ControlPlaneURL: "https://kei.example", RuntimeToken: doctorTestToken, ProxyPath: "/opt/kei-proxy"}, nil
 		},
 		defaultProxy: func() string { return "kei-proxy" },
-		configPath:   "/home/test/.config/kei/config.yaml",
-		registry:     harness.NewRegistry(),
+		executable:   func() (string, error) { return "/opt/kei", nil },
+		fileModTime:  func(string) (time.Time, bool) { return time.Time{}, false },
+		heartbeatProcessStart: func() (time.Time, bool) {
+			return time.Time{}, false
+		},
+		configPath: "/home/test/.config/kei/config.yaml",
+		registry:   harness.NewRegistry(),
 	}
 }
 
@@ -147,6 +152,74 @@ func TestCheckHeartbeat(t *testing.T) {
 			got := checkHeartbeat(p, doctorResult{Status: tt.service})
 			if got.Status != doctorWarn || !strings.Contains(got.Detail, tt.detail) || got.Fix != "kei runtime service status" {
 				t.Fatalf("got %+v, want WARN containing %q", got, tt.detail)
+			}
+		})
+	}
+}
+
+func TestParsePSElapsed(t *testing.T) {
+	tests := []struct {
+		in   string
+		want time.Duration
+		ok   bool
+	}{
+		{"12:34:56", 12*time.Hour + 34*time.Minute + 56*time.Second, true},
+		{"00:00:05", 5 * time.Second, true},
+		{"99:59:59", 99*time.Hour + 59*time.Minute + 59*time.Second, true},
+		{"3-04:05:06", 3*24*time.Hour + 4*time.Hour + 5*time.Minute + 6*time.Second, true},
+		{"", 0, false},
+		{"12:34", 0, false},
+		{"abc", 0, false},
+	}
+	for _, tt := range tests {
+		got, ok := parsePSElapsed(tt.in)
+		if ok != tt.ok || got != tt.want {
+			t.Fatalf("parsePSElapsed(%q) = %v, %v; want %v, %v", tt.in, got, ok, tt.want, tt.ok)
+		}
+	}
+}
+
+func TestCheckStaleProcess(t *testing.T) {
+	start := doctorNow
+	newer := doctorNow.Add(30 * time.Minute)
+	older := doctorNow.Add(-1 * time.Hour)
+	tests := []struct {
+		name      string
+		procStart time.Time
+		procFound bool
+		keiMod    time.Time
+		keiOK     bool
+		proxyMod  time.Time
+		proxyOK   bool
+		want      string
+		detail    string
+	}{
+		{name: "no process", procFound: false, want: doctorPass, detail: "no running heartbeat process"},
+		{name: "matches both", procStart: start, procFound: true, keiMod: older, keiOK: true, proxyMod: older, proxyOK: true, want: doctorPass, detail: "matches"},
+		{name: "kei newer", procStart: start, procFound: true, keiMod: newer, keiOK: true, proxyMod: older, proxyOK: true, want: doctorWarn, detail: "before kei was last modified"},
+		{name: "proxy newer", procStart: start, procFound: true, keiMod: older, keiOK: true, proxyMod: newer, proxyOK: true, want: doctorWarn, detail: "before kei-proxy was last modified"},
+		{name: "both newer", procStart: start, procFound: true, keiMod: newer, keiOK: true, proxyMod: newer, proxyOK: true, want: doctorWarn, detail: "before kei and kei-proxy was last modified"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := fakeDoctorProbes(t, nil)
+			p.heartbeatProcessStart = func() (time.Time, bool) { return tt.procStart, tt.procFound }
+			p.executable = func() (string, error) { return "/opt/kei", nil }
+			p.fileModTime = func(path string) (time.Time, bool) {
+				switch path {
+				case "/opt/kei":
+					return tt.keiMod, tt.keiOK
+				case "/opt/kei-proxy":
+					return tt.proxyMod, tt.proxyOK
+				}
+				return time.Time{}, false
+			}
+			got := checkStaleProcess(p)
+			if got.Status != tt.want || !strings.Contains(got.Detail, tt.detail) {
+				t.Fatalf("got %s %q, want %s containing %q", got.Status, got.Detail, tt.want, tt.detail)
+			}
+			if got.Status == doctorWarn && got.Fix != "kei runtime service install" {
+				t.Fatalf("fix = %q", got.Fix)
 			}
 		})
 	}

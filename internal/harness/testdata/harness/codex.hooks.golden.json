@@ -27,7 +27,7 @@
         "hooks": [
           {
             "command": "kei-proxy hook codex",
-            "timeout": 5,
+            "timeout": 3,
             "type": "command"
           }
         ]
