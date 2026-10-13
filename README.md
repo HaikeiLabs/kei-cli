@@ -356,6 +356,42 @@ same workspace; otherwise the server returns 400 with the reason. This needs a
 catalog with HAI-513 deployed. Older catalogs reject `agent_id` with 400
 "invalid request body".
 
+## Sync your Entra directory
+
+An organization admin can have Kei sync the organization's groups and members
+from Microsoft Entra app-role assignments. The settings live on your
+organization in Kei (`/api/v1/organizations/{org}/directory-sync`); the
+organization is the one your `kei login` token is bound to. You need three
+GUIDs from Entra: your tenant ID, the client ID of the sync app registration
+that has the Kei federated credential, and the client ID of the app whose app
+roles are synced.
+
+```sh
+# 1. Save the ids (the first set creates the configuration; dry run is on by default).
+kei directory-sync set --tenant-id TENANT_GUID --client-id SYNC_APP_GUID --app-id ROLES_APP_GUID
+
+# 2. Turn it on. Runs stay in dry run: nothing is written, each run records what it would do.
+kei directory-sync enable
+
+# 3. After the next sync interval, read what it would change.
+kei directory-sync report                 # newest run: result, stats, changes
+kei directory-sync report --limit 10      # the last 10 runs as a table
+kei directory-sync get                    # settings and a last-run summary
+
+# 4. When the report looks right, let it write (optionally create missing users).
+kei directory-sync set --dry-run=false [--create-users=true]
+
+# Stop syncing at any time.
+kei directory-sync disable
+```
+
+`set` changes only the flags you pass (`--tenant-id`, `--client-id`,
+`--app-id`, `--dry-run`, `--create-users`, `--revoke`); booleans take
+`=true` or `=false`. `--revoke=true` removes memberships that are no longer
+assigned in Entra. `set`, `enable`, and `disable` ask for confirmation; pass
+`--yes` in scripts. `get --json` and `report --json` print the API response.
+`get` exits 1 with "No directory sync configured." until the first `set`.
+
 ## Manage model profiles and the credential store
 
 Model profiles and the credential store are organization resources in the
