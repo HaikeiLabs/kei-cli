@@ -126,6 +126,7 @@ func runUpgradeCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 		fmt.Fprintf(stderr, "upgrade failed: extract kei-proxy binary: %v\n", err)
 		return 1
 	}
+	newProxyVersion := runningProxy
 	proxyTransition := runningProxy + " (unchanged; release bundles no kei-proxy)"
 	if bundledProxy {
 		defer os.Remove(proxyStage)
@@ -133,6 +134,7 @@ func runUpgradeCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 		if !ok {
 			proxyVersion = "(unknown)"
 		}
+		newProxyVersion = proxyVersion
 		proxyTransition = runningProxy + " -> " + proxyVersion
 	}
 	if err := os.Rename(cliStage, current); err != nil {
@@ -146,6 +148,14 @@ func runUpgradeCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 		}
 	}
 	fmt.Fprintf(stdout, "kei %s -> %s, kei-proxy %s\n", runningKei, version, proxyTransition)
+	// The service (if installed) still runs the pre-upgrade binaries until it
+	// is restarted; do that now. A no-op upgrade returned earlier, so this only
+	// runs after the binaries were actually replaced.
+	if restarted, err := restartRuntimeService(); err != nil {
+		fmt.Fprintf(stderr, "warning: could not restart the Kei runtime service: %v\n", err)
+	} else if restarted {
+		fmt.Fprintf(stdout, "Restarted the Kei runtime service; it now runs kei %s / kei-proxy %s.\n", version, newProxyVersion)
+	}
 	return 0
 }
 

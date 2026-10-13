@@ -148,6 +148,34 @@ func execUserID() string {
 	return strconv.Itoa(os.Geteuid())
 }
 
+// restartRuntimeService restarts the Kei runtime service if it is installed,
+// so it picks up freshly installed binaries. It reports whether it restarted
+// (the service was installed) and leaves an uninstalled service alone: an
+// upgrade or install never installs the service on the user's behalf.
+func restartRuntimeService() (bool, error) {
+	svcPath := serviceDefinitionPath()
+	if svcPath == "" {
+		return false, nil
+	}
+	if _, err := os.Stat(svcPath); err != nil {
+		return false, nil
+	}
+	name := serviceName()
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = sysCommand("launchctl", "kickstart", "-k", "gui/"+execUserID()+"/"+name)
+	case "linux":
+		cmd = sysCommand("systemctl", "--user", "restart", name)
+	default:
+		return false, nil
+	}
+	if err := cmd.Run(); err != nil {
+		return false, fmt.Errorf("restart %s: %w", name, err)
+	}
+	return true, nil
+}
+
 func isLaunchdServiceLoaded(name string) bool {
 	cmd := sysCommand("launchctl", "print", "gui/"+execUserID()+"/"+name)
 	return cmd.Run() == nil

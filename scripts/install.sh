@@ -264,6 +264,34 @@ strip_v() {
   esac
 }
 
+# Restart the Kei runtime service if it is already installed, so it picks up
+# the freshly installed binaries. Detects installation the same way the CLI
+# does (the service definition file exists) and never installs the service.
+restart_service_if_installed() {
+  case "$OS" in
+    macOS)
+      RS_SVC_DEF="$HOME/Library/LaunchAgents/com.haikeilabs.kei-runtime.plist"
+      if [ -f "$RS_SVC_DEF" ]; then
+        if launchctl kickstart -k "gui/$(id -u)/com.haikeilabs.kei-runtime" 2>/dev/null; then
+          echo "Restarted the Kei runtime service." >&2
+        else
+          echo "Warning: the Kei runtime service is installed but could not be restarted." >&2
+        fi
+      fi
+      ;;
+    Linux)
+      RS_SVC_DEF="$HOME/.config/systemd/user/kei.service"
+      if [ -f "$RS_SVC_DEF" ]; then
+        if systemctl --user restart kei 2>/dev/null; then
+          echo "Restarted the Kei runtime service." >&2
+        else
+          echo "Warning: the Kei runtime service is installed but could not be restarted." >&2
+        fi
+      fi
+      ;;
+  esac
+}
+
 # ---- Temporary directory ---------------------------------------------------
 if [ -z "${TMP_DIR:-}" ]; then
   TMP_DIR="$(mktemp -d)"
@@ -378,6 +406,8 @@ if [ "$MODE" = "install" ]; then
     PROXY_VERSION_OUT="$("$INSTALL_DIR/kei-proxy" --version 2>/dev/null || true)"
     echo "Verified: $PROXY_VERSION_OUT" >&2
   fi
+
+  restart_service_if_installed
   exit 0
 fi
 
@@ -459,6 +489,8 @@ if [ "$MODE" = "proxy-only" ]; then
     PROXY_VERSION_OUT="$("$INSTALL_DIR/kei-proxy" --version 2>/dev/null || true)"
     echo "Verified: $PROXY_VERSION_OUT" >&2
   fi
+
+  restart_service_if_installed
   exit 0
 fi
 

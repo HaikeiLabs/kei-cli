@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,9 +57,16 @@ type doctorProbes struct {
 	// bootstrap does.
 	loadConfig   func(path string) (runtimeConfig, error)
 	defaultProxy func() string
-	configPath   string
-	harnessEnv   harness.Env
-	registry     *harness.Registry
+	// executable is the running kei binary; fileModTime reports a binary's
+	// last-modified time; heartbeatProcessStart reports when the running
+	// heartbeat process started. Together they let the stale-process check
+	// compare the running process against the installed binaries.
+	executable            func() (string, error)
+	fileModTime           func(path string) (time.Time, bool)
+	heartbeatProcessStart func() (time.Time, bool)
+	configPath            string
+	harnessEnv            harness.Env
+	registry              *harness.Registry
 }
 
 func defaultDoctorProbes() (doctorProbes, error) {
@@ -76,10 +84,78 @@ func defaultDoctorProbes() (doctorProbes, error) {
 		runProxy:       probeRunProxy,
 		loadConfig:     loadRuntimeConfig,
 		defaultProxy:   defaultProxyPath,
-		configPath:     configPath,
-		harnessEnv:     harness.OSEnv(),
-		registry:       harness.Default,
+		executable:     os.Executable,
+		fileModTime:    probeFileModTime,
+		heartbeatProcessStart: func() (time.Time, bool) {
+			return probeHeartbeatProcessStart(time.Now())
+		},
+		configPath: configPath,
+		harnessEnv: harness.OSEnv(),
+		registry:   harness.Default,
 	}, nil
+}
+
+// probeFileModTime reports the last-modified time of path, or ok=false when it
+// cannot be stat'd.
+func probeFileModTime(path string) (time.Time, bool) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return info.ModTime(), true
+}
+
+// probeHeartbeatProcessStart finds the running "kei runtime heartbeat" process
+// and returns when it started. It reads ps's elapsed time (etime), which is a
+// locale-independent [DD-]HH:MM:SS duration, so the result does not depend on
+// the locale's date format. It reports ok=false when no such process is
+// running or ps is unavailable.
+func probeHeartbeatProcessStart(now time.Time) (time.Time, bool) {
+	out, err := exec.Command("ps", "-ww", "-eo", "etime,command").Output()
+	if err != nil {
+		return time.Time{}, false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] == "ELAPSED" {
+			continue
+		}
+		if !strings.Contains(line, "runtime heartbeat") {
+			continue
+		}
+		elapsed, ok := parsePSElapsed(fields[0])
+		if !ok {
+			continue
+		}
+		return now.Add(-elapsed), true
+	}
+	return time.Time{}, false
+}
+
+// parsePSElapsed parses ps's etime field, "[DD-]HH:MM:SS", into a duration.
+func parsePSElapsed(s string) (time.Duration, bool) {
+	var days int
+	rest := s
+	if i := strings.IndexByte(s, '-'); i >= 0 {
+		d, err := strconv.Atoi(s[:i])
+		if err != nil {
+			return 0, false
+		}
+		days = d
+		rest = s[i+1:]
+	}
+	parts := strings.Split(rest, ":")
+	if len(parts) != 3 {
+		return 0, false
+	}
+	h, errH := strconv.Atoi(parts[0])
+	m, errM := strconv.Atoi(parts[1])
+	sec, errS := strconv.Atoi(parts[2])
+	if errH != nil || errM != nil || errS != nil {
+		return 0, false
+	}
+	return time.Duration(days)*24*time.Hour + time.Duration(h)*time.Hour +
+		time.Duration(m)*time.Minute + time.Duration(sec)*time.Second, true
 }
 
 func probeServiceLoaded(goos, name string) bool {
@@ -127,6 +203,7 @@ func runDoctor(p doctorProbes, stdout io.Writer) int {
 	service := checkRuntimeService(p)
 	results = append(results, service)
 	results = append(results, checkHeartbeat(p, service))
+	results = append(results, checkStaleProcess(p))
 	results = append(results, checkHarnessHooks(p)...)
 	results = append(results, checkPolicyBundle(p))
 	code := 0
@@ -194,6 +271,43 @@ func checkHeartbeat(p doctorProbes, service doctorResult) doctorResult {
 		}
 	}
 	r.Detail = "last heartbeat time is not recorded locally; check " + logHint
+	return r
+}
+
+// checkStaleProcess warns when the running heartbeat process started before
+// the installed kei or kei-proxy binary was last modified: an upgrade replaced
+// the binaries but the service was never restarted, so the old code is still
+// running. It passes when no heartbeat process is running or when the process
+// is at least as new as both binaries.
+func checkStaleProcess(p doctorProbes) doctorResult {
+	r := doctorResult{Name: "stale runtime process", Status: doctorPass, Detail: "running process matches the installed binaries"}
+	start, ok := p.heartbeatProcessStart()
+	if !ok {
+		r.Detail = "no running heartbeat process to compare"
+		return r
+	}
+	var stale []string
+	if keiPath, err := p.executable(); err == nil {
+		if mod, ok := p.fileModTime(keiPath); ok && start.Before(mod) {
+			stale = append(stale, "kei")
+		}
+	}
+	proxyPath := ""
+	if config, err := p.loadConfig(p.configPath); err == nil && config.ProxyPath != "" {
+		proxyPath = config.ProxyPath
+	}
+	if proxyPath == "" {
+		proxyPath = p.defaultProxy()
+	}
+	if mod, ok := p.fileModTime(proxyPath); ok && start.Before(mod) {
+		stale = append(stale, "kei-proxy")
+	}
+	if len(stale) == 0 {
+		return r
+	}
+	r.Status = doctorWarn
+	r.Detail = "running process started before " + strings.Join(stale, " and ") + " was last modified; restart the service to pick up the new binaries"
+	r.Fix = "kei runtime service install"
 	return r
 }
 

@@ -214,3 +214,75 @@ func TestServiceInstallConfigFlagDefault(t *testing.T) {
 		t.Fatalf("expected config read error or unsupported, got: %s", stderr.String())
 	}
 }
+
+// TestRestartRuntimeServiceNotInstalled proves an upgrade/install never
+// touches the service manager when the service is not installed.
+func TestRestartRuntimeServiceNotInstalled(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	called := false
+	oldSysCommand := sysCommand
+	sysCommand = func(name string, args ...string) *exec.Cmd {
+		called = true
+		return exec.Command("true")
+	}
+	defer func() { sysCommand = oldSysCommand }()
+
+	restarted, err := restartRuntimeService()
+	if err != nil {
+		t.Fatalf("restart error: %v", err)
+	}
+	if restarted {
+		t.Fatalf("expected no restart when the service is not installed")
+	}
+	if called {
+		t.Fatalf("sysCommand must not run when the service is not installed")
+	}
+}
+
+// TestRestartRuntimeServiceInstalled proves the restart goes through the
+// sysCommand seam with the platform's restart command and never execs the real
+// service manager.
+func TestRestartRuntimeServiceInstalled(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	svcPath := serviceDefinitionPath()
+	if svcPath == "" {
+		t.Skip("unsupported platform")
+	}
+	if err := os.MkdirAll(filepath.Dir(svcPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(svcPath, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var gotName string
+	var gotArgs []string
+	oldSysCommand := sysCommand
+	sysCommand = func(name string, args ...string) *exec.Cmd {
+		gotName, gotArgs = name, args
+		return exec.Command("true")
+	}
+	defer func() { sysCommand = oldSysCommand }()
+
+	restarted, err := restartRuntimeService()
+	if err != nil {
+		t.Fatalf("restart error: %v", err)
+	}
+	if !restarted {
+		t.Fatalf("expected a restart when the service is installed")
+	}
+	var wantName string
+	var wantArgs []string
+	switch runtime.GOOS {
+	case "darwin":
+		wantName = "launchctl"
+		wantArgs = []string{"kickstart", "-k", "gui/" + execUserID() + "/com.haikeilabs.kei-runtime"}
+	case "linux":
+		wantName = "systemctl"
+		wantArgs = []string{"--user", "restart", "kei"}
+	default:
+		t.Skip("unsupported platform")
+	}
+	if gotName != wantName || strings.Join(gotArgs, "\x00") != strings.Join(wantArgs, "\x00") {
+		t.Fatalf("called %s %v, want %s %v", gotName, gotArgs, wantName, wantArgs)
+	}
+}
