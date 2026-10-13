@@ -271,6 +271,29 @@ func TestPoliciesCreateRequiresFields(t *testing.T) {
 	}
 }
 
+// The catalog rejected agent_id with 400 "invalid request body" (HAI-513),
+// so --agent-id fails in the CLI, before any request, with a way forward.
+func TestPoliciesAgentIDFailsFast(t *testing.T) {
+	fake, server, store := newFakeConsole(t, failOnRequest(t))
+	agent := "55555555-5555-5555-5555-555555555555"
+	cases := map[string][]string{
+		"create": {"create", "--workspace", testWorkspaceID, "--name", "x", "--src-pattern", "harness:claude", "--dst-pattern", "shell:git", "--effect", "deny", "--agent-id", agent},
+		"update": {"update", testPolicyID, "--workspace", testWorkspaceID, "--agent-id", agent},
+	}
+	for name, args := range cases {
+		t.Run(name, func(t *testing.T) {
+			code, _, stderr := runPolicies(t, server, store, "", args...)
+			want := "policies " + name + ": --agent-id isn't supported by the server yet (HAI-513); create the policy without it and set the agent in the console\n"
+			if code != 2 || stderr != want {
+				t.Fatalf("exit = %d stderr=%q, want 2 %q", code, stderr, want)
+			}
+		})
+	}
+	if fake.count() != 0 {
+		t.Fatal("--agent-id reached the console")
+	}
+}
+
 // --- Update ---
 
 func TestPoliciesUpdate(t *testing.T) {
