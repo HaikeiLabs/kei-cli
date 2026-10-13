@@ -1,197 +1,280 @@
 // Source: HaikeiLabs/kei-console frontend/src/lib/testdata/policy-precedence.golden.json
-// Commit blob SHA: dcd69f3ad20ba91548153bc803b749a5a246e90b
-// See https://github.com/HaikeiLabs/kei-console/pull/149
+// Commit blob SHA: ec1be6e36c2c5d935cd77c290c083c6723ab3f5a
+// See https://github.com/HaikeiLabs/kei-console/pull/189
 {
+  "schema_version": 1,
+  "description": "Cross-repository policy precedence contract. Each case defines UUID-keyed groups (children reference ids), users, policies, requests and expected outcomes. Invalid group graphs fail with expected_error. Request expected_outranked entries include every matching loser and its reason. effective_by_group includes inherited/global/harness policies with displayed origins in precedence order. Annotation cases include requests for claude_code, codex and opencode; this field is additive and schema_version remains 1.",
+  "cases": [
+    {
+      "name": "realistic group ids, descendants, and a two-parent diamond",
+      "groups": [
+        {"id":"00000000-0000-4000-8000-000000000001","name":"members","children":[]},
+        {"id":"00000000-0000-4000-8000-000000000002","name":"developers","children":["00000000-0000-4000-8000-000000000001"]},
+        {"id":"00000000-0000-4000-8000-000000000003","name":"admins","children":["00000000-0000-4000-8000-000000000001"]},
+        {"id":"00000000-0000-4000-8000-000000000004","name":"security","children":["00000000-0000-4000-8000-000000000002","00000000-0000-4000-8000-000000000003"]}
+      ],
+      "users": [
+        {"email":"dev@example.com","groups":["00000000-0000-4000-8000-000000000002"]},
+        {"email":"security@example.com","groups":["00000000-0000-4000-8000-000000000004"]},
+        {"email":"ada@example.com","groups":["00000000-0000-4000-8000-000000000002"]}
+      ],
+      "policies": [
+        {"id":"p-git","name":"Git commands","src_pattern":"group:developers","dst_pattern":"shell:git","action":"permit","priority":10,"enabled":true},
+        {"id":"p-disabled","name":"Disabled Git block","src_pattern":"group:developers","dst_pattern":"shell:git","action":"deny","priority":100,"enabled":false},
+        {"id":"p-rm","name":"Temporary directory removal","src_pattern":"group:admins","dst_pattern":"shell:rm -rf /tmp/","action":"deny","priority":20,"enabled":true},
+        {"id":"p-path","name":"Source tree","src_pattern":"group:security","dst_pattern":"path:/workspace/src/","action":"deny","priority":30,"enabled":true},
+        {"id":"p-skill","name":"Deploy skill","src_pattern":"group:members","dst_pattern":"skill:deploy","action":"permit","priority":15,"enabled":true},
+        {"id":"p-connector","name":"Repository deletion","src_pattern":"group:admins","dst_pattern":"connector:github.repos.*","action":"deny","priority":25,"enabled":true},
+        {"id":"p-user","name":"Ada only","src_pattern":"user:ada@example.com","dst_pattern":"path:/private/","action":"deny","priority":40,"enabled":true},
+        {"id":"p-any-harness","name":"Any harness npm","src_pattern":"harness:*","dst_pattern":"shell:npm run","action":"permit","priority":5,"enabled":true},
+        {"id":"p-codex","name":"Codex npm block","src_pattern":"harness:codex","dst_pattern":"shell:npm run","action":"deny","priority":5,"enabled":true},
+        {"id":"p-tie-permit","name":"Tie permit","src_pattern":"group:developers","dst_pattern":"path:/tie/","action":"permit","priority":50,"enabled":true},
+        {"id":"p-tie-deny","name":"Tie deny","src_pattern":"group:developers","dst_pattern":"path:/tie/","action":"deny","priority":50,"enabled":true},
+        {"id":"id-a","name":"Lower id permit","src_pattern":"group:developers","dst_pattern":"path:/id-tie/","action":"permit","priority":7,"enabled":true},
+        {"id":"id-z","name":"Higher id permit","src_pattern":"group:developers","dst_pattern":"path:/id-tie/","action":"permit","priority":7,"enabled":true}
+      ],
+      "requests": [
+        {"name":"whole-token shell prefix matches","user":"dev@example.com","harness":"codex","resource":"shell:git push origin","expected_winner":"p-git","expected_outranked":[{"policy_id":"p-disabled","reason":"disabled"}]},
+        {"name":"shell prefix does not match a longer token","user":"dev@example.com","harness":"codex","resource":"shell:gitx push","expected_winner":null,"expected_outranked":[]},
+        {"name":"slash-ended last token matches by string prefix","user":"security@example.com","harness":"codex","resource":"shell:rm -rf /tmp/x","expected_winner":"p-rm","expected_outranked":[]},
+        {"name":"slash-ended token does not match a different prefix","user":"security@example.com","harness":"codex","resource":"shell:rm -rf /tmpx/x","expected_winner":null,"expected_outranked":[]},
+        {"name":"path prefix matches descendants","user":"security@example.com","harness":"codex","resource":"path:/workspace/src/main.ts","expected_winner":"p-path","expected_outranked":[]},
+        {"name":"skill matching is exact","user":"dev@example.com","harness":"codex","resource":"skill:deploy","expected_winner":"p-skill","expected_outranked":[]},
+        {"name":"skill near miss does not match","user":"dev@example.com","harness":"codex","resource":"skill:deploy-prod","expected_winner":null,"expected_outranked":[]},
+        {"name":"connector star matches delete operation","user":"security@example.com","harness":"codex","resource":"connector:github.repos.delete","expected_winner":"p-connector","expected_outranked":[]},
+        {"name":"user email principal applies","user":"ada@example.com","harness":"opencode","resource":"path:/private/key","expected_winner":"p-user","expected_outranked":[]},
+        {"name":"wildcard harness applies to a different harness kind","user":"dev@example.com","harness":"opencode","resource":"shell:npm run build","expected_winner":"p-any-harness","expected_outranked":[]},
+        {"name":"specific harness policy applies only to its kind and deny wins a tie","user":"dev@example.com","harness":"codex","resource":"shell:npm run build","expected_winner":"p-codex","expected_outranked":[{"policy_id":"p-any-harness","reason":"tied_deny_beats_permit"}]},
+        {"name":"equal priority deny beats permit","user":"dev@example.com","harness":"codex","resource":"path:/tie/item","expected_winner":"p-tie-deny","expected_outranked":[{"policy_id":"p-tie-permit","reason":"tied_deny_beats_permit"}]},
+        {"name":"equal priority same effect uses ascending policy id","user":"dev@example.com","harness":"codex","resource":"path:/id-tie/item","expected_winner":"id-a","expected_outranked":[{"policy_id":"id-z","reason":"tied_lower_id"}]},
+        {"name":"two-parent diamond closure is deduplicated","user":"security@example.com","harness":"codex","resource":"skill:deploy","expected_winner":"p-skill","expected_outranked":[]},
+        {"name":"no match leaves the harness default","user":"dev@example.com","harness":"codex","resource":"connector:github.issues.read","expected_winner":null,"expected_outranked":[]}
+      ],
+      "effective_by_group": {
+        "members": [
+          {"policy_id":"p-skill","origin":"direct"},
+          {"policy_id":"p-codex","origin":"harness:codex"},
+          {"policy_id":"p-any-harness","origin":"harness:*"}
+        ],
+        "developers": [
+          {"policy_id":"p-disabled","origin":"direct"},
+          {"policy_id":"p-tie-deny","origin":"direct"},
+          {"policy_id":"p-tie-permit","origin":"direct"},
+          {"policy_id":"p-skill","origin":"via members"},
+          {"policy_id":"p-git","origin":"direct"},
+          {"policy_id":"id-a","origin":"direct"},
+          {"policy_id":"id-z","origin":"direct"},
+          {"policy_id":"p-codex","origin":"harness:codex"},
+          {"policy_id":"p-any-harness","origin":"harness:*"}
+        ],
+        "admins": [
+          {"policy_id":"p-connector","origin":"direct"},
+          {"policy_id":"p-rm","origin":"direct"},
+          {"policy_id":"p-skill","origin":"via members"},
+          {"policy_id":"p-codex","origin":"harness:codex"},
+          {"policy_id":"p-any-harness","origin":"harness:*"}
+        ],
+        "security": [
+          {"policy_id":"p-disabled","origin":"via developers"},
+          {"policy_id":"p-tie-deny","origin":"via developers"},
+          {"policy_id":"p-tie-permit","origin":"via developers"},
+          {"policy_id":"p-path","origin":"direct"},
+          {"policy_id":"p-connector","origin":"via admins"},
+          {"policy_id":"p-rm","origin":"via admins"},
+          {"policy_id":"p-skill","origin":"via members"},
+          {"policy_id":"p-git","origin":"via developers"},
+          {"policy_id":"id-a","origin":"via developers"},
+          {"policy_id":"id-z","origin":"via developers"},
+          {"policy_id":"p-codex","origin":"harness:codex"},
+          {"policy_id":"p-any-harness","origin":"harness:*"}
+        ]
+      }
+    },
+    {
+      "name":"group cycle fails closed during evaluation",
+      "groups":[
+        {"id":"cycle-a","name":"cycle-a","children":["cycle-b"]},
+        {"id":"cycle-b","name":"cycle-b","children":["cycle-a"]}
+      ],
+      "users":[{"email":"dev@example.com","groups":["cycle-a"]}],
+      "policies":[{"id":"cycle-rule","name":"Cycle rule","src_pattern":"group:cycle-b","dst_pattern":"skill:cycle","action":"deny","priority":1,"enabled":true}],
+      "requests":[{"name":"cycle is rejected","user":"dev@example.com","harness":"codex","resource":"skill:cycle","expected_winner":null,"expected_outranked":[],"expected_error":"cycle"}],
+      "effective_by_group":{}
+    },
+    {
+      "name":"group nesting deeper than four edges fails closed",
+      "groups":[
+        {"id":"depth-0","name":"depth-0","children":["depth-1"]},
+        {"id":"depth-1","name":"depth-1","children":["depth-2"]},
+        {"id":"depth-2","name":"depth-2","children":["depth-3"]},
+        {"id":"depth-3","name":"depth-3","children":["depth-4"]},
+        {"id":"depth-4","name":"depth-4","children":["depth-5"]},
+        {"id":"depth-5","name":"depth-5","children":[]}
+      ],
+      "users":[{"email":"dev@example.com","groups":["depth-0"]}],
+      "policies":[],
+      "requests":[{"name":"depth overflow is rejected","user":"dev@example.com","harness":"codex","resource":"skill:deep","expected_winner":null,"expected_outranked":[],"expected_error":"depth_exceeded"}],
+      "effective_by_group":{}
+    }
+  ],
   "annotation_cases": [
     {
-      "name": "except-global",
-      "target_policy_id": "target",
-      "policies": [
-        {
-          "id": "target",
-          "name": "Git commands",
-          "src_pattern": "*",
-          "dst_pattern": "shell:git",
-          "action": "permit",
-          "priority": 10,
-          "enabled": true
-        },
-        {
-          "id": "override",
-          "name": "Force push block",
-          "src_pattern": "group:admins",
-          "dst_pattern": "shell:git push --force",
-          "action": "deny",
-          "priority": 20,
-          "enabled": true
-        }
+      "name":"except-global",
+      "target_policy_id":"target",
+      "policies":[
+        {"id":"target","name":"Git commands","src_pattern":"*","dst_pattern":"shell:git","action":"permit","priority":10,"enabled":true},
+        {"id":"override","name":"Force push block","src_pattern":"group:admins","dst_pattern":"shell:git push --force","action":"deny","priority":20,"enabled":true}
       ],
-      "expected": [
-        {
-          "kind": "except",
-          "resource": "shell:git push --force",
-          "harnesses": "all",
-          "by": "override"
-        }
-      ],
-      "formatted": [
-        "except shell:git push --force everywhere"
+      "groups":[{"id":"admins","name":"admins","children":[]}],
+      "expected":[{"kind":"except","resource":"shell:git push --force","harnesses":"all","by":"override"}],
+      "formatted":["except shell:git push --force everywhere"],
+      "requests":[
+        {"user":{"email":"dev@example.com","groups":["admins"]},"harness":"claude_code","resource":"shell:git push --force","expected_winner":"override"},
+        {"user":{"email":"dev@example.com","groups":["admins"]},"harness":"codex","resource":"shell:git push --force","expected_winner":"override"},
+        {"user":{"email":"dev@example.com","groups":["admins"]},"harness":"opencode","resource":"shell:git push --force","expected_winner":"override"}
       ]
     },
     {
-      "name": "except-harness-scoped",
-      "target_policy_id": "target",
-      "policies": [
-        {
-          "id": "target",
-          "name": "Git commands",
-          "src_pattern": "harness:*",
-          "dst_pattern": "shell:git",
-          "action": "permit",
-          "priority": 10,
-          "enabled": true
-        },
-        {
-          "id": "override",
-          "name": "Force push block",
-          "src_pattern": "harness:claude_code",
-          "dst_pattern": "shell:git push --force",
-          "action": "deny",
-          "priority": 20,
-          "enabled": true
-        }
+      "name":"except-harness-scoped",
+      "target_policy_id":"target",
+      "policies":[
+        {"id":"target","name":"Git commands","src_pattern":"harness:*","dst_pattern":"shell:git","action":"permit","priority":10,"enabled":true},
+        {"id":"override","name":"Force push block","src_pattern":"harness:claude_code","dst_pattern":"shell:git push --force","action":"deny","priority":20,"enabled":true}
       ],
-      "expected": [
-        {
-          "kind": "except",
-          "resource": "shell:git push --force",
-          "harnesses": [
-            "claude_code"
-          ],
-          "by": "override"
-        }
-      ],
-      "formatted": [
-        "except shell:git push --force on Claude Code"
+      "expected":[{"kind":"except","resource":"shell:git push --force","harnesses":["claude_code"],"by":"override"}],
+      "formatted":["except shell:git push --force on Claude Code"],
+      "requests":[
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"claude_code","resource":"shell:git push --force","expected_winner":"override"},
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"codex","resource":"shell:git push --force","expected_winner":"target"},
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"opencode","resource":"shell:git push --force","expected_winner":"target"}
       ]
     },
     {
-      "name": "never-applies-global",
-      "target_policy_id": "target",
-      "policies": [
-        {
-          "id": "target",
-          "name": "Git push",
-          "src_pattern": "harness:*",
-          "dst_pattern": "shell:git push",
-          "action": "permit",
-          "priority": 10,
-          "enabled": true
-        },
-        {
-          "id": "override",
-          "name": "Git block",
-          "src_pattern": "user:dev@example.com",
-          "dst_pattern": "shell:git",
-          "action": "deny",
-          "priority": 20,
-          "enabled": true
-        }
+      "name":"never-applies-global",
+      "target_policy_id":"target",
+      "policies":[
+        {"id":"target","name":"Git push","src_pattern":"harness:*","dst_pattern":"shell:git push","action":"permit","priority":10,"enabled":true},
+        {"id":"override","name":"Git block","src_pattern":"user:dev@example.com","dst_pattern":"shell:git","action":"deny","priority":20,"enabled":true}
       ],
-      "expected": [
-        {
-          "kind": "never",
-          "resource": "shell:git push",
-          "harnesses": "all",
-          "by": "override"
-        }
-      ],
-      "formatted": [
-        "Never applies everywhere: Git block wins"
+      "expected":[{"kind":"never","resource":"shell:git push","harnesses":"all","by":"override"}],
+      "formatted":["Never applies everywhere: Git block wins"],
+      "requests":[
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"claude_code","resource":"shell:git push","expected_winner":"override"},
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"codex","resource":"shell:git push","expected_winner":"override"},
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"opencode","resource":"shell:git push","expected_winner":"override"}
       ]
     },
     {
-      "name": "never-applies-harness-scoped",
-      "target_policy_id": "target",
-      "policies": [
-        {
-          "id": "target",
-          "name": "Git push",
-          "src_pattern": "harness:*",
-          "dst_pattern": "shell:git push",
-          "action": "permit",
-          "priority": 10,
-          "enabled": true
-        },
-        {
-          "id": "override",
-          "name": "Claude Git block",
-          "src_pattern": "harness:claude_code",
-          "dst_pattern": "shell:git",
-          "action": "deny",
-          "priority": 20,
-          "enabled": true
-        }
+      "name":"never-applies-harness-scoped",
+      "target_policy_id":"target",
+      "policies":[
+        {"id":"target","name":"Git push","src_pattern":"harness:*","dst_pattern":"shell:git push","action":"permit","priority":10,"enabled":true},
+        {"id":"override","name":"Claude Git block","src_pattern":"harness:claude_code","dst_pattern":"shell:git","action":"deny","priority":20,"enabled":true}
       ],
-      "expected": [
-        {
-          "kind": "never",
-          "resource": "shell:git push",
-          "harnesses": [
-            "claude_code"
-          ],
-          "by": "override"
-        }
-      ],
-      "formatted": [
-        "Never applies on Claude Code: Claude Git block wins"
+      "expected":[{"kind":"never","resource":"shell:git push","harnesses":["claude_code"],"by":"override"}],
+      "formatted":["Never applies on Claude Code: Claude Git block wins"],
+      "requests":[
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"claude_code","resource":"shell:git push","expected_winner":"override"},
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"codex","resource":"shell:git push","expected_winner":"target"},
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"opencode","resource":"shell:git push","expected_winner":"target"}
       ]
     },
     {
-      "name": "Codex remains permitted for the same resource",
-      "target_policy_id": "target",
-      "policies": [
-        {
-          "id": "target",
-          "name": "Git commands",
-          "src_pattern": "harness:*",
-          "dst_pattern": "shell:git",
-          "action": "permit",
-          "priority": 10,
-          "enabled": true
-        },
-        {
-          "id": "override",
-          "name": "Claude Git block",
-          "src_pattern": "harness:claude_code",
-          "dst_pattern": "shell:git push --force",
-          "action": "deny",
-          "priority": 20,
-          "enabled": true
-        }
+      "name":"Codex remains permitted for the same resource",
+      "target_policy_id":"target",
+      "policies":[
+        {"id":"target","name":"Git commands","src_pattern":"harness:*","dst_pattern":"shell:git","action":"permit","priority":10,"enabled":true},
+        {"id":"override","name":"Claude Git block","src_pattern":"harness:claude_code","dst_pattern":"shell:git push --force","action":"deny","priority":20,"enabled":true}
       ],
-      "expected": [
-        {
-          "kind": "except",
-          "resource": "shell:git push --force",
-          "harnesses": [
-            "claude_code"
-          ],
-          "by": "override"
-        }
+      "expected":[{"kind":"except","resource":"shell:git push --force","harnesses":["claude_code"],"by":"override"}],
+      "formatted":["except shell:git push --force on Claude Code"],
+      "request":{"user":{"email":"dev@example.com","groups":[]},"harness":"codex","resource":"shell:git push --force","expected_winner":"target"},
+      "requests":[
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"claude_code","resource":"shell:git push --force","expected_winner":"override"},
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"codex","resource":"shell:git push --force","expected_winner":"target"},
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"opencode","resource":"shell:git push --force","expected_winner":"target"}
+      ]
+    },
+    {
+      "name":"except-codex-scoped","target_policy_id":"target",
+      "policies":[
+        {"id":"target","name":"Git commands","src_pattern":"harness:*","dst_pattern":"shell:git","action":"permit","priority":10,"enabled":true},
+        {"id":"override","name":"Force push block","src_pattern":"harness:codex","dst_pattern":"shell:git push --force","action":"deny","priority":20,"enabled":true}
       ],
-      "formatted": [
-        "except shell:git push --force on Claude Code"
+      "expected":[{"kind":"except","resource":"shell:git push --force","harnesses":["codex"],"by":"override"}],"formatted":["except shell:git push --force on Codex"],
+      "requests":[
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"claude_code","resource":"shell:git push --force","expected_winner":"target"},
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"codex","resource":"shell:git push --force","expected_winner":"override"},
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"opencode","resource":"shell:git push --force","expected_winner":"target"}
+      ]
+    },
+    {
+      "name":"never-applies-opencode-scoped","target_policy_id":"target",
+      "policies":[
+        {"id":"target","name":"Git push","src_pattern":"harness:*","dst_pattern":"shell:git push","action":"permit","priority":10,"enabled":true},
+        {"id":"override","name":"OpenCode Git block","src_pattern":"harness:opencode","dst_pattern":"shell:git","action":"deny","priority":20,"enabled":true}
       ],
-      "request": {
-        "user": {
-          "email": "dev@example.com",
-          "groups": []
-        },
-        "harness": "codex",
-        "resource": "shell:git push --force",
-        "expected_winner": "target"
-      }
+      "expected":[{"kind":"never","resource":"shell:git push","harnesses":["opencode"],"by":"override"}],"formatted":["Never applies on OpenCode: OpenCode Git block wins"],
+      "requests":[
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"claude_code","resource":"shell:git push","expected_winner":"target"},
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"codex","resource":"shell:git push","expected_winner":"target"},
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"opencode","resource":"shell:git push","expected_winner":"override"}
+      ]
+    },
+    {
+      "name":"except-wildcard-source","target_policy_id":"target",
+      "policies":[
+        {"id":"target","name":"Git commands","src_pattern":"harness:*","dst_pattern":"shell:git","action":"permit","priority":10,"enabled":true},
+        {"id":"harness-override","name":"Force push block","src_pattern":"harness:*","dst_pattern":"shell:git push --force","action":"deny","priority":20,"enabled":true},
+        {"id":"wildcard-override","name":"Git remote block","src_pattern":"*","dst_pattern":"shell:git remote","action":"deny","priority":15,"enabled":true}
+      ],
+      "expected":[{"kind":"except","resource":"shell:git push --force","harnesses":"all","by":"harness-override"},{"kind":"except","resource":"shell:git remote","harnesses":"all","by":"wildcard-override"}],"formatted":["except shell:git push --force everywhere","except shell:git remote everywhere"],
+      "requests":[
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"claude_code","resource":"shell:git push --force","expected_winner":"harness-override"},
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"codex","resource":"shell:git push --force","expected_winner":"harness-override"},
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"opencode","resource":"shell:git push --force","expected_winner":"harness-override"}
+      ]
+    },
+    {
+      "name":"custom-harness-label","target_policy_id":"target",
+      "policies":[
+        {"id":"target","name":"Git commands","src_pattern":"harness:*","dst_pattern":"shell:git","action":"permit","priority":10,"enabled":true},
+        {"id":"override","name":"Custom Git block","src_pattern":"harness:my-sdk","dst_pattern":"shell:git push --force","action":"deny","priority":20,"enabled":true}
+      ],
+      "expected":[{"kind":"except","resource":"shell:git push --force","harnesses":["my-sdk"],"by":"override"}],"formatted":["except shell:git push --force on my-sdk"],
+      "requests":[
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"claude_code","resource":"shell:git push --force","expected_winner":"target"},
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"codex","resource":"shell:git push --force","expected_winner":"target"},
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"opencode","resource":"shell:git push --force","expected_winner":"target"}
+      ]
+    },
+    {
+      "name":"two-overrides","target_policy_id":"target",
+      "policies":[
+        {"id":"target","name":"Git commands","src_pattern":"harness:*","dst_pattern":"shell:git","action":"permit","priority":10,"enabled":true},
+        {"id":"claude","name":"Force push block","src_pattern":"harness:claude_code","dst_pattern":"shell:git push --force","action":"deny","priority":20,"enabled":true},
+        {"id":"codex","name":"Hard reset block","src_pattern":"harness:codex","dst_pattern":"shell:git reset --hard","action":"deny","priority":15,"enabled":true}
+      ],
+      "expected":[{"kind":"except","resource":"shell:git push --force","harnesses":["claude_code"],"by":"claude"},{"kind":"except","resource":"shell:git reset --hard","harnesses":["codex"],"by":"codex"}],"formatted":["except shell:git push --force on Claude Code","except shell:git reset --hard on Codex"],
+      "joined":"except shell:git push --force on Claude Code · except shell:git reset --hard on Codex",
+      "requests":[
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"claude_code","resource":"shell:git push --force","expected_winner":"claude"},
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"codex","resource":"shell:git reset --hard","expected_winner":"codex"},
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"opencode","resource":"shell:git push --force","expected_winner":"target"}
+      ]
+    },
+    {
+      "name":"non-overlapping-harness-scopes","target_policy_id":"target",
+      "policies":[
+        {"id":"target","name":"Claude Git commands","src_pattern":"harness:claude_code","dst_pattern":"shell:git","action":"permit","priority":10,"enabled":true},
+        {"id":"override","name":"Codex Git block","src_pattern":"harness:codex","dst_pattern":"shell:git push --force","action":"deny","priority":20,"enabled":true}
+      ],
+      "expected":[],"formatted":[],
+      "requests":[
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"claude_code","resource":"shell:git push --force","expected_winner":"target"},
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"codex","resource":"shell:git push --force","expected_winner":"override"},
+        {"user":{"email":"dev@example.com","groups":[]},"harness":"opencode","resource":"shell:git push --force","expected_winner":null}
+      ]
     }
   ]
 }

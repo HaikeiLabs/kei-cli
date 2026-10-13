@@ -1,0 +1,12 @@
+# Where policy-precedence.golden.json is vendored from. TestPolicyPrecedenceGoldenSource
+# fails when the vendored file's git blob SHA differs from blob_sha.
+#
+# The vendored file carries a three-line // header the upstream file lacks, so
+# blob_sha is computed on the exact vendored bytes (git hash-object on this
+# repo's copy), not on the upstream blob. The upstream blob is upstream_blob_sha;
+# the vendored body below the header is byte-identical to it.
+repo: HaikeiLabs/kei-console
+path: frontend/src/lib/testdata/policy-precedence.golden.json
+ref: b39092525b35e76644636b6cb2dbc1ec8b0f417f
+upstream_blob_sha: ec1be6e36c2c5d935cd77c290c083c6723ab3f5a
+blob_sha: 86c77b0e493813616425ccb45451180213e99d7b
