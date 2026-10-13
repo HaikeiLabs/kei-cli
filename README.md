@@ -10,19 +10,21 @@ this CLI.
 Binary releases of kei-cli are available for macOS and Linux (arm64 and amd64).
 The installer downloads the matching archive and verifies its SHA-256 checksum.
 
-### Option 1: curl install from S3 (recommended)
+### Option 1: curl install (recommended)
 
-The recommended public release endpoint is `https://kei-cli-releases.s3.us-east-1.amazonaws.com`; `AWS_S3_RELEASES_URL_BASE` can override it. The install script
-detects your OS and architecture and defaults to `/usr/local/bin`:
+The install script is hosted at `https://haikeilabs.com/install.sh`. If that URL is unreachable,
+fall back to `https://kei-cli-releases.s3.us-east-1.amazonaws.com/kei-cli/install.sh` instead.
+`AWS_S3_RELEASES_URL_BASE` can override the S3 endpoint. The install script detects your OS and
+architecture and defaults to `/usr/local/bin`:
 
 ```sh
 # Install the latest version to a user-writable directory:
 export PATH="$HOME/.local/bin:$PATH"
-curl -fsSL "https://kei-cli-releases.s3.us-east-1.amazonaws.com/kei-cli/install.sh" \
+curl -fsSL "https://haikeilabs.com/install.sh" \
   | sh -s -- -d "$HOME/.local/bin"
 
 # Install a specific version:
-curl -fsSL "https://kei-cli-releases.s3.us-east-1.amazonaws.com/kei-cli/install.sh" \
+curl -fsSL "https://haikeilabs.com/install.sh" \
   | sh -s -- -v 0.2.0 -d "$HOME/.local/bin"
 ```
 
@@ -42,12 +44,12 @@ installation:
 ```sh
 # Install only kei-proxy (from the standalone kei-proxy release). The default
 # version is the pinned KEI_PROXY_VERSION; override it with -v.
-curl -fsSL "https://kei-cli-releases.s3.us-east-1.amazonaws.com/kei-cli/install.sh" \
+curl -fsSL "https://haikeilabs.com/install.sh" \
   | sh -s -- --proxy-only -d "$HOME/.local/bin"
 
 # Remove exactly the files the installer recorded (kei, kei-proxy, and the
 # manifest) from the install directory.
-curl -fsSL "https://kei-cli-releases.s3.us-east-1.amazonaws.com/kei-cli/install.sh" \
+curl -fsSL "https://haikeilabs.com/install.sh" \
   | sh -s -- --uninstall -d "$HOME/.local/bin"
 ```
 
@@ -626,7 +628,7 @@ signature check.
 using either method:
 
 ```sh
-curl -fsSL "https://kei-cli-releases.s3.us-east-1.amazonaws.com/kei-cli/install.sh" \
+curl -fsSL "https://haikeilabs.com/install.sh" \
   | sh -s -- -d "$HOME/.local/bin"
 ```
 
