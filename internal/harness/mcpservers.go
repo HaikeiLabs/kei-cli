@@ -119,7 +119,7 @@ func isLoopbackHost(host string) bool {
 // applyMCPServers is the MCP-servers render step of applyFiles. It merges
 // r's MCP servers into the harness's MCP config, starting from the bytes the
 // earlier steps produced for that file (outputs) or from disk, and records
-// the file's original bytes in inputs for the diff and backup. It returns
+// the file's original bytes in inputs for the diff. It returns
 // the ledger of what it manages, or nil for a harness with no MCP config.
 func applyMCPServers(f fileHarness, r Rendered, env Env, out io.Writer, prior *mcpLedger, inputs, outputs map[string][]byte) (*mcpLedger, error) {
 	m, ok := f.(mcpConfig)

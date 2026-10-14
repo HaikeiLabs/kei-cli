@@ -164,7 +164,7 @@ type ApplyOpts struct {
 	DryRun bool
 	// Out receives the planned or applied changes; it must not be nil.
 	Out io.Writer
-	// Now stamps backups.
+	// Now stamps the backup a sync keeps of each file it changes.
 	Now time.Time
 }
 

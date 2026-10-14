@@ -48,10 +48,7 @@ func writeLedger(path string, ledger syncLedger) error {
 	if current, err := os.ReadFile(path); err == nil && bytes.Equal(current, b) {
 		return nil
 	}
-	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	return os.WriteFile(path, b, 0o600)
+	return writeFileAtomic(path, b)
 }
 
 // legacyLedgerHarness reads ledgers whose kind is not a registered file
@@ -86,14 +83,14 @@ func (r *Registry) RemoveLocal(env Env, id string) error {
 	if ledger.HarnessID == "" {
 		return nil
 	}
-	now := time.Now().UTC()
+	w := newSyncWrite(time.Now())
 	for target, record := range ledger.Files {
 		cfg, err := os.ReadFile(target)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
 		if err != nil {
-			return err
+			return w.rollback(err)
 		}
 		var cleaned []byte
 		if r.ownsFile(target) {
@@ -101,32 +98,31 @@ func (r *Registry) RemoveLocal(env Env, id string) error {
 				continue
 			}
 			if err := os.Remove(target); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return err
+				return w.rollback(err)
 			}
 			continue
 		}
 		cleaned, err = r.fileHarnessFor(ledger.Kind).removeManaged(cfg, record.AllowEntries, record.DenyEntries)
 		if err != nil {
-			return err
+			return w.rollback(err)
 		}
 		if bytes.Contains(cfg, []byte("--harness "+id)) {
 			cleaned, err = removeHookJSONEntries(cleaned, id)
 			if err != nil {
-				return err
+				return w.rollback(err)
 			}
 		}
 		if bytes.Equal(cfg, cleaned) {
 			continue
 		}
-		backup := target + ".kei-backup-" + now.Format("20060102T150405.000000000Z")
-		if err := os.WriteFile(backup, cfg, 0o600); err != nil {
-			return err
-		}
-		if err := os.WriteFile(target, cleaned, 0o600); err != nil {
-			return err
+		if err := w.write(target, cleaned); err != nil {
+			return w.rollback(err)
 		}
 	}
-	return os.Remove(path)
+	if err := os.Remove(path); err != nil {
+		return w.rollback(err)
+	}
+	return w.pruneEarlier()
 }
 
 func removeHookJSONEntries(config []byte, id string) ([]byte, error) {
@@ -191,6 +187,7 @@ func (r *Registry) ExpireEntries(env Env, now time.Time) error {
 		if ledger.NotAfter.After(now) {
 			continue
 		}
+		w := newSyncWrite(now)
 		for target, record := range ledger.Files {
 			if len(record.AllowEntries) == 0 {
 				continue
@@ -201,21 +198,20 @@ func (r *Registry) ExpireEntries(env Env, now time.Time) error {
 			}
 			cleaned, err := r.fileHarnessFor(ledger.Kind).removeManaged(cfg, record.AllowEntries, nil)
 			if err != nil {
-				return err
+				return w.rollback(err)
 			}
 			if bytes.Equal(cfg, cleaned) {
 				continue
 			}
-			backup := target + ".kei-backup-" + now.UTC().Format("20060102T150405.000000000Z")
-			if err := os.WriteFile(backup, cfg, 0o600); err != nil {
-				return err
-			}
-			if err := os.WriteFile(target, cleaned, 0o600); err != nil {
-				return err
+			if err := w.write(target, cleaned); err != nil {
+				return w.rollback(err)
 			}
 		}
 		ledger.NotAfter = time.Time{}
 		if err := writeLedger(path, ledger); err != nil {
+			return w.rollback(err)
+		}
+		if err := w.pruneEarlier(); err != nil {
 			return err
 		}
 	}
