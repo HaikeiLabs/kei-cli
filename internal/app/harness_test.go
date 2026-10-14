@@ -799,12 +799,16 @@ func TestHarnessSyncCheckDetectsAndSyncHealsStaleWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 	const token = "runtime-secret-hai416"
+	// The bundle is the same on every request: not_after is fixed once, so a
+	// request on the far side of a second boundary does not see a changed
+	// payload under the same bundle_version.
+	notAfter := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/runtime/whoami":
 			_, _ = w.Write([]byte(`{"id":"runtime-id","org_id":"org-id","platform":"cli"}`))
 		case "/api/v1/runtime/policy-bundles/current":
-			_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v1","bundle_id":"b","bundle_version":2,"policy_revision":1,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harness_match_semantics":"kei.harness-match/v1","harnesses":[],"policy_set":{"policies":[{"id":"p1","src_pattern":"*","dst_pattern":"shell:git","effect":"permit","enabled":true},{"id":"p2","src_pattern":"*","dst_pattern":"shell:rm","effect":"deny","enabled":true}]}}`))
+			_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v1","bundle_id":"b","bundle_version":2,"policy_revision":1,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + notAfter + `","harness_match_semantics":"kei.harness-match/v1","harnesses":[],"policy_set":{"policies":[{"id":"p1","src_pattern":"*","dst_pattern":"shell:git","effect":"permit","enabled":true},{"id":"p2","src_pattern":"*","dst_pattern":"shell:rm","effect":"deny","enabled":true}]}}`))
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
