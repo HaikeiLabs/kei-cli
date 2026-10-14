@@ -324,6 +324,14 @@ kei connectors create --workspace Main --kind mcp --template custom_mcp --label 
   --mcp-url https://mcp.grafana.example/mcp [--slug grafana_prod] [--expected-issuer https://login.example.com/tenant/v2.0]
 
 kei connectors list --workspace Main   # label, slug, kind, provider, state, account model, MCP URL
+kei connectors list --workspace Main --manifests   # adds each MCP connector's tool-manifest status
+
+# An MCP connector's tools come only from its approved tool manifest. The
+# runtime submits each manifest it observes as a candidate; review it here.
+# "tools" is an alias for "manifests".
+kei connectors manifests list CONNECTOR_ID --workspace Main
+kei connectors manifests show CONNECTOR_ID --workspace Main               # newest candidate, with its changes against the approved manifest
+kei connectors manifests show CONNECTOR_ID MANIFEST_ID --workspace Main
 kei connectors get CONNECTOR_ID --workspace Main   # http_api: base URL, methods, paths, auth header, secret ref; mcp: slug, MCP URL, issuer
 kei connectors delete CONNECTOR_ID --workspace Main --yes   # revokes the connector
 ```
@@ -336,6 +344,11 @@ and only the sealed copies are sent. The runtime stores the secret in the
 tenant secret manager, and the connector becomes connected when it does. To
 use a secret that is already in your secret manager, pass `--credential-ref
 REF` instead.
+
+`manifests show` prints the candidate's tools and its changes since the
+approved manifest: `+` added, `-` removed, `~` changed (description or
+inputSchema). Tool names and descriptions come from the MCP server, so the
+CLI replaces control characters in them before printing.
 
 An MCP connector's users connect their own accounts (OAuth, per user), so
 `create --template` sends no credential, capability or policy fields: only

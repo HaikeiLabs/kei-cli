@@ -103,7 +103,7 @@ type connector struct {
 
 func runConnectorsCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "connectors requires a subcommand: create, list, get, reconnect, or delete")
+		fmt.Fprintln(stderr, "connectors requires a subcommand: create, list, get, reconnect, delete, or manifests")
 		return 2
 	}
 	switch args[0] {
@@ -117,6 +117,8 @@ func runConnectorsCommand(args []string, stdout, stderr io.Writer, stdin io.Read
 		return runConnectorsReconnect(args[1:], stdout, stderr, stdin, client, store)
 	case "delete":
 		return runConnectorsDelete(args[1:], stdout, stderr, client, store)
+	case "manifests", "tools":
+		return runConnectorsManifests(args[1:], stdout, stderr, client, store)
 	default:
 		fmt.Fprintf(stderr, "unknown connectors command %q\n", args[0])
 		return 2
@@ -276,6 +278,7 @@ func runConnectorsList(args []string, stdout, stderr io.Writer, client *http.Cli
 	flags.SetOutput(stderr)
 	workspace := connectorWorkspaceFlag(flags)
 	jsonOutput := flags.Bool("json", false, "output as JSON")
+	withManifests := flags.Bool("manifests", false, "also show each mcp connector's tool-manifest status (one request per mcp connector)")
 	if id, err := parseConnectorFlags(flags, args); err != nil || id != "" {
 		fmt.Fprintln(stderr, "connectors list accepts no positional arguments")
 		return 2
@@ -307,13 +310,28 @@ func runConnectorsList(args []string, stdout, stderr io.Writer, client *http.Cli
 		return 0
 	}
 	table := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(table, "ID\tNAME\tSLUG\tKIND\tPROVIDER\tSTATE\tACCOUNT MODEL\tMCP URL")
+	header := "ID\tNAME\tSLUG\tKIND\tPROVIDER\tSTATE\tACCOUNT MODEL\tMCP URL"
+	if *withManifests {
+		header += "\tMANIFEST"
+	}
+	fmt.Fprintln(table, header)
 	for _, c := range connectors {
 		label := c.DisplayName
 		if label == "" {
 			label = c.Name
 		}
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", c.ID, label, orDash(c.Slug), orDash(c.Kind), c.Provider, connectorState(c.Status), orDash(c.AccountModel), orDash(c.MCPURL))
+		row := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", c.ID, label, orDash(c.Slug), orDash(c.Kind), c.Provider, connectorState(c.Status), orDash(c.AccountModel), orDash(c.MCPURL))
+		if *withManifests {
+			status := "-"
+			if c.Kind == connectorKindMCP {
+				status = "unavailable"
+				if _, manifests, err := session.toolManifests(c.ID); err == nil {
+					status = manifestStatusColumn(manifests)
+				}
+			}
+			row += "\t" + status
+		}
+		fmt.Fprintln(table, row)
 	}
 	_ = table.Flush()
 	return 0
@@ -370,6 +388,13 @@ func runConnectorsGet(args []string, stdout, stderr io.Writer, client *http.Clie
 	}
 	if c.ExpectedIssuer != "" {
 		fmt.Fprintf(stdout, "Issuer:      %s\n", c.ExpectedIssuer)
+	}
+	if c.Kind == connectorKindMCP {
+		status := "unavailable"
+		if _, manifests, err := session.toolManifests(c.ID); err == nil {
+			status = manifestStatus(manifests)
+		}
+		fmt.Fprintf(stdout, "Manifest:    %s\n", status)
 	}
 	if len(c.Capabilities) > 0 {
 		names := make([]string, len(c.Capabilities))
