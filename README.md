@@ -315,8 +315,16 @@ kei connectors create --workspace Main --provider skills_repo --name org-skills 
   --base-url https://crm.example.com --methods GET,HEAD,POST,PATCH \
   --paths '/api/investors,/api/investors/*' --query limit,cursor --auth-header X-KEI-API-Key
 
-kei connectors list --workspace Main
-kei connectors get CONNECTOR_ID --workspace Main   # http_api: base URL, methods, paths, auth header, secret ref
+# Remote MCP server, from a catalog connector template. The template's kind
+# (read from the catalog) picks the path; --kind mcp only checks it. The slug
+# defaults to one derived from --label and cannot be changed later. Pass
+# --mcp-url when the template has no URL, and --expected-issuer to pin the
+# OAuth authorization server the MCP server must use.
+kei connectors create --workspace Main --kind mcp --template custom_mcp --label "Grafana (prod)" \
+  --mcp-url https://mcp.grafana.example/mcp [--slug grafana_prod] [--expected-issuer https://login.example.com/tenant/v2.0]
+
+kei connectors list --workspace Main   # label, slug, kind, provider, state, account model, MCP URL
+kei connectors get CONNECTOR_ID --workspace Main   # http_api: base URL, methods, paths, auth header, secret ref; mcp: slug, MCP URL, issuer
 kei connectors delete CONNECTOR_ID --workspace Main --yes   # revokes the connector
 ```
 
@@ -328,6 +336,15 @@ and only the sealed copies are sent. The runtime stores the secret in the
 tenant secret manager, and the connector becomes connected when it does. To
 use a secret that is already in your secret manager, pass `--credential-ref
 REF` instead.
+
+An MCP connector's users connect their own accounts (OAuth, per user), so
+`create --template` sends no credential, capability or policy fields: only
+the template, the label, and the optional slug, MCP URL and expected issuer.
+`--template` cannot be combined with `--provider` or the provider path's
+flags. If the catalog accepts a create but does not store
+`--expected-issuer` (a catalog that predates it), the CLI deletes the
+connector it just created and fails, rather than leave one that would trust
+any authorization server.
 
 An `http_api` connector's methods choose its capabilities: each allowed method
 declares the connector contract's `http.<method>` capability, so `POST` and
