@@ -118,7 +118,7 @@ func runConnectorsCommand(args []string, stdout, stderr io.Writer, stdin io.Read
 	case "delete":
 		return runConnectorsDelete(args[1:], stdout, stderr, client, store)
 	case "manifests", "tools":
-		return runConnectorsManifests(args[1:], stdout, stderr, client, store)
+		return runConnectorsManifests(args[1:], stdout, stderr, stdin, client, store)
 	default:
 		fmt.Fprintf(stderr, "unknown connectors command %q\n", args[0])
 		return 2
