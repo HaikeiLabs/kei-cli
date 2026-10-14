@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -35,10 +35,13 @@ type fileHarness interface {
 }
 
 // applyFiles renders r into f's target files: it strips the entries the
-// previous sync wrote, merges the new ones and the audit hook, backs up and
-// rewrites each changed file, and records what it manages in the ledger.
-// Entries the previous sync wrote that another writer has since removed are
-// restored, and the returned Result says how many.
+// previous sync wrote, merges the new ones and the audit hook, rewrites each
+// changed file atomically, and records what it manages in the ledger. Each
+// changed file keeps one backup, holding it from before the sync; the
+// backups an earlier sync kept are removed once this one succeeds, and a
+// failed write rolls back every file the sync wrote. Entries the previous
+// sync wrote that another writer has since removed are restored, and the
+// returned Result says how many.
 func applyFiles(f fileHarness, r Rendered, opts ApplyOpts) (Result, error) {
 	targets, err := f.Targets(opts.Env)
 	if err != nil {
@@ -55,10 +58,10 @@ func applyFiles(f fileHarness, r Rendered, opts ApplyOpts) (Result, error) {
 		return Result{}, fmt.Errorf("bundle payload changed without a version increase")
 	}
 	ledger := syncLedger{HarnessID: f.Kind(), Kind: f.Kind(), Bundle: r.BundleVersion, Digest: r.BundleDigest, NotAfter: r.NotAfter, Files: map[string]fileLedger{}, Skills: prior.Skills}
-	// inputs holds each file's bytes as they are on disk: the diff, the
-	// no-change check and the backup compare against them. stripped holds
-	// the same files with the previous sync's entries removed, which is
-	// what the render merges into (HAI-508).
+	// inputs holds each file's bytes as they are on disk: the diff and the
+	// no-change check compare against them. stripped holds the same files
+	// with the previous sync's entries removed, which is what the render
+	// merges into (HAI-508).
 	inputs := map[string][]byte{}
 	stripped := map[string][]byte{}
 	reapplied := 0
@@ -115,8 +118,16 @@ func applyFiles(f fileHarness, r Rendered, opts ApplyOpts) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	for path, managed := range outputs {
-		cfg := inputs[path]
+	paths := make([]string, 0, len(outputs))
+	for path := range outputs {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	w := newSyncWrite(opts.Now)
+	// planned are the files a dry run would back up.
+	planned := map[string]string{}
+	for _, path := range paths {
+		cfg, managed := inputs[path], outputs[path]
 		if _, target := allows[path]; target {
 			digest := sha256.Sum256(managed)
 			ledger.Files[path] = fileLedger{Hash: hex.EncodeToString(digest[:]), Content: managed, AllowEntries: allows[path], DenyEntries: denies[path]}
@@ -125,25 +136,27 @@ func applyFiles(f fileHarness, r Rendered, opts ApplyOpts) (Result, error) {
 			continue
 		}
 		printHarnessDiff(opts.Out, path, cfg, managed)
+		if _, err := os.Lstat(path); err == nil {
+			planned[path] = ""
+		}
 		if !opts.DryRun {
-			if len(cfg) > 0 {
-				backup := path + ".kei-backup-" + opts.Now.UTC().Format("20060102T150405.000000000Z")
-				if err := os.WriteFile(backup, cfg, 0o600); err != nil {
-					return Result{}, err
-				}
-			}
-			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-				return Result{}, err
-			}
-			if err := os.WriteFile(path, managed, 0o600); err != nil {
-				return Result{}, err
+			if err := w.write(path, managed); err != nil {
+				return Result{}, w.rollback(err)
 			}
 		}
 	}
 	if !opts.DryRun {
 		if err := writeLedger(ledgerPath, ledger); err != nil {
-			return Result{}, err
+			return Result{}, w.rollback(err)
 		}
+		planned = w.fresh()
+	}
+	managedFiles := paths
+	for path := range prior.Files {
+		managedFiles = append(managedFiles, path)
+	}
+	if err := pruneFileBackups(managedFiles, planned, opts.DryRun, opts.Out); err != nil {
+		return Result{}, fmt.Errorf("remove earlier Kei backups: %w", err)
 	}
 	var result Result
 	if reapplied > 0 {

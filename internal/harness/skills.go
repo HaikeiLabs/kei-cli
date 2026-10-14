@@ -40,7 +40,7 @@ type SkillsOpts struct {
 	DryRun bool
 	// Out receives the plan; it must not be nil.
 	Out io.Writer
-	// Now stamps backups.
+	// Now stamps the skill backups.
 	Now time.Time
 }
 
@@ -154,8 +154,9 @@ const (
 // copies of skills no longer permitted. A skill dir entry Kei did not
 // install is never touched: a listed skill of the same name is skipped with
 // a warning. Archives are verified against their digest and extracted
-// atomically (a temp dir beside the target, then a rename); every replaced
-// or removed copy is backed up under the ledger dir.
+// atomically (a temp dir beside the target, then a rename). Every replaced
+// or removed copy is backed up under the ledger dir, and each skill keeps
+// only its newest backup once the harness's skills sync succeeds.
 func InstallSkills(ctx context.Context, sources []SkillSource, b Bundle, hs []Harness, opts SkillsOpts) (SkillsResult, error) {
 	var result SkillsResult
 	var set struct {
@@ -192,6 +193,7 @@ func InstallSkills(ctx context.Context, sources []SkillSource, b Bundle, hs []Ha
 		if len(dirs) == 0 {
 			continue
 		}
+		in.fresh = map[string]string{}
 		var desired []catalogSkill
 		for _, name := range names {
 			entry := catalog[name]
@@ -206,6 +208,9 @@ func InstallSkills(ctx context.Context, sources []SkillSource, b Bundle, hs []Ha
 				return result, err
 			}
 		}
+		if err := pruneSkillBackups(opts.Env, h.Kind(), in.fresh, opts.DryRun, opts.Out); err != nil {
+			return result, fmt.Errorf("remove earlier Kei skill backups: %w", err)
+		}
 	}
 	return result, nil
 }
@@ -214,6 +219,9 @@ func InstallSkills(ctx context.Context, sources []SkillSource, b Bundle, hs []Ha
 type skillInstaller struct {
 	opts     SkillsOpts
 	archives map[string]providers.SkillsRepoArchive
+	// fresh maps each skill of the current harness that was backed up to
+	// its backup (empty on a dry run, where the backup is only planned).
+	fresh map[string]string
 }
 
 // fetch returns the verified archive of entry's skill.
@@ -310,6 +318,11 @@ func (in *skillInstaller) syncDir(ctx context.Context, h Harness, dir string, de
 
 	printSkillPlan(opts.Out, harnessDisplayName(h), dir, opts.DryRun, actions)
 	if opts.DryRun {
+		for _, action := range actions {
+			if action.verb == skillUpdate || action.verb == skillRemove {
+				in.fresh[action.name] = ""
+			}
+		}
 		// The plan must name updates correctly, so fetch is allowed, but
 		// nothing below writes.
 		return warnings, nil
@@ -380,7 +393,8 @@ func printSkillPlan(out io.Writer, harnessName, dir string, dryRun bool, actions
 }
 
 // place extracts archive into a temp dir beside the target and renames it
-// into place, backing up and replacing the previous Kei-managed copy.
+// into place, backing up and replacing the previous Kei-managed copy. The
+// previous copy is restored, and its fresh backup deleted, if that fails.
 func (in *skillInstaller) place(kind, dir string, action skillAction, archive providers.SkillsRepoArchive) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -399,35 +413,53 @@ func (in *skillInstaller) place(kind, dir string, action skillAction, archive pr
 	if action.verb == skillInstall {
 		return os.Rename(tmp, action.target)
 	}
-	if err := in.backup(kind, action); err != nil {
+	backup, err := in.backup(kind, action)
+	if err != nil {
 		return err
 	}
 	old := tmp + ".old"
 	if err := os.Rename(action.target, old); err != nil {
+		_ = os.RemoveAll(backup)
 		return err
 	}
 	if err := os.Rename(tmp, action.target); err != nil {
 		_ = os.Rename(old, action.target)
+		_ = os.RemoveAll(backup)
 		return err
 	}
+	in.fresh[action.name] = backup
 	return os.RemoveAll(old)
 }
 
-// remove backs up and deletes a Kei-managed copy.
+// remove backs up and deletes a Kei-managed copy. It is first moved aside
+// within the skill dir, so a failed delete never leaves a partial skill.
 func (in *skillInstaller) remove(kind string, action skillAction) error {
 	if _, err := os.Lstat(action.target); errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
-	if err := in.backup(kind, action); err != nil {
+	backup, err := in.backup(kind, action)
+	if err != nil {
 		return err
 	}
-	return os.RemoveAll(action.target)
+	aside, err := os.MkdirTemp(filepath.Dir(action.target), ".kei-skill-"+action.name+"-")
+	if err == nil {
+		if err = os.Rename(action.target, filepath.Join(aside, action.name)); err != nil {
+			_ = os.Remove(aside)
+		}
+	}
+	if err != nil {
+		_ = os.RemoveAll(backup)
+		return err
+	}
+	in.fresh[action.name] = backup
+	return os.RemoveAll(aside)
 }
 
 // backup copies a Kei-managed skill folder under the ledger dir, outside
-// every skill dir so the harness never loads a backup as a skill.
-func (in *skillInstaller) backup(kind string, action skillAction) error {
-	base := filepath.Join(ledgerDir(in.opts.Env), "skill-backups", kind, action.name+"-"+in.opts.Now.UTC().Format("20060102T150405.000000000Z"))
+// every skill dir so the harness never loads a backup as a skill, and
+// returns the copy's path.
+func (in *skillInstaller) backup(kind string, action skillAction) (string, error) {
+	base := filepath.Join(skillBackupsDir(in.opts.Env, kind), action.name+"-"+in.opts.Now.UTC().Format(backupStamp))
 	dst := base
 	for i := 1; ; i++ {
 		if _, err := os.Lstat(dst); errors.Is(err, os.ErrNotExist) {
@@ -435,7 +467,11 @@ func (in *skillInstaller) backup(kind string, action skillAction) error {
 		}
 		dst = fmt.Sprintf("%s-%d", base, i)
 	}
-	return copySkillTree(action.target, dst)
+	if err := copySkillTree(action.target, dst); err != nil {
+		_ = os.RemoveAll(dst)
+		return "", err
+	}
+	return dst, nil
 }
 
 // copySkillTree copies the folders and regular files under src to dst.
