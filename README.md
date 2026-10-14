@@ -332,6 +332,7 @@ kei connectors list --workspace Main --manifests   # adds each MCP connector's t
 kei connectors manifests list CONNECTOR_ID --workspace Main
 kei connectors manifests show CONNECTOR_ID --workspace Main               # newest candidate, with its changes against the approved manifest
 kei connectors manifests show CONNECTOR_ID MANIFEST_ID --workspace Main
+kei connectors manifests approve CONNECTOR_ID MANIFEST_ID --workspace Main   # org admins; shows the changes, then asks (or --yes)
 kei connectors get CONNECTOR_ID --workspace Main   # http_api: base URL, methods, paths, auth header, secret ref; mcp: slug, MCP URL, issuer
 kei connectors delete CONNECTOR_ID --workspace Main --yes   # revokes the connector
 ```
@@ -348,7 +349,10 @@ REF` instead.
 `manifests show` prints the candidate's tools and its changes since the
 approved manifest: `+` added, `-` removed, `~` changed (description or
 inputSchema). Tool names and descriptions come from the MCP server, so the
-CLI replaces control characters in them before printing.
+CLI replaces control characters in them before printing. `manifests approve`
+needs the manifest's ID (it never picks one), prints the same changes, and
+asks before calling the catalog's `:approve` method; pass `--yes` in scripts.
+Approving a candidate replaces the connector's current approval.
 
 An MCP connector's users connect their own accounts (OAuth, per user), so
 `create --template` sends no credential, capability or policy fields: only

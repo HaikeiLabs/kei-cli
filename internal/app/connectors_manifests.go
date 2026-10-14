@@ -42,10 +42,10 @@ const (
 )
 
 // runConnectorsManifests serves kei connectors manifests (alias tools):
-// list and show a connector's tool manifests.
-func runConnectorsManifests(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
+// list and show a connector's tool manifests, and approve one.
+func runConnectorsManifests(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "connectors manifests requires a subcommand: list or show")
+		fmt.Fprintln(stderr, "connectors manifests requires a subcommand: list, show, or approve")
 		return 2
 	}
 	switch args[0] {
@@ -53,6 +53,8 @@ func runConnectorsManifests(args []string, stdout, stderr io.Writer, client *htt
 		return runConnectorsManifestsList(args[1:], stdout, stderr, client, store)
 	case "show":
 		return runConnectorsManifestsShow(args[1:], stdout, stderr, client, store)
+	case "approve":
+		return runConnectorsManifestsApprove(args[1:], stdout, stderr, stdin, client, store)
 	default:
 		fmt.Fprintf(stderr, "unknown connectors manifests command %q\n", args[0])
 		return 2
@@ -195,19 +197,88 @@ func runConnectorsManifestsShow(args []string, stdout, stderr io.Writer, client 
 			return fail(err)
 		}
 	}
+	printManifestChanges(stdout, shown, all)
+	return 0
+}
+
+// printManifestChanges prints a candidate's changes since the connector's
+// approved manifest, if there is one.
+func printManifestChanges(w io.Writer, candidate toolManifest, all []toolManifest) {
 	approved, ok := findApprovedManifest(all)
 	if !ok {
-		fmt.Fprintln(stdout, "No manifest is approved yet: every tool above is new.")
-		return 0
+		fmt.Fprintln(w, "No manifest is approved yet: every tool above is new.")
+		return
 	}
-	fmt.Fprintf(stdout, "Changes since the approved manifest %s:\n", approved.ID)
-	changes := manifestChanges(approved, shown)
+	fmt.Fprintf(w, "Changes since the approved manifest %s:\n", approved.ID)
+	changes := manifestChanges(approved, candidate)
 	if len(changes) == 0 {
-		fmt.Fprintln(stdout, "  (none)")
+		fmt.Fprintln(w, "  (none)")
 	}
 	for _, line := range changes {
-		fmt.Fprintf(stdout, "  %s\n", line)
+		fmt.Fprintf(w, "  %s\n", line)
 	}
+}
+
+// runConnectorsManifestsApprove approves one candidate manifest with the
+// catalog's :approve custom method (ADR-036 §5.4 step 3). It shows the
+// manifest and its changes first and needs confirmation (--yes, or y at a
+// terminal). The console requires an organization administrator.
+func runConnectorsManifestsApprove(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
+	flags := flag.NewFlagSet("connectors manifests approve", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	workspace := connectorWorkspaceFlag(flags)
+	yes := flags.Bool("yes", false, "approve without prompting")
+	connectorID, manifestID, err := parseManifestArgs(flags, args, true)
+	if err == nil && manifestID == "" {
+		err = fmt.Errorf("takes a connector ID and the ID of the manifest to approve")
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "connectors manifests approve: %v\n", err)
+		return 2
+	}
+	ws, ok := requireConnectorWorkspace("manifests approve", *workspace, stderr)
+	if !ok {
+		return 2
+	}
+	session, ok := openConnectorSession("manifests approve", ws, stderr, client, store)
+	if !ok {
+		return 1
+	}
+	fail := func(err error) int {
+		fmt.Fprintf(stderr, "connectors manifests approve: %v\n", err)
+		return 1
+	}
+	memberPath := "/" + url.PathEscape(connectorID) + "/tool-manifests/" + url.PathEscape(manifestID)
+	payload, err := session.do(http.MethodGet, memberPath, nil)
+	if err != nil {
+		return fail(err)
+	}
+	var candidate toolManifest
+	if err := json.Unmarshal(payload, &candidate); err != nil {
+		return fail(fmt.Errorf("decode response: %w", err))
+	}
+	if candidate.Status == manifestStatusApproved {
+		fmt.Fprintf(stdout, "Manifest %s is already approved.\n", candidate.ID)
+		return 0
+	}
+	_, all, err := session.toolManifests(connectorID)
+	if err != nil {
+		return fail(err)
+	}
+	printToolManifest(stdout, candidate)
+	printManifestChanges(stdout, candidate, all)
+	if !confirmWrite(stdin, stderr, *yes, fmt.Sprintf("Approve manifest %s? Its %d tools become callable, and it replaces the current approval. Pass --yes to confirm without prompting.", candidate.ID, len(candidate.Tools))) {
+		return 2
+	}
+	payload, err = session.do(http.MethodPost, memberPath+":approve", nil)
+	if err != nil {
+		return fail(err)
+	}
+	var approved toolManifest
+	if err := json.Unmarshal(payload, &approved); err != nil {
+		return fail(fmt.Errorf("decode response: %w", err))
+	}
+	fmt.Fprintf(stdout, "Approved manifest %s (%d tools).\n", approved.ID, len(approved.Tools))
 	return 0
 }
 
