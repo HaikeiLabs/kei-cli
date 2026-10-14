@@ -50,7 +50,7 @@ type connectorPolicy struct {
 	DestructiveEnabled bool              `json:"destructive_enabled"`
 }
 
-// connectorCreateRequest is the body of POST /api/cli/connectors. It never
+// connectorCreateRequest is the body of POST /api/v1/data-connectors. It never
 // carries a secret value. A secret the CLI delivers (HAI-262) has no
 // credential_ref here: the catalog assigns the stored name.
 type connectorCreateRequest struct {
@@ -84,6 +84,11 @@ func (c connectorCreateRequest) contractMetadata(id, orgID, workspaceID, created
 type connector struct {
 	ID               string            `json:"id"`
 	Name             string            `json:"name"`
+	DisplayName      string            `json:"display_name"`
+	Slug             string            `json:"slug"`
+	Kind             string            `json:"kind"`
+	MCPURL           string            `json:"mcp_url"`
+	ExpectedIssuer   string            `json:"expected_issuer"`
 	Provider         string            `json:"provider"`
 	Status           string            `json:"status"`
 	CredentialSource string            `json:"credential_source"`
@@ -234,9 +239,20 @@ func (s *connectorSession) doPath(method, path string, body any) ([]byte, error)
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, fmt.Errorf("%s (HTTP %d)", connectorErrorMessage(payload), resp.StatusCode)
+		return nil, &connectorStatusError{StatusCode: resp.StatusCode, message: connectorErrorMessage(payload)}
 	}
 	return payload, nil
+}
+
+// connectorStatusError is a non-2xx answer from the console: the catalog's
+// message and the HTTP status.
+type connectorStatusError struct {
+	StatusCode int
+	message    string
+}
+
+func (e *connectorStatusError) Error() string {
+	return fmt.Sprintf("%s (HTTP %d)", e.message, e.StatusCode)
 }
 
 func connectorErrorMessage(payload []byte) string {
@@ -291,13 +307,13 @@ func runConnectorsList(args []string, stdout, stderr io.Writer, client *http.Cli
 		return 0
 	}
 	table := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(table, "ID\tNAME\tPROVIDER\tSTATE\tACCOUNT MODEL")
+	fmt.Fprintln(table, "ID\tNAME\tSLUG\tKIND\tPROVIDER\tSTATE\tACCOUNT MODEL\tMCP URL")
 	for _, c := range connectors {
-		model := c.AccountModel
-		if model == "" {
-			model = "-"
+		label := c.DisplayName
+		if label == "" {
+			label = c.Name
 		}
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n", c.ID, c.Name, c.Provider, connectorState(c.Status), model)
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", c.ID, label, orDash(c.Slug), orDash(c.Kind), c.Provider, connectorState(c.Status), orDash(c.AccountModel), orDash(c.MCPURL))
 	}
 	_ = table.Flush()
 	return 0
@@ -338,7 +354,23 @@ func runConnectorsGet(args []string, stdout, stderr io.Writer, client *http.Clie
 	if c.AccountModel != "" {
 		credential += " (" + c.AccountModel + ")"
 	}
-	fmt.Fprintf(stdout, "ID:          %s\nName:        %s\nProvider:    %s\nState:       %s (%s)\nCredential:  %s\n", c.ID, c.Name, c.Provider, connectorState(c.Status), c.Status, credential)
+	fmt.Fprintf(stdout, "ID:          %s\nName:        %s\n", c.ID, c.Name)
+	if c.DisplayName != "" {
+		fmt.Fprintf(stdout, "Label:       %s\n", c.DisplayName)
+	}
+	if c.Slug != "" {
+		fmt.Fprintf(stdout, "Slug:        %s\n", c.Slug)
+	}
+	if c.Kind != "" {
+		fmt.Fprintf(stdout, "Kind:        %s\n", c.Kind)
+	}
+	fmt.Fprintf(stdout, "Provider:    %s\nState:       %s (%s)\nCredential:  %s\n", c.Provider, connectorState(c.Status), c.Status, credential)
+	if c.MCPURL != "" {
+		fmt.Fprintf(stdout, "MCP URL:     %s\n", c.MCPURL)
+	}
+	if c.ExpectedIssuer != "" {
+		fmt.Fprintf(stdout, "Issuer:      %s\n", c.ExpectedIssuer)
+	}
 	if len(c.Capabilities) > 0 {
 		names := make([]string, len(c.Capabilities))
 		for i, capability := range c.Capabilities {
@@ -504,7 +536,7 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	flags := flag.NewFlagSet("connectors create", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	workspace := connectorWorkspaceFlag(flags)
-	providerFlag := flags.String("provider", "", "provider: gmail, google_drive, linear, github, tito, skills_repo, crm, or http_api")
+	providerFlag := flags.String("provider", "", "provider: gmail, google_drive, linear, github, tito, skills_repo, crm, or http_api (or --template for a catalog template such as an MCP server)")
 	name := flags.String("name", "", "connector name (letters, digits, and . _ : / -)")
 	accountModelFlag := flags.String("account-model", "", "OAuth account model: per_user, shared, or domain_delegation (gmail, google_drive); skills_repo takes per_user, or --credential-ref instead")
 	values := setupValues{}
@@ -512,6 +544,7 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	credentialRef := flags.String("credential-ref", "", "existing secret-manager reference for the provider's secret field")
 	capabilitiesFlag := flags.String("capabilities", "", "comma-separated capabilities (default: the provider's read capabilities)")
 	httpAPI := registerHTTPAPIFlags(flags)
+	fromTemplate := registerTemplateCreateFlags(flags)
 	jsonOutput := flags.Bool("json", false, "output as JSON")
 	if id, err := parseConnectorFlags(flags, args); err != nil || id != "" {
 		fmt.Fprintln(stderr, "connectors create accepts no positional arguments")
@@ -520,6 +553,12 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	ws, ok := requireConnectorWorkspace("create", *workspace, stderr)
 	if !ok {
 		return 2
+	}
+	if !checkCreateFlagPaths(flags, stderr) {
+		return 2
+	}
+	if *fromTemplate.template != "" {
+		return runConnectorsCreateFromTemplate(fromTemplate, *name, ws, *jsonOutput, stdout, stderr, client, store)
 	}
 	provider := contract.Provider(*providerFlag)
 	if !slices.Contains(offeredConnectorProviders, provider) {
