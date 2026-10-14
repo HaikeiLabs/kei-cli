@@ -17,7 +17,6 @@ type annotationCase struct {
 	Policies  []bundlePolicy       `json:"policies"`
 	Expected  []annotationExpected `json:"expected"`
 	Formatted []string             `json:"formatted"`
-	Request   *annotationRequest   `json:"request,omitempty"`
 }
 
 type annotationExpected struct {
@@ -25,13 +24,6 @@ type annotationExpected struct {
 	Resource  string            `json:"resource"`
 	Harnesses harnessesSelector `json:"harnesses"`
 	By        string            `json:"by"`
-}
-
-type annotationRequest struct {
-	UserEmail      string `json:"user_email"`
-	Harness        string `json:"harness"`
-	Resource       string `json:"resource"`
-	ExpectedWinner string `json:"expected_winner"`
 }
 
 type harnessesSelector struct {
@@ -174,25 +166,8 @@ func testExceptAnnotation(t *testing.T, kind, harnessID string, subject *BundleS
 	denyEntry := nativeEntryFor(syntaxFor(kind), override.DstPattern)
 
 	if !overrideApplies(override.SrcPattern, kind, harnessID, subject) {
-		// The override names another harness or principal: it is not
-		// rendered. Another harness's deny leaves the target allowed; a
-		// person's deny the renderer skipped still decides first, so an
-		// overlapping lower target is withheld (HAI-447).
-		if contains(r.Denies, denyEntry) {
-			t.Errorf("override src %q does not apply on %s but deny %q rendered: Denies=%v",
-				override.SrcPattern, kind, denyEntry, r.Denies)
-		}
-		targetEntry := nativeEntryFor(syntaxFor(kind), target.DstPattern)
-		_, human := harnessmatch.MatchSrc(override.SrcPattern, harnessmatch.Call{Kind: kind})
-		if human && blockedBySkippedDeny(target, []bundlePolicy{*override}) {
-			if contains(r.Allows, targetEntry) || !contains(r.PermitsWithheld, policyDisplayName(target)) {
-				t.Errorf("skipped deny %q precedes target: want %q withheld, got Allows=%v Withheld=%v", override.ID, targetEntry, r.Allows, r.PermitsWithheld)
-			}
-			return
-		}
-		if !contains(r.Allows, targetEntry) {
-			t.Errorf("expected target allow %q in %s Allows=%v", targetEntry, kind, r.Allows)
-		}
+		// The override names another harness or principal: it is not rendered.
+		assertOverrideNotRendered(t, kind, *override, target, r)
 		return
 	}
 
@@ -225,10 +200,9 @@ func testNeverAnnotation(t *testing.T, kind, harnessID string, subject *BundleSu
 	denyEntry := nativeEntryFor(syntaxFor(kind), override.DstPattern)
 
 	if !overrideApplies(override.SrcPattern, kind, harnessID, subject) {
-		if contains(r.Denies, denyEntry) {
-			t.Errorf("override src %q does not apply on %s but deny %q rendered: Denies=%v",
-				override.SrcPattern, kind, denyEntry, r.Denies)
-		}
+		// A never-annotation only shadows the target on the harnesses the
+		// override names; elsewhere the override is not rendered.
+		assertOverrideNotRendered(t, kind, *override, findTargetPolicy(policies), r)
 		return
 	}
 
@@ -243,6 +217,32 @@ func testNeverAnnotation(t *testing.T, kind, harnessID string, subject *BundleSu
 	if !contains(r.Denies, denyEntry) {
 		t.Errorf("expected shadowing deny %q for resource %q in %s Denies=%v",
 			denyEntry, exp.Resource, kind, r.Denies)
+	}
+}
+
+// assertOverrideNotRendered checks a render where the override does not apply.
+// Its deny must not render. Another harness's deny leaves the target allowed;
+// a person's deny the renderer skipped still decides first, so an overlapping
+// lower target is withheld instead (the ADR-029 soundness rule, HAI-447).
+func assertOverrideNotRendered(t *testing.T, kind string, override, target bundlePolicy, r Rendered) {
+	t.Helper()
+	denyEntry := nativeEntryFor(syntaxFor(kind), override.DstPattern)
+	if contains(r.Denies, denyEntry) {
+		t.Errorf("override src %q does not apply on %s but deny %q rendered: Denies=%v",
+			override.SrcPattern, kind, denyEntry, r.Denies)
+	}
+	targetEntry := nativeEntryFor(syntaxFor(kind), target.DstPattern)
+	_, human := harnessmatch.MatchSrc(override.SrcPattern, harnessmatch.Call{Kind: kind})
+	if human && blockedBySkippedDeny(target, []bundlePolicy{override}) {
+		if contains(r.Allows, targetEntry) || !contains(r.PermitsWithheld, policyDisplayName(target)) {
+			t.Errorf("skipped deny %q precedes target: want %q withheld, got Allows=%v Withheld=%v",
+				override.ID, targetEntry, r.Allows, r.PermitsWithheld)
+		}
+		return
+	}
+	if !contains(r.Allows, targetEntry) {
+		t.Errorf("target allow %q should still render on %s (override %q does not name it), Allows=%v",
+			targetEntry, kind, override.SrcPattern, r.Allows)
 	}
 }
 
