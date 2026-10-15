@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -20,6 +21,30 @@ func TestCredentialStoreGet(t *testing.T) {
 	assertRequest(t, fake.only(t), http.MethodGet, credStorePath)
 	if !strings.Contains(stdout.String(), "aws-secrets-manager") {
 		t.Fatalf("get output = %s", stdout.String())
+	}
+}
+
+func TestCredentialStoreGetNeverPrintsSecretValue(t *testing.T) {
+	const sentinel = "credential-store-secret-sentinel"
+	_, store := newProfileConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		_, _ = w.Write([]byte(`{"id":"cs-1","secret_backend":"aws-secrets-manager","secret_name_prefix":"kei/prod","version":3,"secret_value":"` + sentinel + `"}`))
+	})
+	var stdout, stderr bytes.Buffer
+	if code := runCredentialStoreGet(nil, &stdout, &stderr, http.DefaultClient, store); code != 0 {
+		t.Fatalf("get exit = %d, stderr=%s", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), sentinel) || strings.Contains(stderr.String(), sentinel) {
+		t.Fatalf("get output exposed secret value: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("get output is not JSON: %v; output=%q", err, stdout.String())
+	}
+	if _, ok := output["secret_value"]; ok {
+		t.Fatalf("get JSON exposed secret value field: %v", output)
+	}
+	if !strings.Contains(stdout.String(), `"secret_name_prefix":"kei/prod"`) {
+		t.Fatalf("get output omitted secret reference: %q", stdout.String())
 	}
 }
 
