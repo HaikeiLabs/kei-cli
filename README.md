@@ -276,6 +276,26 @@ kei workspaces list
 kei workspaces list --json
 ```
 
+Create a workspace (organization admins). The server records you as its
+creator and grants you initial membership:
+
+```sh
+kei workspaces create --name e2e --yes
+```
+
+Create a group in one workspace. `--workspace` is required, so a group never
+lands in the default workspace by omission:
+
+```sh
+kei groups create --name e2e-analysts --workspace e2e --description "connector e2e" --yes
+```
+
+List a workspace's groups, for example to find a group's ID by name:
+
+```sh
+kei groups list --workspace e2e --json
+```
+
 The CLI always targets the Kei production API at `https://app.haikeilabs.com`.
 Set the `KEI_WEB_URL` environment variable to override the endpoint for
 development and testing.
