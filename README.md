@@ -323,6 +323,14 @@ kei connectors create --workspace Main --provider skills_repo --name org-skills 
 kei connectors create --workspace Main --kind mcp --template custom_mcp --label "Grafana (prod)" \
   --mcp-url https://mcp.grafana.example/mcp [--slug grafana_prod] [--expected-issuer https://login.example.com/tenant/v2.0]
 
+# A remote MCP server that takes a static API key (template custom_mcp_api_key,
+# auth_method secret_ref): the key is read without echo, or from stdin, one
+# line per credential field, sealed to the workspace's runtimes and set before
+# anything else is sent. reconnect sets a new generation of each key.
+<secret-manager read> | kei connectors create --workspace Main --template custom_mcp_api_key --label "Internal tools" \
+  --mcp-url https://mcp.internal.example/mcp
+<secret-manager read> | kei connectors reconnect CONNECTOR_ID --workspace Main
+
 kei connectors list --workspace Main   # label, slug, kind, provider, state, account model, MCP URL
 kei connectors list --workspace Main --manifests   # adds each MCP connector's tool-manifest status
 
@@ -354,9 +362,14 @@ needs the manifest's ID (it never picks one), prints the same changes, and
 asks before calling the catalog's `:approve` method; pass `--yes` in scripts.
 Approving a candidate replaces the connector's current approval.
 
-An MCP connector's users connect their own accounts (OAuth, per user), so
+An OAuth MCP connector's users connect their own accounts (per user), so
 `create --template` sends no credential, capability or policy fields: only
 the template, the label, and the optional slug, MCP URL and expected issuer.
+A `secret_ref` template's connector holds one shared identity instead: the
+catalog names each secret in the workspace's credential store, and the CLI
+sets each of the template's credential fields with `:setSecret`, sealed like
+any other connector secret. It reads and seals them before creating the
+connector, so a missing secret or delivery recipient creates nothing.
 `--template` cannot be combined with `--provider` or the provider path's
 flags. If the catalog accepts a create but does not store
 `--expected-issuer` (a catalog that predates it), the CLI deletes the

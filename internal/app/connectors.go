@@ -469,6 +469,24 @@ func runConnectorsReconnect(args []string, stdout, stderr io.Writer, stdin io.Re
 		return fail(errors.New("users connect their own accounts through their chat harness"))
 	}
 
+	// A secret_ref MCP connector (HAI-583) reconnects with a new generation
+	// of each of its template's credential fields; :reconnect is OAuth only.
+	if current.Kind == connectorKindMCP && current.CredentialSource == string(contract.CredentialSourceOpaqueRef) {
+		template, err := session.connectorTemplate(current.Provider)
+		if err != nil {
+			return fail(err)
+		}
+		sealed, err := readAndSealTemplateSecrets(session, template, stdin, stdout)
+		if err != nil {
+			return fail(err)
+		}
+		if err := setSealedSecrets(session, id, sealed, stdout); err != nil {
+			return fail(err)
+		}
+		fmt.Fprintf(stdout, "Connector %s uses the new secrets once the runtime stores them.\n", id)
+		return 0
+	}
+
 	// A shared-secret connector reconnects with a replacement secret: a new
 	// generation, sealed and delivered like the first (HAI-262).
 	field, hasSecret := connectorSecretField(contract.Provider(current.Provider), contract.AccountModel(current.AccountModel))
@@ -583,7 +601,7 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 		return 2
 	}
 	if *fromTemplate.template != "" {
-		return runConnectorsCreateFromTemplate(fromTemplate, *name, ws, *jsonOutput, stdout, stderr, client, store)
+		return runConnectorsCreateFromTemplate(fromTemplate, *name, ws, *jsonOutput, stdin, stdout, stderr, client, store)
 	}
 	provider := contract.Provider(*providerFlag)
 	if !slices.Contains(offeredConnectorProviders, provider) {
