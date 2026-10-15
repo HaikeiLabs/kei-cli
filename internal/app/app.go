@@ -20,6 +20,7 @@ import (
 )
 
 const defaultKeiWebURL = "https://api.haikeilabs.com"
+const defaultRuntimeControlPlaneURL = "https://runtime.haikeilabs.com"
 
 const (
 	keychainService       = "kei"
