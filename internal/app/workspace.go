@@ -18,14 +18,16 @@ type workspaceInfo struct {
 	Name string `json:"name"`
 }
 
-func runWorkspaceCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
+func runWorkspaceCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "workspaces requires a subcommand: list")
+		fmt.Fprintln(stderr, "workspaces requires a subcommand: list or create")
 		return 2
 	}
 	switch args[0] {
 	case "list":
 		return runWorkspaceListCommand(args[1:], stdout, stderr, client, store)
+	case "create":
+		return runWorkspaceCreateCommand(args[1:], stdout, stderr, stdin, client, store)
 	default:
 		fmt.Fprintf(stderr, "unknown workspaces command %q\n", args[0])
 		return 2
@@ -76,6 +78,46 @@ func runWorkspaceListCommand(args []string, stdout, stderr io.Writer, client *ht
 	for _, w := range workspaces {
 		fmt.Fprintf(stdout, "  %s  %s\n", w.ID, w.Name)
 	}
+	return 0
+}
+
+// runWorkspaceCreateCommand creates a workspace in the CLI token's
+// organization. The body carries only the name: the server records the
+// authenticated caller as the creator and grants them initial membership.
+func runWorkspaceCreateCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
+	flags := flag.NewFlagSet("workspaces create", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	name := flags.String("name", "", "workspace name (required)")
+	jsonOutput := flags.Bool("json", false, "output as JSON")
+	yes := flags.Bool("yes", false, "confirm without prompting")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || strings.TrimSpace(*name) == "" {
+		fmt.Fprintln(stderr, "workspaces create requires --name NAME")
+		return 2
+	}
+	if !confirmWrite(stdin, stderr, *yes, "Create workspace "+*name+"?") {
+		return 2
+	}
+	session, ok := openAPISession("workspaces create", stderr, client, store)
+	if !ok {
+		return 1
+	}
+	_, payload, err := session.do(http.MethodPost, "/api/v1/organizations/"+url.PathEscape(session.orgID)+"/workspaces", nil, map[string]string{"name": *name})
+	if err != nil {
+		fmt.Fprintf(stderr, "workspaces create: %v\n", err)
+		return 1
+	}
+	var created workspaceInfo
+	if err := json.Unmarshal(payload, &created); err != nil || created.ID == "" {
+		fmt.Fprintln(stderr, "workspaces create: decode response: missing workspace id")
+		return 1
+	}
+	if *jsonOutput {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(created)
+		return 0
+	}
+	fmt.Fprintf(stdout, "Created workspace %s.\nWorkspace ID: %s\n", created.Name, created.ID)
 	return 0
 }
 

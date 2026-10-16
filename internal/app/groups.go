@@ -36,16 +36,126 @@ type catalogUser struct {
 
 func runGroupsCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "groups requires a subcommand: members")
+		fmt.Fprintln(stderr, "groups requires a subcommand: list, create or members")
 		return 2
 	}
 	switch args[0] {
+	case "list":
+		return runGroupsList(args[1:], stdout, stderr, client, store)
+	case "create":
+		return runGroupsCreate(args[1:], stdout, stderr, stdin, client, store)
 	case "members":
 		return runGroupsMembersCommand(args[1:], stdout, stderr, stdin, client, store)
 	default:
 		fmt.Fprintf(stderr, "unknown groups command %q\n", args[0])
 		return 2
 	}
+}
+
+// runGroupsList lists the groups of one workspace, so a script can find a
+// group's ID by name. --workspace is required, like groups create.
+func runGroupsList(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
+	flags := flag.NewFlagSet("groups list", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	workspace := flags.String("workspace", "", "workspace ID or name (required)")
+	jsonOutput := flags.Bool("json", false, "output as JSON")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || *workspace == "" {
+		fmt.Fprintln(stderr, "groups list requires --workspace WORKSPACE")
+		return 2
+	}
+	session, ok := openAPISession("groups list", stderr, client, store)
+	if !ok {
+		return 1
+	}
+	workspaceID, ok := resolveGroupsWorkspace("list", *workspace, session, stderr)
+	if !ok {
+		return 1
+	}
+	_, payload, err := session.do(http.MethodGet, "/api/v1/groups", groupsQuery(session, workspaceID), nil)
+	if err != nil {
+		fmt.Fprintf(stderr, "groups list: %v\n", err)
+		return 1
+	}
+	var groups []catalogGroup
+	if err := json.Unmarshal(payload, &groups); err != nil {
+		fmt.Fprintf(stderr, "groups list: decode response: %v\n", err)
+		return 1
+	}
+	if *jsonOutput {
+		type groupSummary struct {
+			ID          string `json:"id"`
+			Name        string `json:"name"`
+			Description string `json:"description,omitempty"`
+			Members     int    `json:"members"`
+		}
+		summaries := make([]groupSummary, 0, len(groups))
+		for _, g := range groups {
+			summaries = append(summaries, groupSummary{ID: g.ID, Name: g.Name, Description: g.Description, Members: len(g.Users)})
+		}
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(summaries)
+		return 0
+	}
+	if len(groups) == 0 {
+		fmt.Fprintln(stdout, "No groups found.")
+		return 0
+	}
+	table := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(table, "ID\tNAME\tMEMBERS")
+	for _, g := range groups {
+		fmt.Fprintf(table, "%s\t%s\t%d\n", g.ID, g.Name, len(g.Users))
+	}
+	_ = table.Flush()
+	return 0
+}
+
+// runGroupsCreate creates a group in one workspace. Unlike the members
+// commands, --workspace is required: a create never lands in the
+// organization's default workspace by omission.
+func runGroupsCreate(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
+	flags := flag.NewFlagSet("groups create", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	name := flags.String("name", "", "group name (required)")
+	description := flags.String("description", "", "group description")
+	workspace := flags.String("workspace", "", "workspace ID or name (required)")
+	jsonOutput := flags.Bool("json", false, "output as JSON")
+	yes := flags.Bool("yes", false, "confirm without prompting")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || *name == "" {
+		fmt.Fprintln(stderr, "groups create requires --name NAME and --workspace WORKSPACE")
+		return 2
+	}
+	if *workspace == "" {
+		fmt.Fprintln(stderr, "groups create requires --workspace WORKSPACE")
+		return 2
+	}
+	if !confirmWrite(stdin, stderr, *yes, "Create group "+*name+"?") {
+		return 2
+	}
+	session, ok := openAPISession("groups create", stderr, client, store)
+	if !ok {
+		return 1
+	}
+	workspaceID, ok := resolveGroupsWorkspace("create", *workspace, session, stderr)
+	if !ok {
+		return 1
+	}
+	_, payload, err := session.do(http.MethodPost, "/api/v1/groups", groupsQuery(session, workspaceID), map[string]string{"name": *name, "description": *description})
+	if err != nil {
+		fmt.Fprintf(stderr, "groups create: %v\n", err)
+		return 1
+	}
+	var created catalogGroup
+	if err := json.Unmarshal(payload, &created); err != nil || created.ID == "" {
+		fmt.Fprintln(stderr, "groups create: decode response: missing group id")
+		return 1
+	}
+	if *jsonOutput {
+		_, _ = stdout.Write(payload)
+		return 0
+	}
+	fmt.Fprintf(stdout, "Created group %s.\nGroup ID: %s\n", created.Name, created.ID)
+	return 0
 }
 
 func runGroupsMembersCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
