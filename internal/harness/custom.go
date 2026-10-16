@@ -16,5 +16,5 @@ func (custom) SkillDirs(Env) []string                  { return nil }
 func (custom) ImportRules(Env, string) ([]Rule, error) { return nil, ErrNoNativeStore }
 
 func (custom) Apply(context.Context, Rendered, ApplyOpts) (Result, error) {
-	return Result{Skipped: true, Notes: []string{"custom harness: skipped; no native allowlist (authorization is enforced by kei-proxy per ADR-011)."}}, nil
+	return Result{Skipped: true, Notes: []string{"custom harness: skipped; no native allowlist (authorization is enforced by kei-proxy per ADR-011). Use 'kei harness sync --manifest <file> --harness custom' to register tools."}}, nil
 }

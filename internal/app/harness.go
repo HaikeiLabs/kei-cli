@@ -416,6 +416,20 @@ func bundleFetchHint(detail string) string {
 	}
 }
 
+// toolDefinition captures the fields of a single tool in a tool-manifest/v2
+// document for --manifest dry-run listing and the eventual catalog PUT.
+type toolDefinition struct {
+	Name                 string   `json:"name"`
+	Route                string   `json:"route"`
+	Source               string   `json:"source,omitempty"`
+	RequiredCapabilities []string `json:"required_capabilities,omitempty"`
+	ResourceTypes        []string `json:"resource_types,omitempty"`
+	OperationClass       string   `json:"operation_class,omitempty"`
+	Service              string   `json:"service,omitempty"`
+	Description          string   `json:"description,omitempty"`
+	Enabled              *bool    `json:"enabled,omitempty"`
+}
+
 func runHarnessSync(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore, registry *harness.Registry) int {
 	defaultPath, err := defaultConfigPath()
 	if err != nil {
@@ -426,6 +440,7 @@ func runHarnessSync(args []string, stdout, stderr io.Writer, client *http.Client
 	flags.SetOutput(stderr)
 	configPath := flags.String("config", defaultPath, "runtime configuration path")
 	kindFilter := flags.String("harness", "", "only sync this harness kind")
+	manifestPath := flags.String("manifest", "", "path to a tool manifest JSON file (requires --harness custom)")
 	dryRun := flags.Bool("dry-run", false, "show changes without writing")
 	check := flags.Bool("check", false, "report drift between native config, the sync ledger and the current bundle; exit 1 on drift, 2 on error")
 	jsonOutput := flags.Bool("json", false, "with --check, print a machine-readable report ("+harness.DriftSchema+")")
@@ -454,9 +469,55 @@ func runHarnessSync(args []string, stdout, stderr io.Writer, client *http.Client
 		fmt.Fprintln(stderr, "harness sync: --check and --dry-run are mutually exclusive")
 		return 2
 	}
+	if *check && *manifestPath != "" {
+		fmt.Fprintln(stderr, "harness sync: --check and --manifest are mutually exclusive")
+		return 2
+	}
 	if _, ok := registry.Get(*kindFilter); *kindFilter != "" && !ok {
 		fmt.Fprintf(stderr, "--harness must be %s\n", harness.JoinOr(registry.Kinds()))
 		return 2
+	}
+	var manifestToolDefs []toolDefinition // populated by --manifest, used after config
+	if *manifestPath != "" {
+		if *kindFilter != "custom" {
+			fmt.Fprintln(stderr, "harness sync: --manifest requires --harness custom")
+			return 2
+		}
+		if _, err := os.Stat(*manifestPath); err != nil {
+			fmt.Fprintf(stderr, "harness sync: --manifest: %v\n", err)
+			return 2
+		}
+		data, err := os.ReadFile(*manifestPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "harness sync: --manifest: read: %v\n", err)
+			return 2
+		}
+		var raw struct {
+			Tools json.RawMessage `json:"tools"`
+		}
+		if err := json.Unmarshal(data, &raw); err != nil {
+			fmt.Fprintf(stderr, "harness sync: --manifest: invalid JSON: %v\n", err)
+			return 2
+		}
+		if len(raw.Tools) == 0 {
+			fmt.Fprintln(stderr, "harness sync: --manifest: missing 'tools' field")
+			return 2
+		}
+		if err := json.Unmarshal(raw.Tools, &manifestToolDefs); err != nil {
+			fmt.Fprintf(stderr, "harness sync: --manifest: 'tools' must be a JSON array: %v\n", err)
+			return 2
+		}
+		if len(manifestToolDefs) == 0 {
+			fmt.Fprintln(stderr, "harness sync: --manifest: tools array is empty; nothing to sync")
+			return 2
+		}
+		if *dryRun {
+			fmt.Fprintf(stdout, "Would sync %d tool(s) from %s:\n", len(manifestToolDefs), *manifestPath)
+			for _, t := range manifestToolDefs {
+				fmt.Fprintf(stdout, "  %s (%s)\n", t.Name, t.Route)
+			}
+			return 0
+		}
 	}
 	config, err := loadRuntimeConfig(*configPath)
 	if err != nil {
@@ -470,7 +531,64 @@ func runHarnessSync(args []string, stdout, stderr io.Writer, client *http.Client
 	if *check {
 		return checkHarnessDrift(context.Background(), config, *kindFilter, *jsonOutput, stdout, stderr, client, registry, harness.OSEnv(), time.Now)
 	}
+	if manifestToolDefs != nil {
+		return syncManifestTools(context.Background(), config, *manifestPath, manifestToolDefs, stdout, stderr, client)
+	}
 	return syncHarnessBundle(context.Background(), config, *kindFilter, *dryRun, stdout, stderr, client, registry, harness.OSEnv(), time.Now)
+}
+
+// syncManifestTools PUTs the --manifest tool definitions to the Kei catalog.
+// It exits 0 on success, 1 on server error, 2 on client error.
+func syncManifestTools(ctx context.Context, config runtimeConfig, manifestPath string, tools []toolDefinition, stdout, stderr io.Writer, client *http.Client) int {
+	body := struct {
+		Schema   string           `json:"schema"`
+		SyncMode string           `json:"sync_mode"`
+		Tools    []toolDefinition `json:"tools"`
+	}{
+		Schema:   "kei.tool-manifest/v2",
+		SyncMode: "full",
+		Tools:    tools,
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		fmt.Fprintf(stderr, "harness sync: encode manifest: %v\n", err)
+		return 2
+	}
+
+	endpoint := strings.TrimRight(config.ControlPlaneURL, "/") + "/api/v1/runtime/tools"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		fmt.Fprintf(stderr, "harness sync: create request: %v\n", err)
+		return 2
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+config.RuntimeToken)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Fprintf(stderr, "harness sync: %v\n", err)
+		return 1
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if err != nil {
+		fmt.Fprintf(stderr, "harness sync: read response: %v\n", err)
+		return 1
+	}
+
+	if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
+		fmt.Fprintf(stdout, "Synced %d tool(s) from %s to the Kei catalog.\n", len(tools), manifestPath)
+		return 0
+	}
+
+	msg := strings.TrimSpace(string(respBody))
+	if msg != "" {
+		fmt.Fprintf(stderr, "harness sync: %s\n", msg)
+	} else {
+		fmt.Fprintf(stderr, "harness sync: server returned HTTP %d\n", resp.StatusCode)
+	}
+	return 1
 }
 
 // checkHarnessDrift is `kei harness sync --check`: it compares each harness's
