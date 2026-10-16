@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -894,5 +895,247 @@ func TestHarnessSyncCheckFetchErrorExits2(t *testing.T) {
 	code := checkHarnessDrift(t.Context(), runtimeConfig{ControlPlaneURL: "http://example.com", RuntimeToken: "t"}, "", true, &stdout, &stderr, http.DefaultClient, harness.Default, harness.Env{Home: t.TempDir()}, time.Now)
 	if code != 2 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "require HTTPS") {
 		t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+// RED: --manifest flag parsing and validation (Step 1 of HAI-683).
+func TestHarnessSyncManifestValidation(t *testing.T) {
+	manifestDir := t.TempDir()
+	writeFile := func(name, content string) string {
+		p := filepath.Join(manifestDir, name)
+		if err := os.WriteFile(p, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	validFile := writeFile("valid.json", `{"schema":"kei.tool-manifest/v2","tools":[{"name":"x","route":"x"}]}`)
+	badJSON := writeFile("bad.json", `not json`)
+	emptyTools := writeFile("empty.json", `{"schema":"kei.tool-manifest/v2","tools":[]}`)
+	nonexistent := filepath.Join(manifestDir, "nope.json")
+
+	tests := []struct {
+		name string
+		args []string
+		code int
+		want string // substring expected in stderr
+	}{
+		{
+			name: "manifest without --harness",
+			args: []string{"--manifest", validFile},
+			code: 2,
+			want: "--manifest requires --harness custom",
+		},
+		{
+			name: "manifest with non-custom harness",
+			args: []string{"--manifest", validFile, "--harness", "claude_code"},
+			code: 2,
+			want: "--manifest requires --harness custom",
+		},
+		{
+			name: "manifest file not found",
+			args: []string{"--manifest", nonexistent, "--harness", "custom"},
+			code: 2,
+			want: "",
+		},
+		{
+			name: "manifest invalid JSON",
+			args: []string{"--manifest", badJSON, "--harness", "custom"},
+			code: 2,
+			want: "invalid JSON",
+		},
+		{
+			name: "manifest empty tools",
+			args: []string{"--manifest", emptyTools, "--harness", "custom"},
+			code: 2,
+			want: "empty",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := runHarnessSync(tc.args, &stdout, &stderr, nil, nil, harness.Default)
+			if code != tc.code {
+				t.Fatalf("exit=%d, want %d; stderr=%q", code, tc.code, stderr.String())
+			}
+			if tc.want != "" && !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr=%q should contain %q", stderr.String(), tc.want)
+			}
+		})
+	}
+}
+
+// RED: --dry-run with --manifest lists tools and makes no HTTP request (Step 2 of HAI-683).
+// Before implementation, this exits 1 because config loading runs and fails.
+// After implementation, it exits 0, lists tool names on stdout, and the httptest
+// server is never hit.
+func TestHarnessSyncManifestDryRun(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("dry-run must not make HTTP request, got: %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+
+	home := t.TempDir()
+	manifestFile := filepath.Join(home, "tools.json")
+	if err := os.WriteFile(manifestFile, []byte(`{"schema":"kei.tool-manifest/v2","tools":[{"name":"tool-a","route":"read"},{"name":"tool-b","route":"write"}]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Point --config at a non-existent file so the test fails fast if
+	// the dry-run path doesn't intercept before config loading.
+	nowhereConfig := filepath.Join(home, "nonexistent-config.yaml")
+
+	var stdout, stderr bytes.Buffer
+	code := runHarnessSync([]string{
+		"--manifest", manifestFile,
+		"--harness", "custom",
+		"--dry-run",
+		"--config", nowhereConfig,
+	}, &stdout, &stderr, server.Client(), nil, harness.Default)
+
+	out := stdout.String()
+	errStr := stderr.String()
+	if code != 0 {
+		t.Fatalf("dry-run exit=%d; stderr=%q; want exit=0 with tool names on stdout", code, errStr)
+	}
+	if !strings.Contains(out, "tool-a") || !strings.Contains(out, "tool-b") {
+		t.Fatalf("stdout should list tools; got=%q", out)
+	}
+	if !strings.Contains(out, "Would sync") {
+		t.Fatalf("stdout missing summary; got=%q", out)
+	}
+	if errStr != "" {
+		t.Fatalf("stderr should be empty; got=%q", errStr)
+	}
+}
+
+// RED/Step 3: --manifest with valid config PUTs to /api/v1/runtime/tools and
+// exits 0 on success. Before implementation, the code falls through to
+// syncHarnessBundle which hits the wrong endpoint.
+func TestHarnessSyncManifestSync(t *testing.T) {
+	const token = "my-secret-runtime-token"
+	manifestContent := `{"schema":"kei.tool-manifest/v2","tools":[{"name":"tool-a","route":"read"},{"name":"tool-b","route":"write"}]}`
+
+	var gotBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Fatalf("method = %s, want PUT", r.Method)
+		}
+		if r.URL.Path != "/api/v1/runtime/tools" {
+			t.Fatalf("path = %s, want /api/v1/runtime/tools", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer "+token {
+			t.Fatalf("Authorization = %q, want Bearer %s", got, token)
+		}
+		if got := r.Header.Get("Content-Type"); got != "application/json" {
+			t.Fatalf("Content-Type = %q, want application/json", got)
+		}
+		var err error
+		gotBody, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	home := t.TempDir()
+	configPath := filepath.Join(home, "config")
+	if err := saveRuntimeConfig(configPath, runtimeConfig{
+		ControlPlaneURL: server.URL,
+		RuntimeToken:    token,
+		HarnessURL:      "http://127.0.0.1:8088",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	manifestFile := filepath.Join(home, "tools.json")
+	if err := os.WriteFile(manifestFile, []byte(manifestContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runHarnessSync([]string{
+		"--manifest", manifestFile,
+		"--harness", "custom",
+		"--config", configPath,
+	}, &stdout, &stderr, server.Client(), nil, harness.Default)
+
+	out := stdout.String()
+	errStr := stderr.String()
+	if code != 0 {
+		t.Fatalf("exit=%d, want 0; stderr=%q", code, errStr)
+	}
+	if !strings.Contains(out, "Synced") {
+		t.Fatalf("stdout missing success msg; got=%q", out)
+	}
+	if strings.Contains(out, token) || strings.Contains(errStr, token) {
+		t.Fatalf("token leaked in output\nstdout=%q\nstderr=%q", out, errStr)
+	}
+
+	// Verify the PUT body matches the manifest.
+	var sent struct {
+		Schema   string           `json:"schema"`
+		SyncMode string           `json:"sync_mode"`
+		Tools    []toolDefinition `json:"tools"`
+	}
+	if err := json.Unmarshal(gotBody, &sent); err != nil {
+		t.Fatalf("decode sent body: %v", err)
+	}
+	if sent.Schema != "kei.tool-manifest/v2" {
+		t.Errorf("schema = %q, want kei.tool-manifest/v2", sent.Schema)
+	}
+	if sent.SyncMode != "full" {
+		t.Errorf("sync_mode = %q, want full", sent.SyncMode)
+	}
+	if len(sent.Tools) != 2 || sent.Tools[0].Name != "tool-a" || sent.Tools[1].Name != "tool-b" {
+		t.Errorf("tools = %+v", sent.Tools)
+	}
+}
+
+// RED/Step 3: on 400 the server's response body is surfaced to stderr and the
+// token never leaks.
+func TestHarnessSyncManifestSync400(t *testing.T) {
+	const token = "my-secret-runtime-token"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`tool validation failed: name is required`))
+	}))
+	defer server.Close()
+
+	home := t.TempDir()
+	configPath := filepath.Join(home, "config")
+	if err := saveRuntimeConfig(configPath, runtimeConfig{
+		ControlPlaneURL: server.URL,
+		RuntimeToken:    token,
+		HarnessURL:      "http://127.0.0.1:8088",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	manifestFile := filepath.Join(home, "tools.json")
+	if err := os.WriteFile(manifestFile, []byte(`{"schema":"kei.tool-manifest/v2","tools":[{"name":"","route":"x"}]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runHarnessSync([]string{
+		"--manifest", manifestFile,
+		"--harness", "custom",
+		"--config", configPath,
+	}, &stdout, &stderr, server.Client(), nil, harness.Default)
+
+	out := stdout.String()
+	errStr := stderr.String()
+	if code != 1 {
+		t.Fatalf("exit=%d, want 1; stderr=%q", code, errStr)
+	}
+	if !strings.Contains(errStr, "tool validation failed") {
+		t.Fatalf("stderr=%q should contain server message", errStr)
+	}
+	if out != "" {
+		t.Fatalf("stdout should be empty on error; got=%q", out)
+	}
+	if strings.Contains(out, token) || strings.Contains(errStr, token) {
+		t.Fatalf("token leaked in output\nstdout=%q\nstderr=%q", out, errStr)
 	}
 }
