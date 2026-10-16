@@ -314,6 +314,42 @@ func TestFetchHarnessBundleCarriesV2Subject(t *testing.T) {
 	}
 }
 
+func TestHarnessSyncV2PriorityPreventsSkippedDenyWithholding(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	configPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/runtime/whoami" {
+			_, _ = w.Write([]byte(`{"id":"runtime-id","org_id":"org-id","platform":"cli"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v2","bundle_id":"b","bundle_version":1,"policy_revision":1,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harness_match_semantics":"kei.harness-match/v1","harnesses":[],"subject":{"user_id":"usr-dev","email":"dev@example.com","groups":["dev"]},"policy_set":{"harness_policies":[{"policy_id":"p-permit","name":"Allow git status","priority":100,"src_pattern":"group:dev","dst_pattern":"shell:git status","action":"permit"},{"policy_id":"p-deny","name":"Block git","priority":10,"src_pattern":"group:ops","dst_pattern":"shell:git","action":"deny"}]}}`))
+	}))
+	defer server.Close()
+	var stdout, stderr bytes.Buffer
+	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "runtime-secret"}, "claude_code", false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now)
+	if code != 0 {
+		t.Fatalf("sync exit=%d stderr=%s", code, stderr.String())
+	}
+	updated, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// BUG (HAI-604): without Priority in the fold, both policies get priority 0
+	// and the skipped deny ("Block git" for group:ops) incorrectly precedes the
+	// permit ("Allow git status" for group:dev) at equal priority, withholding
+	// the permit. With the fix, priority 100 > 10 so the permit is rendered.
+	if !strings.Contains(string(updated), "Bash(git status:*)") {
+		t.Fatalf("v2 bundle with priority-100 permit and overlapping priority-10 skipped deny must render the permit; config:\n%s", updated)
+	}
+}
+
 func TestHarnessSyncFetchesBundleWritesManagedConfigWithBackupAndHook(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
