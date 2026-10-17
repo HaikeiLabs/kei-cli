@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/HaikeiLabs/kei-connector-contracts/contract"
 	"github.com/HaikeiLabs/kei-connector-contracts/setup"
@@ -43,6 +44,17 @@ var offeredConnectorProviders = []contract.Provider{
 
 // openConnectorConsentURL opens a shared connector's OAuth consent page.
 var openConnectorConsentURL = browser.OpenURL
+
+// connectPollSleep is the sleep between connection-status polls, overridden in tests.
+var connectPollSleep = time.Sleep
+
+// connectPollInterval is the delay between connection-status polls, overridden
+// in tests.
+var connectPollInterval = 2 * time.Second
+
+// connectPollMaxDuration is the total time to wait for a user to complete the
+// OAuth flow in the browser, overridden in tests.
+var connectPollMaxDuration = 10 * time.Minute
 
 type connectorPolicy struct {
 	AllowedActions     []contract.Action `json:"allowed_actions"`
@@ -103,7 +115,7 @@ type connector struct {
 
 func runConnectorsCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "connectors requires a subcommand: create, list, get, reconnect, delete, or manifests")
+		fmt.Fprintln(stderr, "connectors requires a subcommand: create, list, get, connect, reconnect, delete, or manifests")
 		return 2
 	}
 	switch args[0] {
@@ -113,6 +125,8 @@ func runConnectorsCommand(args []string, stdout, stderr io.Writer, stdin io.Read
 		return runConnectorsList(args[1:], stdout, stderr, client, store)
 	case "get":
 		return runConnectorsGet(args[1:], stdout, stderr, client, store)
+	case "connect":
+		return runConnectorsConnect(args[1:], stdout, stderr, client, store)
 	case "reconnect":
 		return runConnectorsReconnect(args[1:], stdout, stderr, stdin, client, store)
 	case "delete":
@@ -435,6 +449,81 @@ func runConnectorsGet(args []string, stdout, stderr io.Writer, client *http.Clie
 	return 0
 }
 
+func runConnectorsConnect(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
+	flags := flag.NewFlagSet("connectors connect", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	workspace := connectorWorkspaceFlag(flags)
+	noBrowser := flags.Bool("no-browser", false, "print the auth URL without opening a browser")
+	id, err := parseConnectorFlags(flags, args)
+	if err != nil {
+		return 2
+	}
+	ws, ok := requireConnectorWorkspace("connect", *workspace, stderr)
+	if !ok || !requireConnectorID("connect", id, stderr) {
+		return 2
+	}
+	session, ok := openConnectorSession("connect", ws, stderr, client, store)
+	if !ok {
+		return 1
+	}
+	fail := func(err error) int {
+		fmt.Fprintf(stderr, "connectors connect: %v\n", err)
+		return 1
+	}
+
+	payload, err := session.do(http.MethodPost, "/"+url.PathEscape(id)+":connect", nil)
+	if err != nil {
+		return fail(err)
+	}
+	var startResult struct {
+		AuthURL  string `json:"auth_url"`
+		Provider string `json:"provider"`
+	}
+	if err := json.Unmarshal(payload, &startResult); err != nil {
+		return fail(fmt.Errorf("decode response: %w", err))
+	}
+
+	fmt.Fprintf(stdout, "Connect your account for connector %s by approving access at:\n\n  %s\n\n", id, startResult.AuthURL)
+	if !*noBrowser {
+		_ = openConnectorConsentURL(startResult.AuthURL)
+	}
+
+	deadline := time.Now().Add(connectPollMaxDuration)
+	pollPath := "/" + url.PathEscape(id) + ":connect"
+	for {
+		payload, err := session.do(http.MethodGet, pollPath, nil)
+		if err != nil {
+			return fail(err)
+		}
+		var pollResult struct {
+			Status       string `json:"status"`
+			Scope        string `json:"scope,omitempty"`
+			AccountEmail string `json:"account_email,omitempty"`
+		}
+		if err := json.Unmarshal(payload, &pollResult); err != nil {
+			return fail(fmt.Errorf("decode poll response: %w", err))
+		}
+
+		if pollResult.Status == "connected" {
+			parts := []string{fmt.Sprintf("Status: %s", pollResult.Status)}
+			if pollResult.Scope != "" {
+				parts = append(parts, fmt.Sprintf("Scopes: %s", pollResult.Scope))
+			}
+			if pollResult.AccountEmail != "" {
+				parts = append(parts, fmt.Sprintf("Account: %s", pollResult.AccountEmail))
+			}
+			fmt.Fprintln(stdout, strings.Join(parts, " | "))
+			return 0
+		}
+
+		if time.Now().After(deadline) {
+			return fail(errors.New("timed out waiting for the user to authorize the connection"))
+		}
+		_, _ = fmt.Fprintf(stdout, "Status: %s\n", pollResult.Status)
+		connectPollSleep(connectPollInterval)
+	}
+}
+
 func runConnectorsReconnect(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("connectors reconnect", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -466,7 +555,7 @@ func runConnectorsReconnect(args []string, stdout, stderr io.Writer, stdin io.Re
 		return fail(fmt.Errorf("decode connector: %w", err))
 	}
 	if current.CredentialSource == string(contract.CredentialSourceOAuth) && current.AccountModel == string(contract.AccountModelPerUser) {
-		return fail(errors.New("users connect their own accounts through their chat harness"))
+		return fail(fmt.Errorf("this is a per-user connector; connect your own account with: kei connectors connect %s --workspace %s", id, ws))
 	}
 
 	// A shared-secret connector reconnects with a replacement secret: a new
@@ -687,7 +776,7 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	case request.CredentialSource == contract.CredentialSourceOAuth && model == contract.AccountModelShared:
 		fmt.Fprintf(stdout, "Next, connect the shared account: kei connectors reconnect %s --workspace %s\n", created.ID, ws)
 	case request.CredentialSource == contract.CredentialSourceOAuth:
-		fmt.Fprintln(stdout, "users connect their own accounts through their chat harness")
+		fmt.Fprintf(stdout, "Next, connect your account: kei connectors connect %s --workspace %s\n", created.ID, ws)
 	case secret != "":
 		fmt.Fprintf(stdout, "Secret %q sealed and queued for delivery (generation %d); the connector becomes connected when the runtime stores it.\n", secretField.Name, delivery.Generation)
 	default:

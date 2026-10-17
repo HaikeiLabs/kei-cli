@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/HaikeiLabs/kei-connector-contracts/contract"
 	"github.com/HaikeiLabs/kei-connector-contracts/setup"
@@ -212,7 +213,7 @@ func TestConnectorsListRendersStateAndIDs(t *testing.T) {
 
 func TestConnectorsRequireWorkspace(t *testing.T) {
 	fake, server, store := newFakeConsole(t, failOnRequest(t))
-	for _, args := range [][]string{{"list"}, {"get", testConnectorID}, {"delete", testConnectorID, "--yes"}, {"reconnect", testConnectorID}, {"create", "--provider", "linear", "--name", "x"}} {
+	for _, args := range [][]string{{"list"}, {"get", testConnectorID}, {"delete", testConnectorID, "--yes"}, {"reconnect", testConnectorID}, {"connect", testConnectorID}, {"create", "--provider", "linear", "--name", "x"}} {
 		code, _, stderr := runConnectors(t, server, store, "", args...)
 		if code != 2 || !strings.Contains(stderr, "--workspace") {
 			t.Errorf("%v: exit = %d stderr=%q, want 2 naming --workspace", args, code, stderr)
@@ -291,7 +292,7 @@ func TestConnectorsCreatePerUserOAuth(t *testing.T) {
 	if config, _ := req.Body["config"].(map[string]any); config["include_body"] != false {
 		t.Fatalf("config = %v, want the schema default include_body=false", req.Body["config"])
 	}
-	if !strings.Contains(stdout, testConnectorID) || !strings.Contains(stdout, "users connect their own accounts through their chat harness") {
+	if !strings.Contains(stdout, testConnectorID) || !strings.Contains(stdout, "kei connectors connect "+testConnectorID) {
 		t.Fatalf("stdout = %q", stdout)
 	}
 }
@@ -371,7 +372,7 @@ func TestConnectorsCreateSkillsRepoPerUserWithDefaults(t *testing.T) {
 	if scopes, _ := req.Body["scopes"].([]any); len(scopes) != 2 {
 		t.Fatalf("scopes = %v", req.Body["scopes"])
 	}
-	if !strings.Contains(stdout, testConnectorID) || !strings.Contains(stdout, "users connect their own accounts") {
+	if !strings.Contains(stdout, testConnectorID) || !strings.Contains(stdout, "kei connectors connect "+testConnectorID) {
 		t.Fatalf("stdout = %q", stdout)
 	}
 }
@@ -739,6 +740,147 @@ func TestConnectorsReconnectKeepSecretOnlyReactivates(t *testing.T) {
 	}
 }
 
+func TestConnectorsConnectFlow(t *testing.T) {
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.Path, ":connect") {
+			_, _ = w.Write([]byte(`{"auth_url":"https://auth.example.test/oauth?state=s","provider":"linear"}`))
+			return
+		}
+		if r.Method == http.MethodGet && strings.HasSuffix(r.Path, ":connect") {
+			_, _ = w.Write([]byte(`{"status":"connected","scope":"issue:read team:read","account_email":"user@example.com"}`))
+			return
+		}
+		w.WriteHeader(http.StatusTeapot)
+	})
+	store.token = workspaceTestToken()
+
+	code, stdout, stderr := runConnectors(t, server, store, "", "connect", testConnectorID, "--workspace", testWorkspaceID, "--no-browser")
+	if code != 0 {
+		t.Fatalf("exit = %d stderr=%s", code, stderr)
+	}
+	if !strings.Contains(stdout, "Connect your account") {
+		t.Fatalf("stdout missing connect prompt:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "https://auth.example.test/oauth?state=s") {
+		t.Fatalf("stdout missing auth URL:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "connected") || !strings.Contains(stdout, "issue:read team:read") || !strings.Contains(stdout, "user@example.com") {
+		t.Fatalf("stdout = %q", stdout)
+	}
+	if fake.count() != 2 {
+		t.Fatalf("requests = %d, want 2 (POST then GET): %#v", fake.count(), fake.requests)
+	}
+}
+
+func TestConnectorsConnectPollsUntilConnected(t *testing.T) {
+	pollCount := 0
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.Path, ":connect") {
+			_, _ = w.Write([]byte(`{"auth_url":"https://auth.example.test/oauth?state=s","provider":"linear"}`))
+			return
+		}
+		if r.Method == http.MethodGet && strings.HasSuffix(r.Path, ":connect") {
+			pollCount++
+			if pollCount < 3 {
+				_, _ = w.Write([]byte(`{"status":"pending"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"status":"connected","scope":"issue:read","account_email":"user@example.com"}`))
+			return
+		}
+		w.WriteHeader(http.StatusTeapot)
+	})
+	store.token = workspaceTestToken()
+
+	origSleep := connectPollSleep
+	connectPollSleep = func(d time.Duration) {}
+	defer func() { connectPollSleep = origSleep }()
+
+	code, stdout, stderr := runConnectors(t, server, store, "", "connect", testConnectorID, "--workspace", testWorkspaceID, "--no-browser")
+	if code != 0 {
+		t.Fatalf("exit = %d stderr=%s", code, stderr)
+	}
+	if pollCount != 3 {
+		t.Fatalf("poll count = %d, want 3", pollCount)
+	}
+	if fake.count() != 4 {
+		t.Fatalf("total requests = %d, want 4 (1 POST + 3 GETs)", fake.count())
+	}
+	if !strings.Contains(stdout, "connected") || !strings.Contains(stdout, "issue:read") {
+		t.Fatalf("stdout = %q", stdout)
+	}
+}
+
+func TestConnectorsConnect403(t *testing.T) {
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.Path, ":connect") {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"reason":"permission_denied","message":"you don't have access to this connector"}`))
+			return
+		}
+		w.WriteHeader(http.StatusTeapot)
+	})
+	store.token = workspaceTestToken()
+
+	code, _, stderr := runConnectors(t, server, store, "", "connect", testConnectorID, "--workspace", testWorkspaceID, "--no-browser")
+	if code != 1 || !strings.Contains(stderr, "403") {
+		t.Fatalf("exit = %d stderr=%q", code, stderr)
+	}
+	if fake.count() != 1 {
+		t.Fatalf("requests = %d, want 1", fake.count())
+	}
+}
+
+func TestConnectorsConnect400(t *testing.T) {
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.Path, ":connect") {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"reason":"invalid_argument","message":"this connector is not a per-user OAuth connector"}`))
+			return
+		}
+		w.WriteHeader(http.StatusTeapot)
+	})
+	store.token = workspaceTestToken()
+
+	code, _, stderr := runConnectors(t, server, store, "", "connect", testConnectorID, "--workspace", testWorkspaceID, "--no-browser")
+	if code != 1 || !strings.Contains(stderr, "400") {
+		t.Fatalf("exit = %d stderr=%q", code, stderr)
+	}
+	if fake.count() != 1 {
+		t.Fatalf("requests = %d, want 1", fake.count())
+	}
+}
+
+func TestConnectorsConnectTimeout(t *testing.T) {
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.Path, ":connect") {
+			_, _ = w.Write([]byte(`{"auth_url":"https://auth.example.test/oauth?state=s","provider":"linear"}`))
+			return
+		}
+		if r.Method == http.MethodGet && strings.HasSuffix(r.Path, ":connect") {
+			_, _ = w.Write([]byte(`{"status":"pending"}`))
+			return
+		}
+		w.WriteHeader(http.StatusTeapot)
+	})
+	store.token = workspaceTestToken()
+
+	origSleep := connectPollSleep
+	connectPollSleep = func(d time.Duration) {}
+	defer func() { connectPollSleep = origSleep }()
+	origTimeout := connectPollMaxDuration
+	connectPollMaxDuration = time.Millisecond
+	defer func() { connectPollMaxDuration = origTimeout }()
+
+	code, _, stderr := runConnectors(t, server, store, "", "connect", testConnectorID, "--workspace", testWorkspaceID, "--no-browser")
+	if code != 1 || !strings.Contains(stderr, "timed out") {
+		t.Fatalf("exit = %d stderr=%q", code, stderr)
+	}
+	if fake.count() < 2 {
+		t.Fatalf("requests = %d, want at least 2 (POST then at least 1 GET)", fake.count())
+	}
+}
+
 func TestConnectorsReconnectPerUserExplains(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
 		if r.Method == http.MethodGet {
@@ -750,7 +892,7 @@ func TestConnectorsReconnectPerUserExplains(t *testing.T) {
 	})
 	store.token = workspaceTestToken()
 	code, _, stderr := runConnectors(t, server, store, "", "reconnect", testConnectorID, "--workspace", testWorkspaceID)
-	if code != 1 || !strings.Contains(stderr, "users connect their own accounts through their chat harness") {
+	if code != 1 || !strings.Contains(stderr, "kei connectors connect "+testConnectorID) {
 		t.Fatalf("exit = %d stderr=%q", code, stderr)
 	}
 	if got := fake.only(t); got.Method != http.MethodGet || got.Path != "/api/v1/data-connectors/"+testConnectorID {
@@ -794,7 +936,7 @@ func TestConnectorsNotLoggedIn(t *testing.T) {
 func TestConnectorsUsageListsSubcommands(t *testing.T) {
 	var stdout bytes.Buffer
 	PrintUsage(&stdout)
-	if !strings.Contains(stdout.String(), "kei connectors create|list|get|reconnect|delete") {
+	if !strings.Contains(stdout.String(), "kei connectors create|list|get|connect|reconnect|delete") {
 		t.Fatalf("usage missing connectors:\n%s", stdout.String())
 	}
 }
