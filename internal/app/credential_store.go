@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 )
 
 type credentialStoreInstallation struct {
@@ -20,10 +21,34 @@ type credentialStoreInstallation struct {
 	UpdatedAt        string         `json:"updated_at"`
 }
 
+// credentialStoreSummary is the safe, metadata-only output of credential-store
+// get. In particular, backend_config is deliberately excluded because it may
+// contain provider credentials, and a backend response must never expose a
+// stored secret value through this command.
+type credentialStoreSummary struct {
+	ID               string `json:"id,omitempty"`
+	OrgID            string `json:"org_id,omitempty"`
+	SecretBackend    string `json:"secret_backend,omitempty"`
+	SecretNamePrefix string `json:"secret_name_prefix,omitempty"`
+	Status           string `json:"status,omitempty"`
+	Version          int    `json:"version,omitempty"`
+	CreatedAt        string `json:"created_at,omitempty"`
+	UpdatedAt        string `json:"updated_at,omitempty"`
+}
+
 type putCredentialStoreRequest struct {
 	SecretBackend    string            `json:"secret_backend"`
 	BackendConfig    map[string]string `json:"backend_config,omitempty"`
 	SecretNamePrefix string            `json:"secret_name_prefix,omitempty"`
+}
+
+// credentialStorePath is the organization's store, or with a workspace
+// session the workspace's override (ADR-036 §10 HAI-489 test 5).
+func credentialStorePath(session *orgSession) string {
+	if session.workspaceID != "" {
+		return session.orgPath("/workspaces/" + url.PathEscape(session.workspaceID) + "/credential-store")
+	}
+	return session.orgPath("/credential-store")
 }
 
 // fieldMask is an AIP-134 update mask.
@@ -43,7 +68,8 @@ type patchCredentialStoreRequest struct {
 
 // The credential store is the organization AIP resource
 // /api/v1/organizations/{org}/credential-store, reached through the console
-// proxy with the CLI bearer. The organization comes from the CLI token.
+// proxy with the CLI bearer. The organization comes from the CLI token. With
+// --workspace, get and put address the workspace's override instead.
 
 func runCredentialStoreCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	if len(args) == 0 {
@@ -75,16 +101,21 @@ func parseBackendConfig(command, raw string, stderr io.Writer) (map[string]strin
 func runCredentialStoreGet(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("credential-store get", flag.ContinueOnError)
 	flags.SetOutput(stderr)
+	workspace := flags.String("workspace", "", "workspace ID or name: read its override instead of the organization's store")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		fmt.Fprintln(stderr, "credential-store get takes no positional arguments")
 		return 2
 	}
-	session, ok := openOrgSession("credential-store get", "", stderr, client, store)
+	session, ok := openOrgSession("credential-store get", *workspace, stderr, client, store)
 	if !ok {
 		return 1
 	}
-	status, payload, err := session.do(http.MethodGet, session.orgPath("/credential-store"), nil, nil)
+	status, payload, err := session.do(http.MethodGet, credentialStorePath(session), nil, nil)
 	if status == http.StatusNotFound {
+		if session.workspaceID != "" {
+			fmt.Fprintln(stderr, "No credential store override for this workspace; it uses the organization's store.")
+			return 1
+		}
 		fmt.Fprintln(stderr, "No credential store configured.")
 		return 1
 	}
@@ -92,7 +123,24 @@ func runCredentialStoreGet(args []string, stdout, stderr io.Writer, client *http
 		fmt.Fprintf(stderr, "credential-store get: %v\n", err)
 		return 1
 	}
-	_, _ = stdout.Write(payload)
+	var installation credentialStoreInstallation
+	if err := json.Unmarshal(payload, &installation); err != nil {
+		fmt.Fprintf(stderr, "credential-store get: invalid response: %v\n", err)
+		return 1
+	}
+	// Print only the store reference and non-sensitive metadata, like cloud
+	// secret describe commands. Never forward the API response verbatim.
+	summary, err := json.Marshal(credentialStoreSummary{
+		ID: installation.ID, OrgID: installation.OrgID,
+		SecretBackend: installation.SecretBackend, SecretNamePrefix: installation.SecretNamePrefix,
+		Status: installation.Status, Version: installation.Version,
+		CreatedAt: installation.CreatedAt, UpdatedAt: installation.UpdatedAt,
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "credential-store get: encode response: %v\n", err)
+		return 1
+	}
+	_, _ = fmt.Fprintln(stdout, string(summary))
 	return 0
 }
 

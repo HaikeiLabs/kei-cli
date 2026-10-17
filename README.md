@@ -451,11 +451,17 @@ assigned in Entra. `set`, `enable`, and `disable` ask for confirmation; pass
 ## Manage model profiles and the credential store
 
 Model profiles and the credential store are organization resources in the
-Kei API (`/api/v1/organizations/{org}/...`). The organization is the one your
+Kei API (`/api/v1/organizations/{org}/...`). `kei credential-store` is an
+administrative kei CLI command; it calls the Kei API with your CLI login and is
+not a kei-proxy call. The organization is the one your
 `kei login` token is bound to. Pass `--workspace` (a name or ID) to work with a
 workspace's profiles; omit it for organization-level profiles. Profile
 arguments accept an ID or a display name; `--agent` takes an agent ID. Writes
 require an organization admin.
+
+`kei credential-store get` is read-only and prints only the store reference
+and metadata. It never prints stored secret values or backend configuration,
+matching `aws secretsmanager describe-secret` and `gcloud secrets describe`.
 
 ```sh
 # Configure the credential store once (PUT creates it), then change it (PATCH).
@@ -463,6 +469,13 @@ kei credential-store put --secret-backend aws-secrets-manager \
   --backend-config '{"region":"us-east-1","account_id":"123456789012"}' --secret-name-prefix kei
 kei credential-store update --secret-name-prefix kei-prod
 kei credential-store get
+
+# A workspace's own store (an override of the organization's): put --workspace
+# creates or replaces it from a full body; get --workspace reads it. Secrets of
+# the workspace's connectors and profiles then live there.
+kei credential-store put --workspace e2e --secret-backend aws-secrets-manager \
+  --backend-config '{"region":"us-east-1","account_id":"123456789012"}' --secret-name-prefix kei/e2e/store
+kei credential-store get --workspace e2e
 
 # A profile with no credential.
 kei model-profiles create --workspace Main --display-name local --endpoint https://llm.internal/v1 \
