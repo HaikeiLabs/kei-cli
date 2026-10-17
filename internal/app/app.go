@@ -549,7 +549,18 @@ func login(ctx context.Context, apiURL, clientName, version string, stdout io.Wr
 		}
 		orgID, _ := organizationIDFromCLIToken(exch.AccessToken)
 		if orgID != "" {
-			fmt.Fprintf(stdout, "Logged in to Kei for organization %s.\n", orgID)
+			orgName, err := getOrganizationName(ctx, client, baseURL, exch.AccessToken, orgID)
+			if err != nil {
+				// Fall back to today's line with the org ID.
+				fmt.Fprintf(stdout, "Logged in to Kei for organization %s.\n", orgID)
+				return nil
+			}
+			workspaces, wsErr := listWorkspaces(ctx, client, baseURL, exch.AccessToken)
+			if wsName := pickDefaultWorkspaceName(workspaces, wsErr); wsName != "" {
+				fmt.Fprintf(stdout, "Logged in to Kei for organization %s.\nWorkspace: %s\n", orgName, wsName)
+			} else {
+				fmt.Fprintf(stdout, "Logged in to Kei for organization %s.\n", orgName)
+			}
 		} else {
 			fmt.Fprintln(stdout, "Logged in to Kei.")
 		}
@@ -677,7 +688,18 @@ func legacyLogin(ctx context.Context, webURL, apiBaseURL, clientName string, std
 			if err := store.Save(apiBaseURL, poll.AccessToken); err != nil {
 				return fmt.Errorf("save CLI token in OS keychain: %w", err)
 			}
-			fmt.Fprintf(stdout, "Logged in to Kei for organization %s.\n", poll.OrgID)
+			orgName, err := getOrganizationName(ctx, client, apiBaseURL, poll.AccessToken, poll.OrgID)
+			if err != nil {
+				// Fall back to today's line with the org ID.
+				fmt.Fprintf(stdout, "Logged in to Kei for organization %s.\n", poll.OrgID)
+				return nil
+			}
+			workspaces, wsErr := listWorkspaces(ctx, client, apiBaseURL, poll.AccessToken)
+			if wsName := pickDefaultWorkspaceName(workspaces, wsErr); wsName != "" {
+				fmt.Fprintf(stdout, "Logged in to Kei for organization %s.\nWorkspace: %s\n", orgName, wsName)
+			} else {
+				fmt.Fprintf(stdout, "Logged in to Kei for organization %s.\n", orgName)
+			}
 			return nil
 		case "denied":
 			return errors.New("device approval was denied")
