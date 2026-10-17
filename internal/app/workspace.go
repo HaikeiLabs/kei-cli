@@ -122,16 +122,27 @@ func runWorkspaceCreateCommand(args []string, stdout, stderr io.Writer, stdin io
 	return 0
 }
 
-func pickDefaultWorkspaceName(workspaces []workspaceInfo, err error) string {
-	if err != nil || len(workspaces) == 0 {
-		return ""
+func pickDefaultWorkspace(workspaces []workspaceInfo) (workspaceInfo, bool) {
+	if len(workspaces) == 0 {
+		return workspaceInfo{}, false
 	}
 	for _, ws := range workspaces {
 		if ws.IsDefault {
-			return ws.Name
+			return ws, true
 		}
 	}
-	return workspaces[0].Name
+	return workspaces[0], true
+}
+
+func pickDefaultWorkspaceName(workspaces []workspaceInfo, err error) string {
+	if err != nil {
+		return ""
+	}
+	ws, ok := pickDefaultWorkspace(workspaces)
+	if !ok {
+		return ""
+	}
+	return ws.Name
 }
 
 func getOrganizationName(ctx context.Context, client *http.Client, baseURL, cliToken, orgID string) (string, error) {
