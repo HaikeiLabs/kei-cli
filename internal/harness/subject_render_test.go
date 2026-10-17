@@ -5,35 +5,49 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	policyapi "github.com/HaikeiLabs/kei-connector-contracts/policy"
 )
+
+// TestMatchPrincipalUserSchemePinsHAI609 verifies that user:<userID> matches
+// by user ID only (not email), per the shared contracts exact-match rule.
+// Use email:<addr> for email matching instead. This is fail-closed: a
+// user:<email> policy that previously matched a subject by email no longer
+// applies, forcing administrators to be explicit about the scheme.
+func TestMatchPrincipalUserSchemePinsHAI609(t *testing.T) {
+	s := &BundleSubject{UserID: "usr-fixture-dev", Email: "dev@example.com"}
+	if policyapi.MatchPrincipal("user:dev@example.com", s.UserID, s.Email, nil) {
+		t.Error("user:dev@example.com matched a subject whose user ID is usr-fixture-dev; user: matches user ID only, not email")
+	}
+	if !policyapi.MatchPrincipal("email:dev@example.com", s.UserID, s.Email, nil) {
+		t.Error("email:dev@example.com did not match a subject whose email is dev@example.com")
+	}
+}
 
 func TestBundleSubjectMatches(t *testing.T) {
 	s := &BundleSubject{UserID: "usr-fixture-dev", Email: "dev@example.com", Groups: []string{"admins", "release_eng"}}
 	for src, want := range map[string]bool{
 		"user:usr-fixture-dev":   true,
-		"user:dev@example.com":   true,
 		"email:dev@example.com":  true,
 		"group:release_eng":      true,
 		"group:admins":           true,
 		"user:usr-fixture-other": false,
+		"user:dev@example.com":   false,
 		"email:DEV@example.com":  false,
 		"group:members":          false,
 		"group:":                 false,
 		"user:":                  false,
 		"group:*":                false,
 		"org:admin":              false,
-		"*@example.com":          false,
 	} {
-		if got := s.matches(src); got != want {
-			t.Errorf("matches(%q)=%v want %v", src, got, want)
+		got := policyapi.MatchPrincipal(src, s.UserID, s.Email, s.Groups)
+		if got != want {
+			t.Errorf("MatchPrincipal(%q, %q, %q, %v)=%v want %v", src, s.UserID, s.Email, s.Groups, got, want)
 		}
 	}
-	var none *BundleSubject
-	if none.matches("user:usr-fixture-dev") {
-		t.Error("nil subject matched")
-	}
-	if (&BundleSubject{UserID: "usr-fixture-dev"}).matches("email:") {
-		t.Error("empty email matched an empty email: source")
+	// nil subject: MatchPrincipal with empty user/email/groups
+	if policyapi.MatchPrincipal("user:usr-fixture-dev", "", "", nil) {
+		t.Error("MatchPrincipal with empty identity matched")
 	}
 }
 

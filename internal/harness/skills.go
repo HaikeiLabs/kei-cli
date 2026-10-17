@@ -22,6 +22,7 @@ import (
 
 	"github.com/HaikeiLabs/kei-connector-contracts/contract"
 	"github.com/HaikeiLabs/kei-connector-contracts/harnessmatch"
+	policyapi "github.com/HaikeiLabs/kei-connector-contracts/policy"
 	"github.com/HaikeiLabs/kei-connector-contracts/providers"
 )
 
@@ -100,7 +101,7 @@ func skillPermitted(kind string, b Bundle, policies []bundlePolicy, name string)
 			effect = p.Action
 		}
 		src := p.SrcPattern
-		if _, human := harnessmatch.MatchSrc(src, call); human && subject.matches(src) {
+		if _, human := harnessmatch.MatchSrc(src, call); human && subject != nil && policyapi.MatchPrincipal(src, subject.UserID, subject.Email, subject.Groups) {
 			src = "*"
 		}
 		matchPolicies = append(matchPolicies, harnessmatch.Policy{ID: p.ID, Src: src, Dst: p.DstPattern, Action: effect, Enabled: p.Enabled, Scope: p.Scope.AgentID})
