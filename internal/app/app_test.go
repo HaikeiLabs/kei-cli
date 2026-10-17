@@ -139,6 +139,9 @@ func TestLogin404FallsBackToLegacy(t *testing.T) {
 			})
 		case "/api/cli/device/token":
 			json.NewEncoder(w).Encode(deviceAuthorizationPollResponse{Status: "approved", AccessToken: "legacy-token", OrgID: "org-legacy"})
+		case "/api/v1/organizations",
+			"/api/v1/organizations/org-legacy/workspaces":
+			w.WriteHeader(http.StatusNotFound)
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -752,6 +755,9 @@ func TestLoginLegacyFallbackUsesWebHostForActivationURL(t *testing.T) {
 			})
 		case "/api/cli/device/token":
 			json.NewEncoder(w).Encode(deviceAuthorizationPollResponse{Status: "approved", AccessToken: "t", OrgID: "o"})
+		case "/api/v1/organizations",
+			"/api/v1/organizations/o/workspaces":
+			w.WriteHeader(http.StatusNotFound)
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -1149,6 +1155,160 @@ func TestBotCredentialWorkspaceByUUIDMakesNoDiscoveryCall(t *testing.T) {
 	}
 	if stdout.String() != "kh_live_uuid_token\n" {
 		t.Fatalf("credential output = %q", stdout.String())
+	}
+}
+
+func TestLoginPrintsOrgNameAndWorkspaceName(t *testing.T) {
+	exchanges := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/deviceAuthorizations", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(deviceAuthorizationStartResponse{
+			DeviceCode:              "device-secret",
+			UserCode:                "ABCDE-23456",
+			VerificationURIComplete: "http://example.com/activate?user_code=ABCDE-23456",
+			ExpiresIn:               60,
+			Interval:                1,
+		})
+	})
+	mux.HandleFunc("/api/v1/deviceAuthorizations:exchange", func(w http.ResponseWriter, r *http.Request) {
+		exchanges++
+		if exchanges == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(aipError{Detail: aipErrorDetail{Code: 400, Reason: "AUTHORIZATION_PENDING", Message: "not yet approved"}})
+			return
+		}
+		json.NewEncoder(w).Encode(deviceAuthorizationExchangeResponse{AccessToken: testCLIToken})
+	})
+	mux.HandleFunc("/api/v1/organizations", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected method %s on orgs endpoint", r.Method)
+		}
+		json.NewEncoder(w).Encode([]map[string]string{{"id": "org-1", "name": "Acme Corp"}})
+	})
+	mux.HandleFunc("/api/v1/organizations/org-1/workspaces", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected method %s on workspaces endpoint", r.Method)
+		}
+		json.NewEncoder(w).Encode([]workspaceInfo{
+			{ID: "ws-1", Name: "Main", IsDefault: true},
+		})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	var output bytes.Buffer
+	store := &memoryCredentialStore{}
+	err := login(context.Background(), server.URL, "kei", "v0.0.1", &output, server.Client(), store, func(time.Duration) {}, func(string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := output.String()
+	if !strings.Contains(out, "Acme Corp") {
+		t.Fatalf("expected org name in output, got: %q", out)
+	}
+	if !strings.Contains(out, "Main") {
+		t.Fatalf("expected workspace name in output, got: %q", out)
+	}
+	if !strings.Contains(out, "Logged in to Kei for organization Acme Corp.") {
+		t.Fatalf("expected login message with org name, got: %q", out)
+	}
+	if !strings.Contains(out, "Workspace: Main") {
+		t.Fatalf("expected workspace line, got: %q", out)
+	}
+}
+
+func TestLoginPrintsOrgNameOnlyWhenNoWorkspaces(t *testing.T) {
+	exchanges := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/deviceAuthorizations", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(deviceAuthorizationStartResponse{
+			DeviceCode:              "device-secret",
+			UserCode:                "ABCDE-23456",
+			VerificationURIComplete: "http://example.com/activate?user_code=ABCDE-23456",
+			ExpiresIn:               60,
+			Interval:                1,
+		})
+	})
+	mux.HandleFunc("/api/v1/deviceAuthorizations:exchange", func(w http.ResponseWriter, r *http.Request) {
+		exchanges++
+		if exchanges == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(aipError{Detail: aipErrorDetail{Code: 400, Reason: "AUTHORIZATION_PENDING", Message: "not yet approved"}})
+			return
+		}
+		json.NewEncoder(w).Encode(deviceAuthorizationExchangeResponse{AccessToken: testCLIToken})
+	})
+	mux.HandleFunc("/api/v1/organizations", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected method %s on orgs endpoint", r.Method)
+		}
+		json.NewEncoder(w).Encode([]map[string]string{{"id": "org-1", "name": "Acme Corp"}})
+	})
+	mux.HandleFunc("/api/v1/organizations/org-1/workspaces", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]workspaceInfo{})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	var output bytes.Buffer
+	store := &memoryCredentialStore{}
+	err := login(context.Background(), server.URL, "kei", "v0.0.1", &output, server.Client(), store, func(time.Duration) {}, func(string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := output.String()
+	if !strings.Contains(out, "Acme Corp") {
+		t.Fatalf("expected org name in output, got: %q", out)
+	}
+	if strings.Contains(out, "Workspace:") {
+		t.Fatalf("expected no workspace line when no workspaces exist, got: %q", out)
+	}
+}
+
+func TestLoginFallbackWhenOrgAPIFails(t *testing.T) {
+	exchanges := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/deviceAuthorizations", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(deviceAuthorizationStartResponse{
+			DeviceCode:              "device-secret",
+			UserCode:                "ABCDE-23456",
+			VerificationURIComplete: "http://example.com/activate?user_code=ABCDE-23456",
+			ExpiresIn:               60,
+			Interval:                1,
+		})
+	})
+	mux.HandleFunc("/api/v1/deviceAuthorizations:exchange", func(w http.ResponseWriter, r *http.Request) {
+		exchanges++
+		if exchanges == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(aipError{Detail: aipErrorDetail{Code: 400, Reason: "AUTHORIZATION_PENDING", Message: "not yet approved"}})
+			return
+		}
+		json.NewEncoder(w).Encode(deviceAuthorizationExchangeResponse{AccessToken: testCLIToken})
+	})
+	// Org list returns empty — org not found, fallback to org ID.
+	mux.HandleFunc("/api/v1/organizations", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]string{})
+	})
+	// No workspace handler, since we never get past org lookup.
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	var output bytes.Buffer
+	store := &memoryCredentialStore{}
+	err := login(context.Background(), server.URL, "kei", "v0.0.1", &output, server.Client(), store, func(time.Duration) {}, func(string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := output.String()
+	if !strings.Contains(out, "org-1") {
+		t.Fatalf("expected org ID in fallback output, got: %q", out)
+	}
+	if strings.Contains(out, "Acme Corp") {
+		t.Fatalf("expected no org name in fallback output, got: %q", out)
 	}
 }
 
