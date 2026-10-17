@@ -818,6 +818,10 @@ type secretConsole struct {
 	opened        string
 	noRecipients  bool
 	failSetSecret bool
+	// templates answers GET /api/v1/connector-templates/{id} by id.
+	templates map[string]string
+	// openedFields is each setSecret's opened secret by field.
+	openedFields map[string]string
 }
 
 func newSecretConsole(t *testing.T, connectorJSON string) *secretConsole {
@@ -866,8 +870,20 @@ func (rt *secretConsole) respond(w http.ResponseWriter, r consoleRequest) {
 			rt.t.Fatalf("the runtime key cannot open the sealed payload: %v", err)
 		}
 		rt.opened = opened
+		if rt.openedFields == nil {
+			rt.openedFields = map[string]string{}
+		}
+		rt.openedFields[r.Body["field"].(string)] = opened
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte(`{"field":"` + r.Body["field"].(string) + `","set":false,"generation":1,"delivered_at":null}`))
+	case r.Method == http.MethodGet && strings.HasPrefix(r.Path, "/api/v1/connector-templates/"):
+		body, ok := rt.templates[strings.TrimPrefix(r.Path, "/api/v1/connector-templates/")]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"code":404,"status":"NOT_FOUND","message":"connector template not found"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(body))
 	case r.Method == http.MethodGet && r.Path == base:
 		_, _ = w.Write([]byte(rt.connector))
 	case r.Method == http.MethodGet && r.Path == base+"/secrets":
