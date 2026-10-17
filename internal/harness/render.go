@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/HaikeiLabs/kei-connector-contracts/harnessmatch"
+	policyapi "github.com/HaikeiLabs/kei-connector-contracts/policy"
 )
 
 // BundleSchemaV2 is the current policy bundle contract; v1 is frozen and
@@ -46,29 +47,6 @@ type BundleSubject struct {
 	UserID string   `json:"user_id"`
 	Email  string   `json:"email"`
 	Groups []string `json:"groups"`
-}
-
-// matches reports whether a human policy source names the subject, with the
-// catalog's audit-precedence semantics: user:<id or email>, email:<address>
-// and group:<name>, each an exact match. Any other source, or a nil subject,
-// does not match.
-func (s *BundleSubject) matches(src string) bool {
-	if s == nil {
-		return false
-	}
-	scheme, value, _ := strings.Cut(src, ":")
-	if value == "" {
-		return false
-	}
-	switch scheme {
-	case "user":
-		return (s.UserID != "" && value == s.UserID) || (s.Email != "" && value == s.Email)
-	case "email":
-		return s.Email != "" && value == s.Email
-	case "group":
-		return slices.Contains(s.Groups, value)
-	}
-	return false
 }
 
 // BundleHarness is a harness registered on the installation the bundle is for.
@@ -204,7 +182,7 @@ func nativePermissionEntries(s nativeSyntax, harnessID string, harness *BundleHa
 		scope := policy.Scope.AgentID
 		matchPolicy := harnessmatch.Policy{ID: policy.ID, Src: policy.SrcPattern, Dst: dst, Action: effect, Enabled: policy.Enabled, Scope: scope}
 		applies, human := harnessmatch.MatchSrc(matchPolicy.Src, call)
-		if human && subject.matches(policy.SrcPattern) {
+		if human && subject != nil && policyapi.MatchPrincipal(policy.SrcPattern, subject.UserID, subject.Email, subject.Groups) {
 			// A source naming the installation's subject applies on every
 			// harness of the installation, as "*" does; agent scope and the
 			// dst still decide below.

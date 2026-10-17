@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/HaikeiLabs/kei-connector-contracts/harnessmatch"
+	policyapi "github.com/HaikeiLabs/kei-connector-contracts/policy"
 )
 
 type annotationCase struct {
@@ -140,7 +141,7 @@ func TestAnnotationPrecedence(t *testing.T) {
 // the way the renderer decides it.
 func overrideApplies(src, kind, harnessID string, subject *BundleSubject) bool {
 	applies, human := harnessmatch.MatchSrc(src, harnessmatch.Call{Kind: kind, HarnessID: harnessID})
-	return applies || (human && subject.matches(src))
+	return applies || (human && subject != nil && policyapi.MatchPrincipal(src, subject.UserID, subject.Email, subject.Groups))
 }
 
 func cleanName(name string) string {
