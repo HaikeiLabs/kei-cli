@@ -162,6 +162,8 @@ type Rendered struct {
 type ApplyOpts struct {
 	Env    Env
 	DryRun bool
+	// NoHook skips audit-hook installation for this sync.
+	NoHook bool
 	// Out receives the planned or applied changes; it must not be nil.
 	Out io.Writer
 	// Now stamps the backup a sync keeps of each file it changes.

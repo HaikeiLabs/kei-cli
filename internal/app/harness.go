@@ -442,6 +442,7 @@ func runHarnessSync(args []string, stdout, stderr io.Writer, client *http.Client
 	kindFilter := flags.String("harness", "", "only sync this harness kind")
 	manifestPath := flags.String("manifest", "", "path to a tool manifest JSON file (requires --harness custom)")
 	dryRun := flags.Bool("dry-run", false, "show changes without writing")
+	noHook := flags.Bool("no-hook", false, "skip audit-hook installation")
 	check := flags.Bool("check", false, "report drift between native config, the sync ledger and the current bundle; exit 1 on drift, 2 on error")
 	jsonOutput := flags.Bool("json", false, "with --check, print a machine-readable report ("+harness.DriftSchema+")")
 	openWebUIURL := flags.String("url", "", "with --harness openwebui, the Open WebUI base URL to report on (admin token from OPENWEBUI_ADMIN_TOKEN)")
@@ -534,7 +535,7 @@ func runHarnessSync(args []string, stdout, stderr io.Writer, client *http.Client
 	if manifestToolDefs != nil {
 		return syncManifestTools(context.Background(), config, *manifestPath, manifestToolDefs, stdout, stderr, client)
 	}
-	return syncHarnessBundle(context.Background(), config, *kindFilter, *dryRun, stdout, stderr, client, registry, harness.OSEnv(), time.Now)
+	return syncHarnessBundle(context.Background(), config, *kindFilter, *dryRun, *noHook, stdout, stderr, client, registry, harness.OSEnv(), time.Now)
 }
 
 // syncManifestTools PUTs the --manifest tool definitions to the Kei catalog.
@@ -755,7 +756,7 @@ func selectHarnesses(registry *harness.Registry, env harness.Env, kindFilter str
 	return []harness.Harness{h}, nil
 }
 
-func syncHarnessBundle(ctx context.Context, config runtimeConfig, kindFilter string, dryRun bool, stdout, stderr io.Writer, client *http.Client, registry *harness.Registry, env harness.Env, now func() time.Time) int {
+func syncHarnessBundle(ctx context.Context, config runtimeConfig, kindFilter string, dryRun, noHook bool, stdout, stderr io.Writer, client *http.Client, registry *harness.Registry, env harness.Env, now func() time.Time) int {
 	bundle, payload, err := fetchHarnessBundle(ctx, config, client)
 	if err != nil {
 		fmt.Fprintf(stderr, "harness sync: %v\n", err)
@@ -786,7 +787,7 @@ func syncHarnessBundle(ctx context.Context, config runtimeConfig, kindFilter str
 			fmt.Fprintf(stderr, "harness sync: %v\n", err)
 			return 1
 		}
-		result, err := h.Apply(ctx, rendered, harness.ApplyOpts{Env: env, DryRun: dryRun, Out: stdout, Now: now()})
+		result, err := h.Apply(ctx, rendered, harness.ApplyOpts{Env: env, DryRun: dryRun, NoHook: noHook, Out: stdout, Now: now()})
 		if err != nil {
 			fmt.Fprintf(stderr, "harness sync: %v\n", err)
 			return 1
