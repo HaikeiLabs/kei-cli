@@ -17,13 +17,15 @@ import (
 )
 
 type botInstallation struct {
-	ID              string     `json:"id"`
-	WorkspaceIDs    []string   `json:"workspace_ids"`
-	Platform        string     `json:"platform"`
-	DisplayName     string     `json:"display_name"`
-	Status          string     `json:"status"`
-	LastHeartbeatAt *time.Time `json:"last_heartbeat_at"`
-	CreatedAt       time.Time  `json:"created_at"`
+	ID                  string     `json:"id"`
+	WorkspaceIDs        []string   `json:"workspace_ids"`
+	Platform            string     `json:"platform"`
+	DisplayName         string     `json:"display_name"`
+	Status              string     `json:"status"`
+	RuntimeVersion      *string    `json:"runtime_version,omitempty"`
+	BelowMinimumVersion bool       `json:"below_minimum_version"`
+	LastHeartbeatAt     *time.Time `json:"last_heartbeat_at"`
+	CreatedAt           time.Time  `json:"created_at"`
 }
 
 type botInstallationPage struct {
@@ -82,8 +84,15 @@ func runBotListCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 		fmt.Fprintln(stdout, "No runtime installations found.")
 	} else {
 		tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tNAME\tPLATFORM\tSTATUS\tWORKSPACES\tLAST HEARTBEAT")
+		fmt.Fprintln(tw, "ID\tNAME\tPLATFORM\tSTATUS\tVERSION\tWORKSPACES\tLAST HEARTBEAT")
 		for _, item := range items {
+			version := "-"
+			if item.RuntimeVersion != nil {
+				version = *item.RuntimeVersion
+				if item.BelowMinimumVersion {
+					version += " (below minimum)"
+				}
+			}
 			workspaces := "-"
 			if len(item.WorkspaceIDs) > 0 {
 				workspaces = strings.Join(item.WorkspaceIDs, ",")
@@ -92,7 +101,7 @@ func runBotListCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 			if item.LastHeartbeatAt != nil {
 				heartbeat = harness.RelativeTime(time.Since(*item.LastHeartbeatAt))
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", item.ID, item.DisplayName, item.Platform, item.Status, workspaces, heartbeat)
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", item.ID, item.DisplayName, item.Platform, item.Status, version, workspaces, heartbeat)
 		}
 		_ = tw.Flush()
 	}

@@ -31,7 +31,7 @@ func runBotListTest(t *testing.T, handler http.HandlerFunc, args ...string) (int
 
 func TestBotListTableAndJSON(t *testing.T) {
 	past := time.Now().UTC().Add(-3 * time.Hour).Format(time.RFC3339)
-	body := `{"runtime_installations":[{"id":"inst-1","workspace_ids":["ws-a","ws-b"],"platform":"cli","display_name":"Build bot","status":"active","last_heartbeat_at":"` + past + `","created_at":"2026-01-01T00:00:00Z"}],"next_page_token":""}`
+	body := `{"runtime_installations":[{"id":"inst-1","workspace_ids":["ws-a","ws-b"],"platform":"cli","display_name":"Build bot","status":"active","runtime_version":"0.2.4","below_minimum_version":false,"last_heartbeat_at":"` + past + `","created_at":"2026-01-01T00:00:00Z"}],"next_page_token":""}`
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/organizations/org-1/runtime-installations" || r.URL.Query().Get("page_size") != "50" {
 			t.Errorf("unexpected request: %s?%s", r.URL.Path, r.URL.RawQuery)
@@ -42,17 +42,84 @@ func TestBotListTableAndJSON(t *testing.T) {
 	if code != 0 || stderr != "" {
 		t.Fatalf("code=%d stderr=%s", code, stderr)
 	}
-	for _, expected := range []string{"ID", "NAME", "PLATFORM", "STATUS", "WORKSPACES", "LAST HEARTBEAT", "inst-1", "Build bot", "ws-a,ws-b", "3h ago"} {
+	for _, expected := range []string{"ID", "NAME", "PLATFORM", "STATUS", "VERSION", "WORKSPACES", "LAST HEARTBEAT", "inst-1", "Build bot", "0.2.4", "ws-a,ws-b", "3h ago"} {
 		if !strings.Contains(stdout, expected) {
 			t.Errorf("table missing %q: %s", expected, stdout)
 		}
 	}
+	if strings.Contains(stdout, "below minimum") {
+		t.Errorf("table should not show below-minimum marker when false: %s", stdout)
+	}
 	code, stdout, stderr, _ = runBotListTest(t, handler, "--json")
-	if code != 0 || stderr != "" || !strings.Contains(stdout, `"runtime_installations"`) && !strings.Contains(stdout, `"id": "inst-1"`) {
-		// JSON emits just the item array, not the response envelope.
-		if !strings.Contains(stdout, `"id": "inst-1"`) {
-			t.Fatalf("JSON output unexpected code=%d stderr=%s stdout=%s", code, stderr, stdout)
-		}
+	if code != 0 || stderr != "" {
+		t.Fatalf("JSON unexpected code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	if !strings.Contains(stdout, `"id": "inst-1"`) {
+		t.Fatalf("JSON output missing id: %s", stdout)
+	}
+	if !strings.Contains(stdout, `"runtime_version": "0.2.4"`) {
+		t.Errorf("JSON output missing runtime_version: %s", stdout)
+	}
+	if strings.Contains(stdout, `"below_minimum_version"`) && strings.Contains(stdout, `"below_minimum_version": true`) {
+		t.Errorf("JSON output should not have below_minimum_version=true: %s", stdout)
+	}
+}
+
+func TestBotListTableBelowMinimumVersion(t *testing.T) {
+	past := time.Now().UTC().Add(-3 * time.Hour).Format(time.RFC3339)
+	body := `{"runtime_installations":[{"id":"inst-1","workspace_ids":["ws-a"],"platform":"cli","display_name":"Old bot","status":"active","runtime_version":"0.1.0","below_minimum_version":true,"last_heartbeat_at":"` + past + `","created_at":"2026-01-01T00:00:00Z"}],"next_page_token":""}`
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}
+	code, stdout, stderr, _ := runBotListTest(t, handler)
+	if code != 0 || stderr != "" {
+		t.Fatalf("code=%d stderr=%s", code, stderr)
+	}
+	if !strings.Contains(stdout, "VERSION") {
+		t.Errorf("table missing VERSION header: %s", stdout)
+	}
+	if !strings.Contains(stdout, "0.1.0 (below minimum)") {
+		t.Errorf("table missing below-minimum marker: %s", stdout)
+	}
+	if strings.Contains(stdout, "below minimum") && !strings.Contains(stdout, "0.1.0 (below minimum)") {
+		t.Errorf("unexpected below-minimum text: %s", stdout)
+	}
+
+	code, stdout, stderr, _ = runBotListTest(t, handler, "--json")
+	if code != 0 || stderr != "" {
+		t.Fatalf("JSON unexpected code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	if !strings.Contains(stdout, `"runtime_version": "0.1.0"`) {
+		t.Errorf("JSON output missing runtime_version: %s", stdout)
+	}
+	if !strings.Contains(stdout, `"below_minimum_version": true`) {
+		t.Errorf("JSON output missing below_minimum_version=true: %s", stdout)
+	}
+}
+
+func TestBotListRuntimeVersionOmitted(t *testing.T) {
+	past := time.Now().UTC().Add(-3 * time.Hour).Format(time.RFC3339)
+	body := `{"runtime_installations":[{"id":"inst-1","workspace_ids":[],"platform":"discord","display_name":"No version","status":"active","last_heartbeat_at":"` + past + `","created_at":"2026-01-01T00:00:00Z"}],"next_page_token":""}`
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}
+	code, stdout, stderr, _ := runBotListTest(t, handler)
+	if code != 0 || stderr != "" {
+		t.Fatalf("code=%d stderr=%s", code, stderr)
+	}
+	if !strings.Contains(stdout, "VERSION") {
+		t.Errorf("table missing VERSION header: %s", stdout)
+	}
+	if strings.Contains(stdout, "below minimum") {
+		t.Errorf("table should not show below-minimum when version is absent: %s", stdout)
+	}
+
+	code, stdout, stderr, _ = runBotListTest(t, handler, "--json")
+	if code != 0 || stderr != "" {
+		t.Fatalf("JSON unexpected code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	if strings.Contains(stdout, "runtime_version") {
+		t.Errorf("JSON should not include runtime_version when absent: %s", stdout)
 	}
 }
 
