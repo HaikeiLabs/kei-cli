@@ -116,12 +116,12 @@ type policySession struct {
 	workspaceID string
 }
 
-func openPolicySession(command, workspace string, stderr io.Writer, client *http.Client, store credentialStore) (*policySession, bool) {
+func openPolicySession(command string, sel workspaceSelection, stderr io.Writer, client *http.Client, store credentialStore) (*policySession, bool) {
 	baseURL, token, ok := loadCLIWebTokenAndBaseURL(store, stderr)
 	if !ok {
 		return nil, false
 	}
-	workspaceID, err := resolveWorkspaceID(context.Background(), client, baseURL, token, workspace)
+	workspaceID, err := resolveWorkspaceSelection(context.Background(), client, baseURL, token, sel)
 	if err != nil {
 		fmt.Fprintf(stderr, "policies %s: %v\n", command, err)
 		return nil, false
@@ -198,18 +198,19 @@ func runPoliciesCommand(args []string, stdout, stderr io.Writer, stdin io.Reader
 }
 
 func policiesWorkspaceFlag(flags *flag.FlagSet) *string {
-	return flags.String("workspace", "", "workspace ID or name (or set KEI_WORKSPACE_ID)")
+	return flags.String("workspace", "", "workspace name (or set KEI_WORKSPACE)")
 }
 
-func requirePoliciesWorkspace(command, workspace string, stderr io.Writer) (string, bool) {
-	if workspace == "" {
-		workspace = os.Getenv("KEI_WORKSPACE_ID")
+func requirePoliciesWorkspace(command, workspace string, stderr io.Writer) (workspaceSelection, bool) {
+	sel, err := selectWorkspace(workspace, keiWebURL())
+	if err != nil {
+		fmt.Fprintf(stderr, "policies %s: %v\n", command, err)
+		return workspaceSelection{}, false
 	}
-	if workspace == "" {
-		fmt.Fprintf(stderr, "policies %s requires --workspace WORKSPACE (or KEI_WORKSPACE_ID)\n", command)
-		return "", false
+	if sel.fromIDEnv {
+		fmt.Fprintln(stderr, deprecationNote)
 	}
-	return workspace, true
+	return sel, true
 }
 
 func parsePolicyFlags(flags *flag.FlagSet, args []string) (string, error) {

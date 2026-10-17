@@ -29,9 +29,18 @@ func testGroupsJSON() string {
 // both loading the token and sending requests, with a token stored under it.
 func newUsersGroupsServer(t *testing.T, respond func(w http.ResponseWriter, r *http.Request)) (*httptest.Server, *memoryCredentialStore) {
 	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(respond))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Answer the access-aware workspace list so --workspace NAME resolves
+		// to testWorkspaceID.
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/organizations/org-1/workspaces" {
+			_, _ = w.Write([]byte(`[{"id":"` + testWorkspaceID + `","name":"Main"}]`))
+			return
+		}
+		respond(w, r)
+	}))
 	t.Cleanup(server.Close)
 	t.Setenv("KEI_WEB_URL", server.URL)
+	t.Setenv("KEI_WORKSPACE", "")
 	t.Setenv("KEI_WORKSPACE_ID", "")
 	return server, &memoryCredentialStore{server: server.URL, token: testToken("org-1")}
 }
@@ -343,7 +352,7 @@ func TestGroupsMembersListWorkspaceID(t *testing.T) {
 		_, _ = w.Write([]byte(testGroupsJSON()))
 	})
 	var stdout, stderr bytes.Buffer
-	if code := runGroupsMembersList([]string{testGroupID, "--workspace", testWorkspaceID}, &stdout, &stderr, server.Client(), store); code != 0 {
+	if code := runGroupsMembersList([]string{testGroupID, "--workspace", "Main"}, &stdout, &stderr, server.Client(), store); code != 0 {
 		t.Fatalf("list exit = %d, stderr=%s", code, stderr.String())
 	}
 }

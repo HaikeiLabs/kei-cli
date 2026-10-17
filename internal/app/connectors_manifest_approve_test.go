@@ -56,7 +56,7 @@ func approveRequests(fake *fakeConsole) []consoleRequest {
 func TestConnectorsManifestsApprove(t *testing.T) {
 	approvedNow := strings.Replace(strings.Replace(candidateManifest, `"status":"candidate"`, `"status":"approved","approved_by":"44444444-4444-4444-4444-444444444444","approved_at":"2026-10-14T10:00:00Z"`, 1), "\n", "", -1)
 	fake, run := approveConsole(t, http.StatusOK, approvedNow, approvedManifest, candidateManifest)
-	code, stdout, stderr := run("manifests", "approve", testConnectorID, candidateManifestID, "--workspace", testWorkspaceID, "--yes")
+	code, stdout, stderr := run("manifests", "approve", testConnectorID, candidateManifestID, "--workspace", "Main", "--yes")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -79,7 +79,7 @@ func TestConnectorsManifestsApprove(t *testing.T) {
 // command.
 func TestConnectorsToolsApproveAlias(t *testing.T) {
 	fake, run := approveConsole(t, http.StatusOK, candidateManifest, candidateManifest)
-	if code, _, stderr := run("tools", "approve", testConnectorID, candidateManifestID, "--workspace", testWorkspaceID, "--yes"); code != 0 || len(approveRequests(fake)) != 1 {
+	if code, _, stderr := run("tools", "approve", testConnectorID, candidateManifestID, "--workspace", "Main", "--yes"); code != 0 || len(approveRequests(fake)) != 1 {
 		t.Fatalf("exit = %d stderr=%s posts=%d", code, stderr, len(approveRequests(fake)))
 	}
 }
@@ -88,7 +88,7 @@ func TestConnectorsToolsApproveAlias(t *testing.T) {
 // without a terminal to ask on, nothing is approved.
 func TestConnectorsManifestsApproveNeedsConfirmation(t *testing.T) {
 	fake, run := approveConsole(t, http.StatusOK, candidateManifest, candidateManifest)
-	code, stdout, stderr := run("manifests", "approve", testConnectorID, candidateManifestID, "--workspace", testWorkspaceID)
+	code, stdout, stderr := run("manifests", "approve", testConnectorID, candidateManifestID, "--workspace", "Main")
 	if code != 2 || !strings.Contains(stderr, "--yes") {
 		t.Fatalf("exit = %d stderr=%q, want 2 naming --yes", code, stderr)
 	}
@@ -108,7 +108,7 @@ func TestConnectorsManifestsApproveRequiresAManifestID(t *testing.T) {
 		{"manifests", "approve", testConnectorID},
 		{"manifests", "approve", testConnectorID, "not-a-uuid"},
 	} {
-		if code, _, stderr := run(append(args, "--workspace", testWorkspaceID, "--yes")...); code != 2 || stderr == "" {
+		if code, _, stderr := run(append(args, "--workspace", "Main", "--yes")...); code != 2 || stderr == "" {
 			t.Errorf("%v: exit = %d stderr=%q, want 2", args, code, stderr)
 		}
 	}
@@ -120,7 +120,7 @@ func TestConnectorsManifestsApproveRequiresAManifestID(t *testing.T) {
 // TestConnectorsManifestsApproveAlreadyApproved sends nothing.
 func TestConnectorsManifestsApproveAlreadyApproved(t *testing.T) {
 	fake, run := approveConsole(t, http.StatusOK, "", approvedManifest)
-	code, stdout, stderr := run("manifests", "approve", testConnectorID, approvedManifestID, "--workspace", testWorkspaceID, "--yes")
+	code, stdout, stderr := run("manifests", "approve", testConnectorID, approvedManifestID, "--workspace", "Main", "--yes")
 	if code != 0 || !strings.Contains(stdout, "already approved") || len(approveRequests(fake)) != 0 {
 		t.Fatalf("exit = %d stdout=%q stderr=%s posts=%d", code, stdout, stderr, len(approveRequests(fake)))
 	}
@@ -138,7 +138,7 @@ func TestConnectorsManifestsApproveSurfacesCatalogErrors(t *testing.T) {
 		{http.StatusForbidden, `organization administrator role is required`, "organization administrator role is required"},
 	} {
 		_, run := approveConsole(t, tc.status, tc.body, candidateManifest)
-		code, _, stderr := run("manifests", "approve", testConnectorID, candidateManifestID, "--workspace", testWorkspaceID, "--yes")
+		code, _, stderr := run("manifests", "approve", testConnectorID, candidateManifestID, "--workspace", "Main", "--yes")
 		if code != 1 || !strings.Contains(stderr, tc.want) {
 			t.Errorf("HTTP %d: exit = %d stderr=%q, want 1 containing %q", tc.status, code, stderr, tc.want)
 		}

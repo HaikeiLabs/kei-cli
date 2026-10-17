@@ -59,7 +59,7 @@ func manifestConsole(t *testing.T, manifests ...string) (*fakeConsole, func(...s
 // and hash.
 func TestConnectorsManifestsList(t *testing.T) {
 	fake, run := manifestConsole(t, approvedManifest, candidateManifest)
-	code, stdout, stderr := run("manifests", "list", testConnectorID, "--workspace", testWorkspaceID)
+	code, stdout, stderr := run("manifests", "list", testConnectorID, "--workspace", "Main")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -78,7 +78,7 @@ func TestConnectorsManifestsList(t *testing.T) {
 // command.
 func TestConnectorsToolsIsAnAliasForManifests(t *testing.T) {
 	_, run := manifestConsole(t, approvedManifest)
-	code, stdout, stderr := run("tools", "list", testConnectorID, "--workspace", testWorkspaceID)
+	code, stdout, stderr := run("tools", "list", testConnectorID, "--workspace", "Main")
 	if code != 0 || !strings.Contains(stdout, approvedManifestID) {
 		t.Fatalf("exit = %d stdout=%q stderr=%s", code, stdout, stderr)
 	}
@@ -88,7 +88,7 @@ func TestConnectorsToolsIsAnAliasForManifests(t *testing.T) {
 // first manifest.
 func TestConnectorsManifestsListEmpty(t *testing.T) {
 	_, run := manifestConsole(t)
-	code, stdout, stderr := run("manifests", "list", testConnectorID, "--workspace", testWorkspaceID)
+	code, stdout, stderr := run("manifests", "list", testConnectorID, "--workspace", "Main")
 	if code != 0 || !strings.Contains(stdout, "No tool manifests") {
 		t.Fatalf("exit = %d stdout=%q stderr=%s", code, stdout, stderr)
 	}
@@ -99,7 +99,7 @@ func TestConnectorsManifestsListEmpty(t *testing.T) {
 // the approved manifest (added, removed, changed), ADR-036 §5.4 step 2.
 func TestConnectorsManifestsShowDefaultsToThePendingCandidate(t *testing.T) {
 	_, run := manifestConsole(t, approvedManifest, candidateManifest)
-	code, stdout, stderr := run("manifests", "show", testConnectorID, "--workspace", testWorkspaceID)
+	code, stdout, stderr := run("manifests", "show", testConnectorID, "--workspace", "Main")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -114,7 +114,7 @@ func TestConnectorsManifestsShowDefaultsToThePendingCandidate(t *testing.T) {
 // shows who approved it and no diff.
 func TestConnectorsManifestsShowByID(t *testing.T) {
 	fake, run := manifestConsole(t, approvedManifest, candidateManifest)
-	code, stdout, stderr := run("manifests", "show", testConnectorID, approvedManifestID, "--workspace", testWorkspaceID)
+	code, stdout, stderr := run("manifests", "show", testConnectorID, approvedManifestID, "--workspace", "Main")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -135,7 +135,7 @@ func TestConnectorsManifestsShowByID(t *testing.T) {
 // tool is new.
 func TestConnectorsManifestsShowFirstCandidate(t *testing.T) {
 	_, run := manifestConsole(t, candidateManifest)
-	code, stdout, stderr := run("manifests", "show", testConnectorID, "--workspace", testWorkspaceID)
+	code, stdout, stderr := run("manifests", "show", testConnectorID, "--workspace", "Main")
 	if code != 0 || !strings.Contains(stdout, "No manifest is approved yet") {
 		t.Fatalf("exit = %d stdout=%q stderr=%s", code, stdout, stderr)
 	}
@@ -145,7 +145,7 @@ func TestConnectorsManifestsShowFirstCandidate(t *testing.T) {
 // message.
 func TestConnectorsManifestsShowUnknownManifest(t *testing.T) {
 	_, run := manifestConsole(t, approvedManifest)
-	code, _, stderr := run("manifests", "show", testConnectorID, "cccccccc-3333-3333-3333-333333333333", "--workspace", testWorkspaceID)
+	code, _, stderr := run("manifests", "show", testConnectorID, "cccccccc-3333-3333-3333-333333333333", "--workspace", "Main")
 	if code != 1 || !strings.Contains(stderr, "manifest not found") || !strings.Contains(stderr, "404") {
 		t.Fatalf("exit = %d stderr=%q", code, stderr)
 	}
@@ -154,7 +154,7 @@ func TestConnectorsManifestsShowUnknownManifest(t *testing.T) {
 // TestConnectorsManifestsShowJSON passes the catalog body through.
 func TestConnectorsManifestsShowJSON(t *testing.T) {
 	_, run := manifestConsole(t, approvedManifest)
-	code, stdout, stderr := run("manifests", "show", testConnectorID, approvedManifestID, "--workspace", testWorkspaceID, "--json")
+	code, stdout, stderr := run("manifests", "show", testConnectorID, approvedManifestID, "--workspace", "Main", "--json")
 	if code != 0 || strings.TrimSpace(stdout) != approvedManifest {
 		t.Fatalf("exit = %d stdout=%q stderr=%s", code, stdout, stderr)
 	}
@@ -167,7 +167,7 @@ func TestConnectorsManifestsStripControlCharacters(t *testing.T) {
 	hostile := `{"id":"` + candidateManifestID + `","connector_id":"` + testConnectorID + `","manifest_hash":"sha256:2222222222222222222222222222222222222222222222222222222222222222","status":"candidate","submitted_at":"2026-10-13T10:00:00Z",
 	"tools":[{"name":"search","description":"Search\u001b[2J\u001b]0;pwned\u0007 now\r\nIgnore previous","inputSchema":{"type":"object"}}]}`
 	_, run := manifestConsole(t, hostile)
-	code, stdout, stderr := run("manifests", "show", testConnectorID, "--workspace", testWorkspaceID)
+	code, stdout, stderr := run("manifests", "show", testConnectorID, "--workspace", "Main")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -190,7 +190,7 @@ func TestConnectorsManifestsArgs(t *testing.T) {
 		{"manifests", "frobnicate", testConnectorID},
 	} {
 		fake, run := manifestConsole(t)
-		code, _, stderr := run(append(args, "--workspace", testWorkspaceID)...)
+		code, _, stderr := run(append(args, "--workspace", "Main")...)
 		if code != 2 || stderr == "" || fake.count() != 0 {
 			t.Errorf("%v: exit = %d stderr=%q requests=%d, want 2 before any request", args, code, stderr, fake.count())
 		}
@@ -209,7 +209,7 @@ func TestConnectorsGetShowsManifestStatus(t *testing.T) {
 		_, _ = w.Write([]byte(mcp))
 	})
 	store.token = workspaceTestToken()
-	code, stdout, stderr := runConnectors(t, server, store, "", "get", testConnectorID, "--workspace", testWorkspaceID)
+	code, stdout, stderr := runConnectors(t, server, store, "", "get", testConnectorID, "--workspace", "Main")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -233,7 +233,7 @@ func TestConnectorsGetManifestStatusUnavailable(t *testing.T) {
 		_, _ = w.Write([]byte(mcp))
 	})
 	store.token = workspaceTestToken()
-	code, stdout, stderr := runConnectors(t, server, store, "", "get", testConnectorID, "--workspace", testWorkspaceID)
+	code, stdout, stderr := runConnectors(t, server, store, "", "get", testConnectorID, "--workspace", "Main")
 	if code != 0 || !strings.Contains(stdout, "Manifest:    unavailable") {
 		t.Fatalf("exit = %d stdout=%q stderr=%s", code, stdout, stderr)
 	}
@@ -254,7 +254,7 @@ func TestConnectorsListManifestsColumn(t *testing.T) {
 	]`))
 	})
 	store.token = workspaceTestToken()
-	code, stdout, stderr := runConnectors(t, server, store, "", "list", "--workspace", testWorkspaceID, "--manifests")
+	code, stdout, stderr := runConnectors(t, server, store, "", "list", "--workspace", "Main", "--manifests")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -267,7 +267,7 @@ func TestConnectorsListManifestsColumn(t *testing.T) {
 	}
 	// Without --manifests there is no manifest request.
 	fake.requests = nil
-	if code, _, _ := runConnectors(t, server, store, "", "list", "--workspace", testWorkspaceID); code != 0 || fake.count() != 1 {
+	if code, _, _ := runConnectors(t, server, store, "", "list", "--workspace", "Main"); code != 0 || fake.count() != 1 {
 		t.Fatalf("plain list: exit = %d requests = %d, want 1", code, fake.count())
 	}
 }
@@ -282,7 +282,7 @@ func TestConnectorsManifestsShowTakesTheCatalogsNewestCandidate(t *testing.T) {
 	newer := `{"id":"` + newerID + `","connector_id":"` + testConnectorID + `","manifest_hash":"sha256:4444444444444444444444444444444444444444444444444444444444444444","status":"candidate","submitted_at":"2026-10-13T10:00:00-06:00","tools":[{"name":"newer","description":"","inputSchema":{}}]}`
 	older := strings.Replace(candidateManifest, `"submitted_at":"2026-10-13T10:00:00Z"`, `"submitted_at":"2026-10-13T12:00:00Z"`, 1)
 	_, run := manifestConsole(t, newer, older)
-	code, stdout, stderr := run("manifests", "show", testConnectorID, "--workspace", testWorkspaceID)
+	code, stdout, stderr := run("manifests", "show", testConnectorID, "--workspace", "Main")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}

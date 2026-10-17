@@ -52,7 +52,7 @@ func connectConsole(t *testing.T) (*httptest.Server, *memoryCredentialStore) {
 		case "/api/v1/organizations":
 			_, _ = w.Write([]byte(`[{"id":"org-1","name":"Acme Corp"}]`))
 		case "/api/v1/organizations/org-1/workspaces":
-			_, _ = w.Write([]byte(`[{"id":"` + testWorkspaceID + `","name":"Default","is_default":true}]`))
+			_, _ = w.Write([]byte(`[{"id":"` + testWorkspaceID + `","name":"Main","is_default":true}]`))
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.Path)
 			w.WriteHeader(http.StatusTeapot)
@@ -67,7 +67,7 @@ func TestConnectRunsStepsInOrderAndPrintsOrgAndWorkspace(t *testing.T) {
 
 	var order []string
 	var stdout, stderr bytes.Buffer
-	code := runConnectCommand([]string{"claude-code", "--workspace", "Default", "--yes"}, &stdout, &stderr, strings.NewReader(""), server.Client(), store, recordingConnectSteps(&order))
+	code := runConnectCommand([]string{"claude-code", "--workspace", "Main", "--yes"}, &stdout, &stderr, strings.NewReader(""), server.Client(), store, recordingConnectSteps(&order))
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr.String())
 	}
@@ -77,7 +77,7 @@ func TestConnectRunsStepsInOrderAndPrintsOrgAndWorkspace(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Acme Corp") {
 		t.Fatalf("stdout missing org name: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "Default") {
+	if !strings.Contains(stdout.String(), "Main") {
 		t.Fatalf("stdout missing workspace name: %q", stdout.String())
 	}
 	if strings.Contains(stdout.String(), "runtime-secret") || strings.Contains(stderr.String(), "runtime-secret") {
@@ -112,7 +112,7 @@ func TestConnectRerunSkipsCompletedSteps(t *testing.T) {
 
 	var order []string
 	var stdout, stderr bytes.Buffer
-	code := runConnectCommand([]string{"claude-code", "--workspace", "Default", "--yes"}, &stdout, &stderr, strings.NewReader(""), server.Client(), store, recordingConnectSteps(&order))
+	code := runConnectCommand([]string{"claude-code", "--workspace", "Main", "--yes"}, &stdout, &stderr, strings.NewReader(""), server.Client(), store, recordingConnectSteps(&order))
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr.String())
 	}
@@ -127,7 +127,7 @@ func TestConnectWithoutYesStopsBeforeSteps(t *testing.T) {
 
 	var order []string
 	var stdout, stderr bytes.Buffer
-	code := runConnectCommand([]string{"claude-code", "--workspace", "Default"}, &stdout, &stderr, strings.NewReader(""), server.Client(), store, recordingConnectSteps(&order))
+	code := runConnectCommand([]string{"claude-code", "--workspace", "Main"}, &stdout, &stderr, strings.NewReader(""), server.Client(), store, recordingConnectSteps(&order))
 	if code != 2 {
 		t.Fatalf("exit = %d, want 2 on decline", code)
 	}
@@ -148,7 +148,7 @@ func TestConnectYesAsksNothing(t *testing.T) {
 
 	var order []string
 	var stdout, stderr bytes.Buffer
-	code := runConnectCommand([]string{"claude-code", "--workspace", "Default", "--yes"}, &stdout, &stderr, strings.NewReader(""), server.Client(), store, recordingConnectSteps(&order))
+	code := runConnectCommand([]string{"claude-code", "--workspace", "Main", "--yes"}, &stdout, &stderr, strings.NewReader(""), server.Client(), store, recordingConnectSteps(&order))
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr.String())
 	}
@@ -167,7 +167,7 @@ func TestConnectResolvesWorkspaceNameToID(t *testing.T) {
 		case r.Path == "/api/v1/organizations":
 			_, _ = w.Write([]byte(`[{"id":"org-1","name":"Acme Corp"}]`))
 		case r.Path == "/api/v1/organizations/org-1/workspaces":
-			_, _ = w.Write([]byte(`[{"id":"` + testWorkspaceID + `","name":"Default","is_default":true}]`))
+			_, _ = w.Write([]byte(`[{"id":"` + testWorkspaceID + `","name":"Main","is_default":true}]`))
 		case r.Method == http.MethodPost && r.Path == "/api/v1/organizations/org-1/runtime-installations":
 			initBody = r.Body
 			w.WriteHeader(http.StatusCreated)
@@ -187,7 +187,7 @@ func TestConnectResolvesWorkspaceNameToID(t *testing.T) {
 	steps.initInstallation = connectInitInstallation
 	steps.issueCredential = connectIssueCredential
 	var stdout, stderr bytes.Buffer
-	code := runConnectCommand([]string{"opencode", "--workspace", "Default", "--yes"}, &stdout, &stderr, strings.NewReader(""), server.Client(), store, steps)
+	code := runConnectCommand([]string{"opencode", "--workspace", "Main", "--yes"}, &stdout, &stderr, strings.NewReader(""), server.Client(), store, steps)
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr.String())
 	}
@@ -200,13 +200,10 @@ func TestConnectResolvesWorkspaceNameToID(t *testing.T) {
 }
 
 func TestConnectUsesDefaultWorkspaceWithoutFlag(t *testing.T) {
-	const defaultID = "44444444-4444-4444-4444-444444444444"
 	_, server, _ := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
 		switch r.Path {
 		case "/api/v1/organizations":
 			_, _ = w.Write([]byte(`[{"id":"org-1","name":"Acme Corp"}]`))
-		case "/api/v1/organizations/org-1/workspaces":
-			_, _ = w.Write([]byte(`[{"id":"` + testWorkspaceID + `","name":"Scratch"},{"id":"` + defaultID + `","name":"Default","is_default":true}]`))
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.Path)
 			w.WriteHeader(http.StatusTeapot)
@@ -227,10 +224,10 @@ func TestConnectUsesDefaultWorkspaceWithoutFlag(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr.String())
 	}
-	if usedWorkspace != defaultID {
-		t.Fatalf("workspace id = %q, want the default %q", usedWorkspace, defaultID)
+	if usedWorkspace != testWorkspaceID {
+		t.Fatalf("workspace id = %q, want the default %q", usedWorkspace, testWorkspaceID)
 	}
-	if !strings.Contains(stdout.String(), "Workspace: Default") {
+	if !strings.Contains(stdout.String(), "Workspace: Main") {
 		t.Fatalf("stdout = %q, want the default workspace name", stdout.String())
 	}
 }
@@ -261,7 +258,7 @@ func TestConnectSetupRunsTheRealSetupPathAndVerifiesTheToken(t *testing.T) {
 		case r.Path == "/api/v1/organizations":
 			_, _ = w.Write([]byte(`[{"id":"org-1","name":"Acme Corp"}]`))
 		case r.Path == "/api/v1/organizations/org-1/workspaces":
-			_, _ = w.Write([]byte(`[{"id":"` + testWorkspaceID + `","name":"Default","is_default":true}]`))
+			_, _ = w.Write([]byte(`[{"id":"` + testWorkspaceID + `","name":"Main","is_default":true}]`))
 		case r.Method == http.MethodPost && r.Path == "/api/v1/organizations/org-1/runtime-installations":
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"id":"` + installationID + `","platform":"cli","status":"pending"}`))
@@ -284,7 +281,7 @@ func TestConnectSetupRunsTheRealSetupPathAndVerifiesTheToken(t *testing.T) {
 	steps.issueCredential = connectIssueCredential
 	steps.setup = connectSetup
 	var stdout, stderr bytes.Buffer
-	code := runConnectCommand([]string{"claude-code", "--workspace", "Default", "--yes"}, &stdout, &stderr, strings.NewReader(""), server.Client(), store, steps)
+	code := runConnectCommand([]string{"claude-code", "--workspace", "Main", "--yes"}, &stdout, &stderr, strings.NewReader(""), server.Client(), store, steps)
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr.String())
 	}

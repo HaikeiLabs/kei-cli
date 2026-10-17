@@ -304,7 +304,7 @@ func runBotCredentialCommand(args []string, stdout, stderr io.Writer, client *ht
 	flags := flag.NewFlagSet("bot credential", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	installationID := flags.String("installation", "", "installation ID")
-	workspace := flags.String("workspace", "", "workspace ID or name (or set KEI_WORKSPACE_ID)")
+	workspace := flags.String("workspace", "", "workspace name (or set KEI_WORKSPACE)")
 	rotate := flags.Bool("rotate", false, "rotate an existing runtime credential")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || *installationID == "" {
 		fmt.Fprintln(stderr, "bot credential requires --installation ID")
@@ -314,25 +314,25 @@ func runBotCredentialCommand(args []string, stdout, stderr io.Writer, client *ht
 		fmt.Fprintln(stderr, "bot credential: --installation must be a UUID")
 		return 2
 	}
-	wid := *workspace
-	if wid == "" {
-		wid = os.Getenv("KEI_WORKSPACE_ID")
-	}
-	if wid == "" {
-		fmt.Fprintln(stderr, "bot credential requires --workspace or KEI_WORKSPACE_ID environment variable")
-		return 2
-	}
 	baseURL, err := normalizedKeiWebURL(keiWebURL())
 	if err != nil {
 		fmt.Fprintf(stderr, "bot credential: %v\n", err)
 		return 2
+	}
+	sel, err := selectWorkspace(*workspace, baseURL)
+	if err != nil {
+		fmt.Fprintf(stderr, "bot credential: %v\n", err)
+		return 2
+	}
+	if sel.fromIDEnv {
+		fmt.Fprintln(stderr, deprecationNote)
 	}
 	cliToken, err := store.Load(baseURL)
 	if err != nil {
 		fmt.Fprintln(stderr, "bot credential: not logged in; run kei login first")
 		return 1
 	}
-	wid, err = resolveWorkspaceID(context.Background(), client, baseURL, cliToken, wid)
+	wid, err := resolveWorkspaceSelection(context.Background(), client, baseURL, cliToken, sel)
 	if err != nil {
 		fmt.Fprintf(stderr, "bot credential: %v\n", err)
 		return 1
@@ -377,7 +377,7 @@ func runBotInitCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 	platform := flags.String("platform", "", "runtime platform (cli, teams, discord, slack, whatsapp, or openwebui)")
 	agentID := flags.String("agent", "", "Kei agent ID")
 	displayName := flags.String("name", "", "installation name")
-	workspace := flags.String("workspace", "", "workspace ID or name")
+	workspace := flags.String("workspace", "", "workspace name")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -397,11 +397,12 @@ func runBotInitCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 			fmt.Fprintln(stderr, "bot init: not logged in; run kei login first")
 			return 1
 		}
-		wid, err = resolveWorkspaceID(context.Background(), client, baseURL, cliToken, wid)
+		ws, err := resolveWorkspaceByName(context.Background(), client, baseURL, cliToken, wid)
 		if err != nil {
 			fmt.Fprintf(stderr, "bot init: %v\n", err)
 			return 1
 		}
+		wid = ws.ID
 	}
 	installation, err := createBotInstallation(context.Background(), keiWebURL(), *agentID, *platform, *displayName, wid, io.Discard, client, store)
 	if err != nil {

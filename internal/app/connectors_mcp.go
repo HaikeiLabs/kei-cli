@@ -93,7 +93,7 @@ func optionalFlag(value string) *string {
 // runConnectorsCreateFromTemplate creates a connector from a catalog template
 // (HAI-489). The template's kind, read from the catalog, picks the path; only
 // mcp templates are created here.
-func runConnectorsCreateFromTemplate(f templateCreateFlags, name, workspace string, jsonOutput bool, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
+func runConnectorsCreateFromTemplate(f templateCreateFlags, name string, ws workspaceSelection, jsonOutput bool, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	if *f.label == "" {
 		fmt.Fprintln(stderr, "connectors create --template requires --label")
 		return 2
@@ -102,7 +102,7 @@ func runConnectorsCreateFromTemplate(f templateCreateFlags, name, workspace stri
 		fmt.Fprintf(stderr, "connectors create: %v\n", err)
 		return 1
 	}
-	session, ok := openConnectorSession("create", workspace, stderr, client, store)
+	session, ok := openConnectorSession("create", ws, stderr, client, store)
 	if !ok {
 		return 1
 	}
@@ -140,7 +140,7 @@ func runConnectorsCreateFromTemplate(f templateCreateFlags, name, workspace stri
 	if request.ExpectedIssuer != nil && created.ExpectedIssuer != *request.ExpectedIssuer {
 		reason := fmt.Errorf("the catalog does not support expected_issuer and created connector %s without it", created.ID)
 		if _, err := session.do(http.MethodDelete, "/"+url.PathEscape(created.ID), nil); err != nil {
-			return fail(fmt.Errorf("%w; deleting it failed (%v). Delete it with: kei connectors delete %s --workspace %s --yes", reason, err, created.ID, workspace))
+			return fail(fmt.Errorf("%w; deleting it failed (%v). Delete it with: kei connectors delete %s --workspace %s --yes", reason, err, created.ID, ws.value))
 		}
 		return fail(fmt.Errorf("%w, so it was deleted. Upgrade the catalog, or create the connector without --expected-issuer", reason))
 	}

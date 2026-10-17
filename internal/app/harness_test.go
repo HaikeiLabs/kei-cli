@@ -29,9 +29,15 @@ func TestHarnessListUsesConsoleV1ProxyAndBearer(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
-	req := fake.only(t)
-	if req.Method != http.MethodGet || req.Path != "/api/v1/runtime-installations/"+testHarnessInstallationID+"/harnesses" || req.Auth != "Bearer cli-session-token" {
-		t.Fatalf("request = %s %s auth=%q", req.Method, req.Path, req.Auth)
+	var req *consoleRequest
+	for _, r := range fake.all() {
+		if r.Path == "/api/v1/runtime-installations/"+testHarnessInstallationID+"/harnesses" {
+			r := r
+			req = &r
+		}
+	}
+	if req == nil || req.Method != http.MethodGet || req.Auth != "Bearer "+workspaceTestToken() {
+		t.Fatalf("harnesses request = %#v", fake.all())
 	}
 	if !strings.Contains(stdout, "custom") {
 		t.Fatalf("list output missing harness: %q", stdout)
@@ -52,7 +58,7 @@ func TestHarnessAddAndRemoveUseAIPResource(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("add exit=%d stderr=%s", code, stderr.String())
 	}
-	if len(calls) != 1 || calls[0].Method != http.MethodPost || calls[0].Path != harnessCollectionPath(testHarnessInstallationID) || calls[0].Auth != "Bearer cli-session-token" {
+	if len(calls) != 1 || calls[0].Method != http.MethodPost || calls[0].Path != harnessCollectionPath(testHarnessInstallationID) || calls[0].Auth != "Bearer "+workspaceTestToken() {
 		t.Fatalf("add request = %#v", calls)
 	}
 	if calls[0].Body["kind"] != "custom" || calls[0].Body["agent_id"] != "77777777-7777-7777-7777-777777777777" {
@@ -228,8 +234,14 @@ func TestHarnessListFollowsAIPPageTokens(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("list exit=%d stderr=%s", code, stderr.String())
 	}
-	if fake.count() != 2 {
-		t.Fatalf("requests=%d, want 2", fake.count())
+	pages := 0
+	for _, r := range fake.all() {
+		if r.Path == "/api/v1/runtime-installations/"+testHarnessInstallationID+"/harnesses" {
+			pages++
+		}
+	}
+	if pages != 2 {
+		t.Fatalf("harnesses pages=%d, want 2: %#v", pages, fake.all())
 	}
 	if !strings.Contains(stdout.String(), "Codex") || !strings.Contains(stdout.String(), "OpenCode") {
 		t.Fatalf("list output=%q", stdout.String())

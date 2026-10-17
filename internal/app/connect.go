@@ -63,7 +63,7 @@ func defaultConnectSteps() connectSteps {
 func runConnectCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore, steps connectSteps) int {
 	flags := flag.NewFlagSet("connect", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	workspace := flags.String("workspace", "", "workspace ID or name (default: the organization's default workspace)")
+	workspace := flags.String("workspace", "", "workspace name (default: the organization's default workspace)")
 	yes := flags.Bool("yes", false, "confirm without prompting")
 	positional, err := parsePositionals(flags, args, 1)
 	if err != nil {
@@ -109,12 +109,12 @@ func runConnectCommand(args []string, stdout, stderr io.Writer, stdin io.Reader,
 	}
 	var workspaceID, workspaceName string
 	if *workspace != "" {
-		workspaceID, err = resolveWorkspaceID(context.Background(), client, baseURL, cliToken, *workspace)
+		ws, err := resolveWorkspaceByName(context.Background(), client, baseURL, cliToken, *workspace)
 		if err != nil {
 			fmt.Fprintf(stderr, "connect: %v\n", err)
 			return 1
 		}
-		workspaceName = connectWorkspaceName(workspaces, workspaceID)
+		workspaceID, workspaceName = ws.ID, ws.Name
 	} else {
 		selected, found := pickDefaultWorkspace(workspaces)
 		if !found {
