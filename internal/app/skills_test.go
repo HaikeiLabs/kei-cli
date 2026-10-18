@@ -207,7 +207,7 @@ func TestHarnessSyncInstallsSkillsAfterRender(t *testing.T) {
 	config := runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: skillsTestToken, ProxyPath: proxy}
 
 	var stdout, stderr bytes.Buffer
-	if code := syncHarnessBundle(t.Context(), config, "claude_code", false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now); code != 0 {
+	if code := syncHarnessBundle(t.Context(), config, "claude_code", false, false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now); code != 0 {
 		t.Fatalf("sync exit=%d stderr=%s", code, stderr.String())
 	}
 	if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "demo", "SKILL.md")); err != nil {
@@ -228,7 +228,7 @@ func TestHarnessSyncWarnsWhenSkillsDenied(t *testing.T) {
 	config := runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: skillsTestToken, ProxyPath: proxy}
 
 	var stdout, stderr bytes.Buffer
-	if code := syncHarnessBundle(t.Context(), config, "claude_code", false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now); code != 0 {
+	if code := syncHarnessBundle(t.Context(), config, "claude_code", false, false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now); code != 0 {
 		t.Fatalf("sync exit=%d stderr=%s", code, stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "skills not installed") || !strings.Contains(stderr.String(), "connector_not_bound") {

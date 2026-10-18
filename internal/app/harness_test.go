@@ -333,7 +333,7 @@ func TestHarnessSyncV2PriorityPreventsSkippedDenyWithholding(t *testing.T) {
 	}))
 	defer server.Close()
 	var stdout, stderr bytes.Buffer
-	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "runtime-secret"}, "claude_code", false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now)
+	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "runtime-secret"}, "claude_code", false, false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now)
 	if code != 0 {
 		t.Fatalf("sync exit=%d stderr=%s", code, stderr.String())
 	}
@@ -390,7 +390,7 @@ func TestHarnessSyncFetchesBundleWritesManagedConfigWithBackupAndHook(t *testing
 	}))
 	defer server.Close()
 	var stdout, stderr bytes.Buffer
-	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "runtime-secret"}, "claude_code", false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now)
+	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "runtime-secret"}, "claude_code", false, false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now)
 	if code != 0 {
 		t.Fatalf("sync exit=%d stderr=%s", code, stderr.String())
 	}
@@ -437,7 +437,7 @@ func TestHarnessSyncDryRunDoesNotWrite(t *testing.T) {
 	}))
 	defer server.Close()
 	var stdout, stderr bytes.Buffer
-	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "t"}, "", true, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now)
+	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "t"}, "", true, false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now)
 	if code != 0 {
 		t.Fatalf("sync exit=%d stderr=%s", code, stderr.String())
 	}
@@ -468,7 +468,7 @@ func TestHarnessExpiredBundleRemovesOnlyManagedAllows(t *testing.T) {
 	}))
 	defer server.Close()
 	var stdout, stderr bytes.Buffer
-	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "t"}, "", false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now)
+	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "t"}, "", false, false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now)
 	if code != 0 {
 		t.Fatalf("sync exit=%d stderr=%s", code, stderr.String())
 	}
@@ -502,7 +502,7 @@ func TestHarnessSyncOpencodeCreatesConfigWhenMissing(t *testing.T) {
 	}))
 	defer server.Close()
 	var stdout, stderr bytes.Buffer
-	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "t"}, "opencode", false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now)
+	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "t"}, "opencode", false, false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now)
 	if code != 0 {
 		t.Fatalf("sync exit=%d stderr=%s", code, stderr.String())
 	}
@@ -545,7 +545,7 @@ func TestHarnessSyncCustomSkipsFiles(t *testing.T) {
 	defer server.Close()
 	var stdout, stderr bytes.Buffer
 	// HP-C11: custom is only synced when explicitly selected with --harness.
-	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "runtime-secret"}, "custom", false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now)
+	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "runtime-secret"}, "custom", false, false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now)
 	if code != 0 {
 		t.Fatalf("sync exit=%d stderr=%q", code, stderr.String())
 	}
@@ -584,7 +584,7 @@ func TestSyncReplacesStaleHarnessHook(t *testing.T) {
 	}))
 	defer server.Close()
 	var stdout, stderr bytes.Buffer
-	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "t"}, "claude_code", false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now)
+	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "t"}, "claude_code", false, false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now)
 	if code != 0 {
 		t.Fatalf("sync exit=%d stderr=%s", code, stderr.String())
 	}
@@ -685,7 +685,7 @@ func TestHarnessSyncCodexWritesKeiRulesAndReportsUnenforceable(t *testing.T) {
 	}))
 	defer server.Close()
 	var stdout, stderr bytes.Buffer
-	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "t"}, "codex", false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now)
+	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "t"}, "codex", false, false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now)
 	if code != 0 {
 		t.Fatalf("sync exit=%d stderr=%s", code, stderr.String())
 	}
@@ -799,7 +799,7 @@ func TestHarnessSyncDrivesRemoteHarness(t *testing.T) {
 	env := harness.Env{Home: t.TempDir()}
 	for _, dryRun := range []bool{true, false} {
 		var stdout, stderr bytes.Buffer
-		code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "t"}, "", dryRun, &stdout, &stderr, server.Client(), registry, env, time.Now)
+		code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "t"}, "", dryRun, false, &stdout, &stderr, server.Client(), registry, env, time.Now)
 		if code != 0 {
 			t.Fatalf("dryRun=%v exit=%d stderr=%s", dryRun, code, stderr.String())
 		}
@@ -867,7 +867,7 @@ func TestHarnessSyncCheckDetectsAndSyncHealsStaleWriter(t *testing.T) {
 	sync := func() string {
 		t.Helper()
 		var stdout, stderr bytes.Buffer
-		if code := syncHarnessBundle(t.Context(), config, "", false, &stdout, &stderr, server.Client(), harness.Default, env, time.Now); code != 0 {
+		if code := syncHarnessBundle(t.Context(), config, "", false, false, &stdout, &stderr, server.Client(), harness.Default, env, time.Now); code != 0 {
 			t.Fatalf("sync exit=%d stderr=%s", code, stderr.String())
 		}
 		if strings.Contains(stdout.String()+stderr.String(), token) {

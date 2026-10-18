@@ -99,17 +99,19 @@ func applyFiles(f fileHarness, r Rendered, opts ApplyOpts) (Result, error) {
 		denies[path] = denied
 	}
 	printRenderHints(opts.Out, f.displayName(), r)
-	if hook := f.HookSpec(opts.Env); hook != nil {
-		for path, content := range hook.Files {
-			base := outputs[path]
-			if len(base) == 0 {
-				base = stripped[path]
+	if !opts.NoHook {
+		if hook := f.HookSpec(opts.Env); hook != nil {
+			for path, content := range hook.Files {
+				base := outputs[path]
+				if len(base) == 0 {
+					base = stripped[path]
+				}
+				merged, err := f.mergeHook(base, content)
+				if err != nil {
+					return Result{}, err
+				}
+				outputs[path] = merged
 			}
-			merged, err := f.mergeHook(base, content)
-			if err != nil {
-				return Result{}, err
-			}
-			outputs[path] = merged
 		}
 	}
 	// The MCP-servers step may add a config that is not one of the targets;
