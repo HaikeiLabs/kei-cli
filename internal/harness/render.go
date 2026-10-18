@@ -154,138 +154,162 @@ type nativeEntries struct {
 	Withheld []string
 }
 
-// renderedPermit is a permit the walk would render, kept until every skipped
-// deny is known.
-type renderedPermit struct {
-	policy bundlePolicy
-	entry  string
-}
-
 func nativePermissionEntries(s nativeSyntax, harnessID string, harness *BundleHarness, subject *BundleSubject, policies []bundlePolicy) nativeEntries {
 	kind := s.kind
 	var out nativeEntries
-	var permits []renderedPermit
-	// skippedDenies are the denies with a human source the renderer cannot
-	// resolve. Each still decides before every lower-precedence policy, so an
-	// overlapping lower permit is withheld rather than rendered as an allow.
-	var skippedDenies []bundlePolicy
-	for _, policy := range policies {
-		effect := policy.Effect
+
+	// Build rules for policy.Render. All policies go through the shared
+	// renderer so deny-overlap withholding applies uniformly. harness:/agent:
+	// sources that match this harness are normalised to "*" so MatchPrincipal
+	// resolves them; non-matching harness: sources are tracked as
+	// ScopedElsewhere and skipped.
+	rules := make([]policyapi.Rule, 0, len(policies))
+	byID := make(map[string]bundlePolicy, len(policies))
+	for _, p := range policies {
+		effect := p.Effect
 		if effect == "" {
-			effect = policy.Action
+			effect = p.Action
 		}
-		if !policy.Enabled || (effect != "permit" && effect != "deny") {
+		if !p.Enabled || (effect != "permit" && effect != "deny") {
 			continue
 		}
-		dst := policy.DstPattern
+		dst := p.DstPattern
 		call := rendererCall(kind, harnessID, harness, dst)
-		scope := policy.Scope.AgentID
-		matchPolicy := harnessmatch.Policy{ID: policy.ID, Src: policy.SrcPattern, Dst: dst, Action: effect, Enabled: policy.Enabled, Scope: scope}
-		applies, human := harnessmatch.MatchSrc(matchPolicy.Src, call)
-		if human && subject != nil && policyapi.MatchPrincipal(policy.SrcPattern, subject.UserID, subject.Email, subject.Groups) {
-			// A source naming the installation's subject applies on every
-			// harness of the installation, as "*" does; agent scope and the
-			// dst still decide below.
-			applies = true
-			matchPolicy.Src = "*"
+		scope := p.Scope.AgentID
+		if scope != nil && *scope != call.AgentID {
+			if isPersonSource(p.SrcPattern) {
+				out.PersonSources++
+			}
+			continue
 		}
-		if human && !applies && isPersonSource(policy.SrcPattern) {
-			out.PersonSources++
-		}
-		if human && !applies && effect == "deny" && (scope == nil || *scope == call.AgentID) {
-			skippedDenies = append(skippedDenies, policy)
-		}
-		if !applies {
-			if strings.HasPrefix(policy.SrcPattern, "harness:") {
+		applies, human := harnessmatch.MatchSrc(p.SrcPattern, call)
+		if !applies && !human {
+			if strings.HasPrefix(p.SrcPattern, "harness:") {
 				out.OtherHarness.Count++
-				if out.OtherHarness.Example == "" || policy.SrcPattern < out.OtherHarness.Example {
-					out.OtherHarness.Example = policy.SrcPattern
+				if out.OtherHarness.Example == "" || p.SrcPattern < out.OtherHarness.Example {
+					out.OtherHarness.Example = p.SrcPattern
 				}
 			}
 			continue
 		}
+		principal := p.SrcPattern
+		if !human {
+			// harness:/agent:/* sources that match this harness are
+			// normalised to "*" so MatchPrincipal resolves them.
+			principal = "*"
+		}
+		rules = append(rules, policyapi.Rule{
+			ID:        p.ID,
+			Principal: principal,
+			Target:    p.DstPattern,
+			Effect:    policyapi.Effect(effect),
+			Priority:  p.Priority,
+			Enabled:   p.Enabled,
+		})
+		byID[p.ID] = p
+	}
+
+	if len(rules) == 0 {
+		return out
+	}
+
+	user, email := "", ""
+	var groups []string
+	if subject != nil {
+		user, email, groups = subject.UserID, subject.Email, subject.Groups
+	}
+	res := policyapi.Render(rules, user, email, groups, kind)
+
+	for _, e := range res.Entries {
+		p, ok := byID[e.RuleID]
+		if !ok {
+			continue
+		}
+		dst := p.DstPattern
 		if s.argv != nil {
-			// Argv prefix rules are all this harness can express. Every other
-			// policy that applies to it is reported, never dropped silently.
-			if scope != nil && *scope != call.AgentID {
-				continue
-			}
 			if _, ok := s.argv(dst); !ok {
-				out.Unenforceable = append(out.Unenforceable, policyDisplayName(policy))
+				out.Unenforceable = append(out.Unenforceable, policyDisplayName(p))
 				continue
 			}
 		}
-		result := harnessmatch.Evaluate(call, []harnessmatch.Policy{matchPolicy})
-		if result.Outcome != harnessmatch.OutcomePermit && result.Outcome != harnessmatch.OutcomeDeny {
-			continue
-		}
-		if result.Outcome == harnessmatch.OutcomePermit && effect != "permit" || result.Outcome == harnessmatch.OutcomeDeny && effect != "deny" {
-			continue
-		}
-		entry := ""
-		switch {
-		case s.argv != nil:
-			argv, _ := s.argv(dst)
-			entry = s.argvEntry(argv)
-		case strings.HasPrefix(dst, "shell:"):
-			tokens := strings.Fields(strings.TrimPrefix(dst, "shell:"))
-			if len(tokens) > 0 && tokens[0] != "*" {
-				entry = s.shellEntry(strings.Join(tokens, " "))
-			} else if effect == "deny" {
-				entry = s.shellEntry("*")
-			}
-		case dst == "*":
-			if effect == "deny" {
-				entry = s.shellEntry("*")
-			}
-		case strings.HasPrefix(dst, "skill:"):
-			if !s.skills {
-				continue
-			}
-			name := strings.TrimPrefix(dst, "skill:")
-			if name != "" {
-				entry = "Skill(" + name + ")"
-			}
-		case strings.HasPrefix(dst, "tool:"):
-			prefix := kind + "."
-			name := strings.TrimPrefix(dst, "tool:")
-			if strings.HasPrefix(name, prefix) && (strings.HasSuffix(name, ".bash") || strings.HasSuffix(name, ".shell")) {
-				if effect == "deny" {
-					entry = s.shellEntry("*")
-				} else {
-					continue
-				}
-			}
-		case strings.HasPrefix(dst, "path:"):
-			if !s.paths {
-				continue
-			}
-			entry = "path:" + strings.TrimPrefix(dst, "path:")
-		}
+		entry := nativeEntry(s, kind, dst, string(e.Effect))
 		if entry == "" {
 			continue
 		}
-		if effect == "permit" && strings.HasPrefix(dst, "shell:") && len(strings.Fields(strings.TrimPrefix(dst, "shell:"))) == 0 {
+		if string(e.Effect) == "permit" && strings.HasPrefix(dst, "shell:") && len(strings.Fields(strings.TrimPrefix(dst, "shell:"))) == 0 {
 			continue
 		}
-		if result.Outcome == harnessmatch.OutcomePermit {
-			permits = append(permits, renderedPermit{policy: policy, entry: entry})
+		if string(e.Effect) == "permit" {
+			out.Allows = append(out.Allows, entry)
 		} else {
 			out.Denies = append(out.Denies, entry)
 		}
 	}
-	for _, permit := range permits {
-		if blockedBySkippedDeny(permit.policy, skippedDenies) {
-			out.Withheld = append(out.Withheld, policyDisplayName(permit.policy))
+	for _, d := range res.Diagnostics {
+		if d.Kind != "withheld" {
 			continue
 		}
-		out.Allows = append(out.Allows, permit.entry)
+		p, ok := byID[d.RuleID]
+		if !ok {
+			continue
+		}
+		if d.Reason == "principal does not match" {
+			out.PersonSources++
+		} else {
+			out.Withheld = append(out.Withheld, policyDisplayName(p))
+		}
 	}
+
 	sort.Strings(out.Allows)
 	sort.Strings(out.Denies)
 	sort.Strings(out.Unenforceable)
 	sort.Strings(out.Withheld)
 	return out
+}
+
+// nativeEntry maps a dst pattern and effect to a native syntax string for
+// the given harness kind. Returns "" when the pattern has no native form.
+func nativeEntry(s nativeSyntax, kind, dst, effect string) string {
+	switch {
+	case s.argv != nil:
+		argv, _ := s.argv(dst)
+		return s.argvEntry(argv)
+	case strings.HasPrefix(dst, "shell:"):
+		tokens := strings.Fields(strings.TrimPrefix(dst, "shell:"))
+		if len(tokens) > 0 && tokens[0] != "*" {
+			return s.shellEntry(strings.Join(tokens, " "))
+		}
+		if effect == "deny" {
+			return s.shellEntry("*")
+		}
+	case dst == "*":
+		if effect == "deny" {
+			return s.shellEntry("*")
+		}
+	case strings.HasPrefix(dst, "skill:"):
+		if !s.skills {
+			return ""
+		}
+		name := strings.TrimPrefix(dst, "skill:")
+		if name != "" {
+			return "Skill(" + name + ")"
+		}
+	case strings.HasPrefix(dst, "tool:"):
+		prefix := kind + "."
+		name := strings.TrimPrefix(dst, "tool:")
+		if strings.HasPrefix(name, prefix) && (strings.HasSuffix(name, ".bash") || strings.HasSuffix(name, ".shell")) {
+			if effect == "deny" {
+				return s.shellEntry("*")
+			}
+			return ""
+		}
+	case strings.HasPrefix(dst, "path:"):
+		if !s.paths {
+			return ""
+		}
+		return "path:" + strings.TrimPrefix(dst, "path:")
+	}
+	return ""
 }
 
 // blockedBySkippedDeny reports whether a skipped deny precedes permit and

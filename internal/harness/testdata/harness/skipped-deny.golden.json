@@ -14,6 +14,7 @@
       "allows": [],
       "denies": [],
       "withheld": [
+        "allow deploy skill",
         "allow git status"
       ]
     },
@@ -32,29 +33,32 @@
     "claude_code": {
       "allows": [
         "Bash(git:*)",
-        "Bash(go test:*)",
-        "Bash(make:*)"
+        "Bash(go test:*)"
       ],
       "denies": [],
-      "withheld": []
+      "withheld": [
+        "allow make"
+      ]
     },
     "codex": {
       "allows": [
         "[\"git\"]",
-        "[\"go\", \"test\"]",
-        "[\"make\"]"
+        "[\"go\", \"test\"]"
       ],
       "denies": [],
-      "withheld": []
+      "withheld": [
+        "allow make"
+      ]
     },
     "opencode": {
       "allows": [
         "git",
-        "go test",
-        "make"
+        "go test"
       ],
       "denies": [],
-      "withheld": []
+      "withheld": [
+        "allow make"
+      ]
     }
   },
   "v1-group-deny-withholds-star-permit": {

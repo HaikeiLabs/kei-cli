@@ -353,12 +353,12 @@ func TestHarnessSyncV2PriorityPreventsSkippedDenyWithholding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// BUG (HAI-604): without Priority in the fold, both policies get priority 0
-	// and the skipped deny ("Block git" for group:ops) incorrectly precedes the
-	// permit ("Allow git status" for group:dev) at equal priority, withholding
-	// the permit. With the fix, priority 100 > 10 so the permit is rendered.
-	if !strings.Contains(string(updated), "Bash(git status:*)") {
-		t.Fatalf("v2 bundle with priority-100 permit and overlapping priority-10 skipped deny must render the permit; config:\n%s", updated)
+	// D-1: a matching deny always wins, regardless of priority. The skipped
+	// deny ("Block git" for group:ops) overlaps the permit ("Allow git status"
+	// for group:dev), so the permit is withheld even though it has higher
+	// priority (100 > 10).
+	if strings.Contains(string(updated), "Bash(git status:*)") {
+		t.Fatalf("v2 bundle with overlapping skipped deny must withhold the permit (D-1: deny wins); config:\n%s", updated)
 	}
 }
 
