@@ -8,10 +8,7 @@ import (
 	"testing"
 )
 
-const (
-	testOverrideWorkspaceID = "abababab-1111-2222-3333-444444444444"
-	wsCredStorePath         = "/api/v1/organizations/" + testProfileOrgID + "/workspaces/" + testOverrideWorkspaceID + "/credential-store"
-)
+const wsCredStorePath = "/api/v1/organizations/" + testProfileOrgID + "/workspaces/" + testWorkspaceID + "/credential-store"
 
 // TestCredentialStoreGetWorkspace (ADR-036 §10 HAI-489 test 5): --workspace
 // reads the workspace's override resource, not the organization default.
@@ -20,7 +17,7 @@ func TestCredentialStoreGetWorkspace(t *testing.T) {
 		_, _ = w.Write([]byte(testCredentialStoreJSON))
 	})
 	var stdout, stderr bytes.Buffer
-	if code := runCredentialStoreGet([]string{"--workspace", testOverrideWorkspaceID}, &stdout, &stderr, http.DefaultClient, store); code != 0 {
+	if code := runCredentialStoreGet([]string{"--workspace", "Main"}, &stdout, &stderr, http.DefaultClient, store); code != 0 {
 		t.Fatalf("get exit = %d, stderr=%s", code, stderr.String())
 	}
 	assertRequest(t, fake.only(t), http.MethodGet, wsCredStorePath)
@@ -32,7 +29,7 @@ func TestCredentialStoreGetWorkspaceNotFound(t *testing.T) {
 		_, _ = w.Write([]byte(`credential store not found`))
 	})
 	var stdout, stderr bytes.Buffer
-	if code := runCredentialStoreGet([]string{"--workspace", testOverrideWorkspaceID}, &stdout, &stderr, http.DefaultClient, store); code != 1 {
+	if code := runCredentialStoreGet([]string{"--workspace", "Main"}, &stdout, &stderr, http.DefaultClient, store); code != 1 {
 		t.Fatalf("get exit = %d, want 1", code)
 	}
 	if !strings.Contains(stderr.String(), "No credential store override") {
@@ -48,8 +45,8 @@ func TestCredentialStoreWorkspaceWritesRefused(t *testing.T) {
 		run  func([]string, io.Writer, io.Writer, *http.Client, credentialStore) int
 		args []string
 	}{
-		{name: "put", run: runCredentialStorePut, args: []string{"--workspace", testOverrideWorkspaceID, "--secret-backend", "aws-secrets-manager"}},
-		{name: "update", run: runCredentialStoreUpdate, args: []string{"--workspace", testOverrideWorkspaceID, "--status", "disabled"}},
+		{name: "put", run: runCredentialStorePut, args: []string{"--workspace", testWorkspaceID, "--secret-backend", "aws-secrets-manager"}},
+		{name: "update", run: runCredentialStoreUpdate, args: []string{"--workspace", testWorkspaceID, "--status", "disabled"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			hit := false

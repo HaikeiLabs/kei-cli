@@ -120,10 +120,6 @@ func TestModelProfilesInvalidWriteEndpointMakesNoRequest(t *testing.T) {
 
 func TestModelProfilesListWorkspaceByName(t *testing.T) {
 	fake, store := newProfileConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		if r.Path == "/api/v1/organizations/"+testProfileOrgID+"/workspaces" {
-			_, _ = w.Write([]byte(`[{"id":"` + testWorkspaceID + `","name":"Main"}]`))
-			return
-		}
 		_, _ = w.Write([]byte(`[]`))
 	})
 	var stdout, stderr bytes.Buffer
@@ -131,10 +127,10 @@ func TestModelProfilesListWorkspaceByName(t *testing.T) {
 		t.Fatalf("list exit = %d, stderr=%s", code, stderr.String())
 	}
 	requests := fake.all()
-	if len(requests) != 2 {
+	if len(requests) != 1 {
 		t.Fatalf("requests = %#v", requests)
 	}
-	assertRequest(t, requests[1], http.MethodGet, wsProfilesPath)
+	assertRequest(t, requests[0], http.MethodGet, wsProfilesPath)
 }
 
 func TestModelProfilesGetByIDAndName(t *testing.T) {
@@ -152,7 +148,7 @@ func TestModelProfilesGetByIDAndName(t *testing.T) {
 	assertRequest(t, fake.only(t), http.MethodGet, orgProfilesPath+"/"+testProfileID)
 
 	fake.reset()
-	if code := runModelProfilesGet([]string{"primary", "--workspace", testWorkspaceID}, &stdout, &stderr, http.DefaultClient, store); code != 0 {
+	if code := runModelProfilesGet([]string{"primary", "--workspace", "Main"}, &stdout, &stderr, http.DefaultClient, store); code != 0 {
 		t.Fatalf("get by name exit = %d, stderr=%s", code, stderr.String())
 	}
 	requests := fake.all()
@@ -205,8 +201,6 @@ func TestModelProfilesCreateAPIKeyFromStdinIsSealed(t *testing.T) {
 	}
 	fake, store := newProfileConsole(t, func(w http.ResponseWriter, r consoleRequest) {
 		switch r.Path {
-		case "/api/v1/organizations/" + testProfileOrgID + "/workspaces":
-			_, _ = w.Write([]byte(`[{"id":"` + testWorkspaceID + `","name":"Main"}]`))
 		case recipientsPath:
 			_, _ = w.Write([]byte(`{"credential_store_installation_id":"` + testStoreID + `","recipients":[{"runtime_installation_id":"` + testRuntimeID + `","key_id":"k1","public_key":"` + base64.RawStdEncoding.EncodeToString(private.PublicKey().Bytes()) + `"}]}`))
 		default:
@@ -220,14 +214,14 @@ func TestModelProfilesCreateAPIKeyFromStdinIsSealed(t *testing.T) {
 		t.Fatalf("create exit = %d, stderr=%s", code, stderr.String())
 	}
 	requests := fake.all()
-	if len(requests) != 3 {
+	if len(requests) != 2 {
 		t.Fatalf("requests = %#v", requests)
 	}
-	assertRequest(t, requests[1], http.MethodGet, recipientsPath)
-	if requests[1].Query != "agent_id="+testAgentID+"&workspace_id="+testWorkspaceID {
-		t.Fatalf("recipients query = %q", requests[1].Query)
+	assertRequest(t, requests[0], http.MethodGet, recipientsPath)
+	if requests[0].Query != "agent_id="+testAgentID+"&workspace_id="+testWorkspaceID {
+		t.Fatalf("recipients query = %q", requests[0].Query)
 	}
-	create := requests[2]
+	create := requests[1]
 	assertRequest(t, create, http.MethodPost, wsProfilesPath)
 	for _, r := range requests {
 		if strings.Contains(r.Raw, testAPIKey) || strings.Contains(r.Query, testAPIKey) {
@@ -344,7 +338,7 @@ func TestModelProfilesUpdateRotateKeySealsToAssignedAgentRuntimes(t *testing.T) 
 		}
 	})
 	var stdout, stderr bytes.Buffer
-	args := []string{testProfileID, "--workspace", testWorkspaceID, "--rotate-key"}
+	args := []string{testProfileID, "--workspace", "Main", "--rotate-key"}
 	if code := runModelProfilesUpdate(args, &stdout, &stderr, strings.NewReader(testAPIKey), http.DefaultClient, store); code != 0 {
 		t.Fatalf("update exit = %d, stderr=%s", code, stderr.String())
 	}
@@ -382,7 +376,7 @@ func TestModelProfilesDelete(t *testing.T) {
 	if code := runModelProfilesDelete([]string{testProfileID}, &stdout, &stderr, http.DefaultClient, store); code != 2 || fake.count() != 0 {
 		t.Fatalf("delete without --yes exit = %d, requests = %d", code, fake.count())
 	}
-	if code := runModelProfilesDelete([]string{testProfileID, "--yes", "--workspace", testWorkspaceID}, &stdout, &stderr, http.DefaultClient, store); code != 0 {
+	if code := runModelProfilesDelete([]string{testProfileID, "--yes", "--workspace", "Main"}, &stdout, &stderr, http.DefaultClient, store); code != 0 {
 		t.Fatalf("delete exit = %d, stderr=%s", code, stderr.String())
 	}
 	assertRequest(t, fake.only(t), http.MethodDelete, wsProfilesPath+"/"+testProfileID)
@@ -411,7 +405,7 @@ func TestModelProfilesSetDefaultWorkspace(t *testing.T) {
 		_, _ = w.Write([]byte(testProfileJSON))
 	})
 	var stdout, stderr bytes.Buffer
-	if code := runModelProfilesSetDefault([]string{testProfileID, "--workspace", testWorkspaceID}, &stdout, &stderr, http.DefaultClient, store); code != 0 {
+	if code := runModelProfilesSetDefault([]string{testProfileID, "--workspace", "Main"}, &stdout, &stderr, http.DefaultClient, store); code != 0 {
 		t.Fatalf("set-default exit = %d, stderr=%s", code, stderr.String())
 	}
 	got := fake.only(t)
@@ -430,13 +424,13 @@ func TestModelProfilesAssignUnassignAssignment(t *testing.T) {
 		_, _ = w.Write([]byte(`{"workspace_id":"` + testWorkspaceID + `","agent_id":"` + testAgentID + `","model_profile_id":"` + testProfileID + `"}`))
 	})
 	var stdout, stderr bytes.Buffer
-	if code := runModelProfilesAssign([]string{testProfileID, "--workspace", testWorkspaceID, "--agent", testAgentID}, &stdout, &stderr, http.DefaultClient, store); code != 0 {
+	if code := runModelProfilesAssign([]string{testProfileID, "--workspace", "Main", "--agent", testAgentID}, &stdout, &stderr, http.DefaultClient, store); code != 0 {
 		t.Fatalf("assign exit = %d, stderr=%s", code, stderr.String())
 	}
-	if code := runModelProfilesAssignment([]string{"--workspace", testWorkspaceID, "--agent", testAgentID}, &stdout, &stderr, http.DefaultClient, store); code != 0 {
+	if code := runModelProfilesAssignment([]string{"--workspace", "Main", "--agent", testAgentID}, &stdout, &stderr, http.DefaultClient, store); code != 0 {
 		t.Fatalf("assignment exit = %d, stderr=%s", code, stderr.String())
 	}
-	if code := runModelProfilesUnassign([]string{"--workspace", testWorkspaceID, "--agent", testAgentID}, &stdout, &stderr, http.DefaultClient, store); code != 0 {
+	if code := runModelProfilesUnassign([]string{"--workspace", "Main", "--agent", testAgentID}, &stdout, &stderr, http.DefaultClient, store); code != 0 {
 		t.Fatalf("unassign exit = %d, stderr=%s", code, stderr.String())
 	}
 	requests := fake.all()
@@ -457,17 +451,25 @@ func TestModelProfilesAssignUnassignAssignment(t *testing.T) {
 func TestModelProfilesWorkspaceAndAgentRequired(t *testing.T) {
 	t.Setenv("KEI_WORKSPACE_ID", "")
 	cases := map[string][]string{
-		"assign no agent":       {"assign", testProfileID, "--workspace", testWorkspaceID},
+		"assign no agent":       {"assign", testProfileID, "--workspace", "Main"},
 		"assign no workspace":   {"assign", testProfileID, "--agent", testAgentID},
-		"assign bad agent":      {"assign", testProfileID, "--workspace", testWorkspaceID, "--agent", "bot"},
+		"assign bad agent":      {"assign", testProfileID, "--workspace", "Main", "--agent", "bot"},
 		"unassign no workspace": {"unassign", "--agent", testAgentID},
-		"assignment no agent":   {"assignment", "--workspace", testWorkspaceID},
+		"assignment no agent":   {"assignment", "--workspace", "Main"},
 		"readiness no ws":       {"readiness", testProfileID},
 	}
+	// Cases without --workspace now auto-pick the default and proceed to
+	// credential check, which fails with code 1 (no token).
+	wantNoWS := 1
 	for name, args := range cases {
+		want := 2
+		switch name {
+		case "assign no workspace", "unassign no workspace", "readiness no ws":
+			want = wantNoWS
+		}
 		var stdout, stderr bytes.Buffer
-		if code := runModelProfilesCommand(args, &stdout, &stderr, nil, http.DefaultClient, &memoryCredentialStore{}); code != 2 {
-			t.Errorf("%s exit = %d, want 2 (stderr=%s)", name, code, stderr.String())
+		if code := runModelProfilesCommand(args, &stdout, &stderr, nil, http.DefaultClient, &memoryCredentialStore{}); code != want {
+			t.Errorf("%s exit = %d, want %d (stderr=%s)", name, code, want, stderr.String())
 		}
 	}
 }
@@ -477,7 +479,7 @@ func TestModelProfilesReadiness(t *testing.T) {
 		_, _ = w.Write([]byte(`{"profile_id":"` + testProfileID + `","workspace_id":"` + testWorkspaceID + `","state":"ready","runtimes":[]}`))
 	})
 	var stdout, stderr bytes.Buffer
-	if code := runModelProfilesReadiness([]string{testProfileID, "--workspace", testWorkspaceID}, &stdout, &stderr, http.DefaultClient, store); code != 0 {
+	if code := runModelProfilesReadiness([]string{testProfileID, "--workspace", "Main"}, &stdout, &stderr, http.DefaultClient, store); code != 0 {
 		t.Fatalf("readiness exit = %d, stderr=%s", code, stderr.String())
 	}
 	assertRequest(t, fake.only(t), http.MethodGet, wsProfilesPath+"/"+testProfileID+"/readiness")
@@ -609,7 +611,7 @@ func TestModelProfilesTestUsage(t *testing.T) {
 		"nothing":              {"test"},
 		"empty endpoint":       {"test", "--endpoint", ""},
 		"profile and endpoint": {"test", testProfileID, "--endpoint", "https://api.openai.com/v1"},
-		"workspace no profile": {"test", "--workspace", testWorkspaceID, "--endpoint", "https://api.openai.com/v1"},
+		"workspace no profile": {"test", "--workspace", "Main", "--endpoint", "https://api.openai.com/v1"},
 		"extra argument":       {"test", testProfileID, "extra"},
 		"unknown flag":         {"test", "--model", "m", "--endpoint", "https://api.openai.com/v1"},
 	}
@@ -637,12 +639,12 @@ func TestModelProfilesTestStoredProfile(t *testing.T) {
 		_, _ = w.Write([]byte(testProfileJSON))
 	})
 	var stdout, stderr bytes.Buffer
-	code := runModelProfilesCommand([]string{"test", testProfileID, "--workspace", testWorkspaceID}, &stdout, &stderr, nil, http.DefaultClient, store)
+	code := runModelProfilesCommand([]string{"test", testProfileID, "--workspace", "Main"}, &stdout, &stderr, nil, http.DefaultClient, store)
 	if code != 0 {
 		t.Fatalf("exit = %d, stderr=%s", code, stderr.String())
 	}
 	assertRequest(t, fake.only(t), http.MethodGet, wsProfilesPath+"/"+testProfileID)
-	want := modelProfileTestOK + "\nTo check that runtimes can reach the provider: kei model-profiles readiness " + testProfileID + " --workspace " + testWorkspaceID + "\n"
+	want := modelProfileTestOK + "\nTo check that runtimes can reach the provider: kei model-profiles readiness " + testProfileID + " --workspace Main\n"
 	if stdout.String() != want {
 		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
 	}
@@ -667,7 +669,7 @@ func TestModelProfilesTestStoredProfileInvalidEndpoint(t *testing.T) {
 		_, _ = w.Write([]byte(strings.Replace(testProfileJSON, "https://api.example.com/v1", "http://api.example.com/v1", 1)))
 	})
 	var stdout, stderr bytes.Buffer
-	if code := runModelProfilesCommand([]string{"test", testProfileID, "--workspace", testWorkspaceID}, &stdout, &stderr, nil, http.DefaultClient, store); code != 1 {
+	if code := runModelProfilesCommand([]string{"test", testProfileID, "--workspace", "Main"}, &stdout, &stderr, nil, http.DefaultClient, store); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
 	if stdout.Len() != 0 || !strings.Contains(stderr.String(), "scheme \"http\" is not https") {
@@ -727,7 +729,7 @@ func TestModelProfilesCommandDispatch(t *testing.T) {
 		{[]string{"list"}, 1},           // no token
 		{[]string{"get"}, 2},            // no profile
 		{[]string{"delete", "x"}, 2},    // no --yes
-		{[]string{"readiness", "x"}, 2}, // no workspace
+		{[]string{"readiness", "x"}, 1}, // no token — workspace auto-picked, fails at credential
 		{[]string{"test"}, 2},           // no --endpoint or profile
 	}
 	t.Setenv("KEI_WORKSPACE_ID", "")

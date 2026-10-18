@@ -66,7 +66,7 @@ func bodyKeys(body map[string]any) string {
 // is sent: an mcp connector's users connect their own accounts.
 func TestConnectorsCreateMCPFromTemplate(t *testing.T) {
 	fake, run := mcpConsole(t, map[string]string{customMCPPath: customMCPNoURL})
-	code, stdout, stderr := run("create", "--workspace", testWorkspaceID, "--kind", "mcp", "--template", "custom_mcp", "--label", "Grafana (prod)", "--mcp-url", "https://mcp.grafana.example/mcp")
+	code, stdout, stderr := run("create", "--workspace", "Main", "--kind", "mcp", "--template", "custom_mcp", "--label", "Grafana (prod)", "--mcp-url", "https://mcp.grafana.example/mcp")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -96,7 +96,7 @@ func TestConnectorsCreateMCPFromTemplate(t *testing.T) {
 // TestConnectorsCreateMCPSlugAndName: --slug and --name are sent as given.
 func TestConnectorsCreateMCPSlugAndName(t *testing.T) {
 	fake, run := mcpConsole(t, map[string]string{"/api/v1/connector-templates/grafana": grafanaTemplate})
-	code, _, stderr := run("create", "--workspace", testWorkspaceID, "--template", "grafana", "--label", "Grafana (prod)", "--slug", "grafana_prod", "--name", "grafana-prod")
+	code, _, stderr := run("create", "--workspace", "Main", "--template", "grafana", "--label", "Grafana (prod)", "--slug", "grafana_prod", "--name", "grafana-prod")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -110,7 +110,7 @@ func TestConnectorsCreateMCPSlugAndName(t *testing.T) {
 // needs no --mcp-url, and none is sent, so the catalog uses the template's.
 func TestConnectorsCreateMCPUsesTheTemplateURL(t *testing.T) {
 	fake, run := mcpConsole(t, map[string]string{"/api/v1/connector-templates/grafana": grafanaTemplate})
-	code, stdout, stderr := run("create", "--workspace", testWorkspaceID, "--template", "grafana", "--label", "Grafana (prod)")
+	code, stdout, stderr := run("create", "--workspace", "Main", "--template", "grafana", "--label", "Grafana (prod)")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -126,7 +126,7 @@ func TestConnectorsCreateMCPUsesTheTemplateURL(t *testing.T) {
 // default_url needs --mcp-url; nothing is created without it.
 func TestConnectorsCreateMCPRequiresAURLTheTemplateLacks(t *testing.T) {
 	fake, run := mcpConsole(t, map[string]string{customMCPPath: customMCPNoURL})
-	code, _, stderr := run("create", "--workspace", testWorkspaceID, "--template", "custom_mcp", "--label", "Custom")
+	code, _, stderr := run("create", "--workspace", "Main", "--template", "custom_mcp", "--label", "Custom")
 	if code != 1 || !strings.Contains(stderr, "--mcp-url") {
 		t.Fatalf("exit = %d stderr=%q, want 1 naming --mcp-url", code, stderr)
 	}
@@ -150,7 +150,7 @@ func TestConnectorsCreateTemplateKindIsChecked(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fake, run := mcpConsole(t, map[string]string{"/api/v1/connector-templates/grafana": grafanaTemplate, "/api/v1/connector-templates/linear": linear})
-			code, _, stderr := run(append([]string{"create", "--workspace", testWorkspaceID}, tc.args...)...)
+			code, _, stderr := run(append([]string{"create", "--workspace", "Main"}, tc.args...)...)
 			if code != 1 || !strings.Contains(stderr, tc.want) {
 				t.Fatalf("exit = %d stderr=%q, want 1 containing %q", code, stderr, tc.want)
 			}
@@ -165,7 +165,7 @@ func TestConnectorsCreateTemplateKindIsChecked(t *testing.T) {
 // is reported by id, and nothing is created.
 func TestConnectorsCreateUnknownTemplate(t *testing.T) {
 	fake, run := mcpConsole(t, map[string]string{})
-	code, _, stderr := run("create", "--workspace", testWorkspaceID, "--template", "nope", "--label", "X")
+	code, _, stderr := run("create", "--workspace", "Main", "--template", "nope", "--label", "X")
 	if code != 1 || !strings.Contains(stderr, `unknown connector template "nope"`) || fake.count() != 1 {
 		t.Fatalf("exit = %d stderr=%q requests=%d", code, stderr, fake.count())
 	}
@@ -193,7 +193,7 @@ func TestConnectorsCreateTemplateFlagRules(t *testing.T) {
 	} {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			fake, run := mcpConsole(t, map[string]string{})
-			code, _, stderr := run(append([]string{"create", "--workspace", testWorkspaceID}, tc.args...)...)
+			code, _, stderr := run(append([]string{"create", "--workspace", "Main"}, tc.args...)...)
 			if code != 2 || !strings.Contains(stderr, tc.want) {
 				t.Fatalf("exit = %d stderr=%q, want 2 naming %s", code, stderr, tc.want)
 			}
@@ -208,7 +208,7 @@ func TestConnectorsCreateTemplateFlagRules(t *testing.T) {
 // as written and shown when the catalog stores it.
 func TestConnectorsCreateMCPExpectedIssuer(t *testing.T) {
 	fake, run := mcpConsole(t, map[string]string{"/api/v1/connector-templates/grafana": grafanaTemplate})
-	code, stdout, stderr := run("create", "--workspace", testWorkspaceID, "--template", "grafana", "--label", "Grafana (prod)", "--expected-issuer", testIssuer)
+	code, stdout, stderr := run("create", "--workspace", "Main", "--template", "grafana", "--label", "Grafana (prod)", "--expected-issuer", testIssuer)
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -232,7 +232,7 @@ func TestConnectorsCreateMCPExpectedIssuerRejectedByCatalog(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":{"code":400,"status":"INVALID_ARGUMENT","message":"expected_issuer must be an https URL without query or fragment"}}`))
 	})
 	store.token = workspaceTestToken()
-	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", testWorkspaceID, "--template", "grafana", "--label", "G", "--expected-issuer", "http://insecure.example")
+	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--template", "grafana", "--label", "G", "--expected-issuer", "http://insecure.example")
 	if code != 1 || !strings.Contains(stderr, "expected_issuer must be an https URL") || !strings.Contains(stderr, "400") {
 		t.Fatalf("exit = %d stderr=%q", code, stderr)
 	}
@@ -255,7 +255,7 @@ func TestConnectorsCreateMCPExpectedIssuerIgnoredByAnOlderCatalog(t *testing.T) 
 		}
 	})
 	store.token = workspaceTestToken()
-	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", testWorkspaceID, "--template", "grafana", "--label", "G", "--expected-issuer", testIssuer)
+	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--template", "grafana", "--label", "G", "--expected-issuer", testIssuer)
 	if code != 1 || !strings.Contains(stderr, "does not support expected_issuer") || !strings.Contains(stderr, "deleted") {
 		t.Fatalf("exit = %d stderr=%q, want 1 explaining the catalog dropped expected_issuer and the connector was deleted", code, stderr)
 	}
@@ -280,7 +280,7 @@ func TestConnectorsCreateMCPExpectedIssuerRollbackFailure(t *testing.T) {
 		}
 	})
 	store.token = workspaceTestToken()
-	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", testWorkspaceID, "--template", "grafana", "--label", "G", "--expected-issuer", testIssuer)
+	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--template", "grafana", "--label", "G", "--expected-issuer", testIssuer)
 	if code != 1 || !strings.Contains(stderr, "kei connectors delete "+testConnectorID) {
 		t.Fatalf("exit = %d stderr=%q, want the delete command for the connector", code, stderr)
 	}
@@ -296,7 +296,7 @@ func TestConnectorsListShowsKindSlugAndMCPURL(t *testing.T) {
 	]`))
 	})
 	store.token = workspaceTestToken()
-	code, stdout, stderr := runConnectors(t, server, store, "", "list", "--workspace", testWorkspaceID)
+	code, stdout, stderr := runConnectors(t, server, store, "", "list", "--workspace", "Main")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -326,7 +326,7 @@ func TestConnectorsGetShowsMCPFields(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"` + testConnectorID + `","name":"grafana-prod","display_name":"Grafana (prod)","slug":"grafana_prod","kind":"mcp","provider":"custom_mcp","status":"pending","credential_source":"oauth","account_model":"per_user","mcp_url":"https://mcp.grafana.example/mcp","expected_issuer":"` + testIssuer + `"}`))
 	})
 	store.token = workspaceTestToken()
-	code, stdout, stderr := runConnectors(t, server, store, "", "get", testConnectorID, "--workspace", testWorkspaceID)
+	code, stdout, stderr := runConnectors(t, server, store, "", "get", testConnectorID, "--workspace", "Main")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}

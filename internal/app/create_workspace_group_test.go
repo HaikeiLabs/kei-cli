@@ -102,7 +102,7 @@ func TestGroupsCreate(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"` + testGroupID + `","name":"e2e-analysts","description":"connector e2e"}`))
 	})
 	var stdout, stderr bytes.Buffer
-	args := []string{"create", "--name", "e2e-analysts", "--description", "connector e2e", "--workspace", testWorkspaceID, "--yes"}
+	args := []string{"create", "--name", "e2e-analysts", "--description", "connector e2e", "--workspace", "Main", "--yes"}
 	if code := runGroupsCommand(args, &stdout, &stderr, strings.NewReader(""), server.Client(), store); code != 0 {
 		t.Fatalf("create exit = %d, stderr=%s", code, stderr.String())
 	}
@@ -131,8 +131,8 @@ func TestGroupsCreateRequiresNameAndYes(t *testing.T) {
 	hit := false
 	_, store := newUsersGroupsServer(t, func(w http.ResponseWriter, r *http.Request) { hit = true })
 	for _, args := range [][]string{
-		{"create", "--workspace", testWorkspaceID, "--yes"},
-		{"create", "--name", "e2e-analysts", "--workspace", testWorkspaceID},
+		{"create", "--workspace", "Main", "--yes"},
+		{"create", "--name", "e2e-analysts", "--workspace", "Main"},
 	} {
 		var stdout, stderr bytes.Buffer
 		if code := runGroupsCommand(args, &stdout, &stderr, strings.NewReader(""), http.DefaultClient, store); code != 2 {
@@ -156,7 +156,7 @@ func TestGroupsList(t *testing.T) {
 		_, _ = w.Write([]byte(testGroupsJSON()))
 	})
 	var stdout, stderr bytes.Buffer
-	if code := runGroupsCommand([]string{"list", "--workspace", testWorkspaceID}, &stdout, &stderr, strings.NewReader(""), server.Client(), store); code != 0 {
+	if code := runGroupsCommand([]string{"list", "--workspace", "Main"}, &stdout, &stderr, strings.NewReader(""), server.Client(), store); code != 0 {
 		t.Fatalf("list exit = %d, stderr=%s", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), testGroupID) || !strings.Contains(stdout.String(), "engineers") {
@@ -164,7 +164,7 @@ func TestGroupsList(t *testing.T) {
 	}
 
 	stdout.Reset()
-	if code := runGroupsCommand([]string{"list", "--workspace", testWorkspaceID, "--json"}, &stdout, &stderr, strings.NewReader(""), server.Client(), store); code != 0 {
+	if code := runGroupsCommand([]string{"list", "--workspace", "Main", "--json"}, &stdout, &stderr, strings.NewReader(""), server.Client(), store); code != 0 {
 		t.Fatalf("list --json exit = %d, stderr=%s", code, stderr.String())
 	}
 	var groups []struct {

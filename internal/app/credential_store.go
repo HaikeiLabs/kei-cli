@@ -101,12 +101,12 @@ func parseBackendConfig(command, raw string, stderr io.Writer) (map[string]strin
 func runCredentialStoreGet(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("credential-store get", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	workspace := flags.String("workspace", "", "workspace ID or name: read its override instead of the organization's store")
+	workspace := flags.String("workspace", "", "workspace name: read its override instead of the organization's store")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		fmt.Fprintln(stderr, "credential-store get takes no positional arguments")
 		return 2
 	}
-	session, ok := openOrgSession("credential-store get", *workspace, stderr, client, store)
+	session, ok := openOrgSession("credential-store get", workspaceSelection{value: *workspace}, stderr, client, store)
 	if !ok {
 		return 1
 	}
@@ -165,7 +165,7 @@ func runCredentialStorePut(args []string, stdout, stderr io.Writer, client *http
 	if !ok {
 		return 2
 	}
-	session, ok := openOrgSession("credential-store put", "", stderr, client, store)
+	session, ok := openOrgSession("credential-store put", workspaceSelection{}, stderr, client, store)
 	if !ok {
 		return 1
 	}
@@ -223,7 +223,7 @@ func runCredentialStoreUpdate(args []string, stdout, stderr io.Writer, client *h
 		fmt.Fprintln(stderr, "credential-store update requires at least one of --secret-backend, --backend-config, --secret-name-prefix, or --status")
 		return 2
 	}
-	session, ok := openOrgSession("credential-store update", "", stderr, client, store)
+	session, ok := openOrgSession("credential-store update", workspaceSelection{}, stderr, client, store)
 	if !ok {
 		return 1
 	}

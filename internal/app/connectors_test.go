@@ -52,6 +52,13 @@ func newFakeConsole(t *testing.T, respond func(w http.ResponseWriter, r consoleR
 	t.Helper()
 	fake := &fakeConsole{t: t, respond: respond}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Answer the access-aware workspace list so --workspace NAME resolves
+		// to testWorkspaceID. Not recorded: tests count console traffic.
+		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/organizations/") && strings.HasSuffix(r.URL.Path, "/workspaces") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"id":"` + testWorkspaceID + `","name":"Main"}]`))
+			return
+		}
 		raw, _ := io.ReadAll(r.Body)
 		req := consoleRequest{
 			Method:  r.Method,
@@ -74,8 +81,9 @@ func newFakeConsole(t *testing.T, respond func(w http.ResponseWriter, r consoleR
 	}))
 	t.Cleanup(server.Close)
 	t.Setenv("KEI_WEB_URL", server.URL)
+	t.Setenv("KEI_WORKSPACE", "")
 	t.Setenv("KEI_WORKSPACE_ID", "")
-	return fake, server, &memoryCredentialStore{server: server.URL, token: "cli-session-token"}
+	return fake, server, &memoryCredentialStore{server: server.URL, token: workspaceTestToken()}
 }
 
 func (f *fakeConsole) only(t *testing.T) consoleRequest {
@@ -193,7 +201,7 @@ func TestConnectorsListRendersStateAndIDs(t *testing.T) {
 	]`))
 	})
 	store.token = workspaceTestToken()
-	code, stdout, stderr := runConnectors(t, server, store, "", "list", "--workspace", testWorkspaceID)
+	code, stdout, stderr := runConnectors(t, server, store, "", "list", "--workspace", "Main")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -211,25 +219,23 @@ func TestConnectorsListRendersStateAndIDs(t *testing.T) {
 	}
 }
 
-func TestConnectorsRequireWorkspace(t *testing.T) {
-	fake, server, store := newFakeConsole(t, failOnRequest(t))
+func TestConnectorsWithoutWorkspaceAutoPicksDefault(t *testing.T) {
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		w.WriteHeader(http.StatusTeapot)
+	})
 	for _, args := range [][]string{{"list"}, {"get", testConnectorID}, {"delete", testConnectorID, "--yes"}, {"reconnect", testConnectorID}, {"connect", testConnectorID}, {"create", "--provider", "linear", "--name", "x"}} {
-		code, _, stderr := runConnectors(t, server, store, "", args...)
-		if code != 2 || !strings.Contains(stderr, "--workspace") {
-			t.Errorf("%v: exit = %d stderr=%q, want 2 naming --workspace", args, code, stderr)
+		code, _, _ := runConnectors(t, server, store, "", args...)
+		if code != 1 {
+			t.Errorf("%v: exit = %d, want 1 (console contacted)", args, code)
 		}
 	}
-	if fake.count() != 0 {
-		t.Fatal("a command without a workspace called the console")
+	if fake.count() == 0 {
+		t.Fatal("expected at least one console request (workspace was auto-picked)")
 	}
 }
 
 func TestConnectorsResolveWorkspaceByName(t *testing.T) {
 	fake, server, _ := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		if r.Path == "/api/v1/organizations/org-1/workspaces" {
-			_, _ = w.Write([]byte(`[{"id":"` + testWorkspaceID + `","name":"Main"}]`))
-			return
-		}
 		_, _ = w.Write([]byte(`[]`))
 	})
 	store := &memoryCredentialStore{server: server.URL, token: workspaceTestToken()}
@@ -237,7 +243,7 @@ func TestConnectorsResolveWorkspaceByName(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
-	if fake.count() != 2 || fake.requests[1].Query != "workspace_id="+testWorkspaceID {
+	if fake.count() != 1 || fake.requests[0].Query != "workspace_id="+testWorkspaceID {
 		t.Fatalf("requests = %#v", fake.requests)
 	}
 	if !strings.Contains(stdout, "No connectors") {
@@ -247,7 +253,7 @@ func TestConnectorsResolveWorkspaceByName(t *testing.T) {
 
 func TestConnectorsGetShowsInstanceIDStateConfigAndSecretStatus(t *testing.T) {
 	rt := newSecretConsole(t, `{"id":"`+testConnectorID+`","name":"events","provider":"tito","status":"pending","credential_source":"opaque_ref","config":{"account_slug":"acme"}}`)
-	code, stdout, stderr := runConnectors(t, rt.server, rt.store, "", "get", testConnectorID, "--workspace", testWorkspaceID)
+	code, stdout, stderr := runConnectors(t, rt.server, rt.store, "", "get", testConnectorID, "--workspace", "Main")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -263,7 +269,7 @@ func TestConnectorsGetShowsInstanceIDStateConfigAndSecretStatus(t *testing.T) {
 
 func TestConnectorsGetRequiresUUID(t *testing.T) {
 	fake, server, store := newFakeConsole(t, failOnRequest(t))
-	code, _, stderr := runConnectors(t, server, store, "", "get", "not-a-uuid", "--workspace", testWorkspaceID)
+	code, _, stderr := runConnectors(t, server, store, "", "get", "not-a-uuid", "--workspace", "Main")
 	if code != 2 || !strings.Contains(stderr, "UUID") || fake.count() != 0 {
 		t.Fatalf("exit = %d stderr=%q requests=%d", code, stderr, fake.count())
 	}
@@ -272,7 +278,7 @@ func TestConnectorsGetRequiresUUID(t *testing.T) {
 func TestConnectorsCreatePerUserOAuth(t *testing.T) {
 	fake, server, store := newFakeConsole(t, createdResponse)
 	store.token = workspaceTestToken()
-	code, stdout, stderr := runConnectors(t, server, store, "", "create", "--workspace", testWorkspaceID, "--provider", "gmail", "--name", "team-mail")
+	code, stdout, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--provider", "gmail", "--name", "team-mail")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -300,7 +306,7 @@ func TestConnectorsCreatePerUserOAuth(t *testing.T) {
 func TestConnectorsCreateSharedOAuthPointsAtReconnect(t *testing.T) {
 	fake, server, store := newFakeConsole(t, createdResponse)
 	store.token = workspaceTestToken()
-	code, stdout, stderr := runConnectors(t, server, store, "", "create", "--workspace", testWorkspaceID, "--provider", "google_drive", "--name", "shared-drive", "--account-model", "shared", "--set", "drive_id=0AbCd")
+	code, stdout, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--provider", "google_drive", "--name", "shared-drive", "--account-model", "shared", "--set", "drive_id=0AbCd")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -319,7 +325,7 @@ func TestConnectorsCreateSharedOAuthPointsAtReconnect(t *testing.T) {
 func TestConnectorsCreateSharedSecretWithCredentialRef(t *testing.T) {
 	fake, server, store := newFakeConsole(t, createdResponse)
 	store.token = workspaceTestToken()
-	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", testWorkspaceID, "--provider", "tito", "--name", "events", "--set", "account_slug=acme", "--credential-ref", "kei/prod/tito/api-token")
+	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--provider", "tito", "--name", "events", "--set", "account_slug=acme", "--credential-ref", "kei/prod/tito/api-token")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -342,7 +348,7 @@ func TestConnectorsCreateSharedSecretWithCredentialRef(t *testing.T) {
 func TestConnectorsCreateSkillsRepoPerUserWithDefaults(t *testing.T) {
 	fake, server, store := newFakeConsole(t, createdResponse)
 	store.token = workspaceTestToken()
-	code, stdout, stderr := runConnectors(t, server, store, "", "create", "--workspace", testWorkspaceID, "--provider", "skills_repo", "--name", "org-skills", "--set", "repo_url=https://github.com/HaikeiLabs/skills")
+	code, stdout, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--provider", "skills_repo", "--name", "org-skills", "--set", "repo_url=https://github.com/HaikeiLabs/skills")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -380,7 +386,7 @@ func TestConnectorsCreateSkillsRepoPerUserWithDefaults(t *testing.T) {
 func TestConnectorsCreateSkillsRepoExplicitRefAndSubdirectory(t *testing.T) {
 	fake, server, store := newFakeConsole(t, createdResponse)
 	store.token = workspaceTestToken()
-	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", testWorkspaceID, "--provider", "skills_repo", "--name", "org-skills",
+	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--provider", "skills_repo", "--name", "org-skills",
 		"--account-model", "per_user", "--set", "repo_url=https://github.com/HaikeiLabs/skills", "--set", "ref=v1.2.0", "--set", "subdirectory=/")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
@@ -394,7 +400,7 @@ func TestConnectorsCreateSkillsRepoExplicitRefAndSubdirectory(t *testing.T) {
 func TestConnectorsCreateSkillsRepoSharedTokenByCredentialRef(t *testing.T) {
 	fake, server, store := newFakeConsole(t, createdResponse)
 	store.token = workspaceTestToken()
-	code, stdout, stderr := runConnectors(t, server, store, "", "create", "--workspace", testWorkspaceID, "--provider", "skills_repo", "--name", "org-skills",
+	code, stdout, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--provider", "skills_repo", "--name", "org-skills",
 		"--set", "repo_url=https://github.com/HaikeiLabs/skills", "--credential-ref", "kei/prod/skills/github-token")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
@@ -427,7 +433,7 @@ func TestConnectorsCreateSkillsRepoRejectsLocallyBeforeSending(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			fake, server, store := newFakeConsole(t, failOnRequest(t))
 			store.token = workspaceTestToken()
-			base := []string{"create", "--workspace", testWorkspaceID, "--provider", "skills_repo", "--name", "org-skills"}
+			base := []string{"create", "--workspace", "Main", "--provider", "skills_repo", "--name", "org-skills"}
 			code, stdout, stderr := runConnectors(t, server, store, "", append(base, args...)...)
 			if code == 0 || fake.count() != 0 {
 				t.Fatalf("exit = %d requests = %d stderr=%q", code, fake.count(), stderr)
@@ -450,7 +456,7 @@ func TestConnectorsListAndGetRenderSkillsRepo(t *testing.T) {
 		_, _ = w.Write([]byte(skillsJSON))
 	})
 	store.token = workspaceTestToken()
-	code, stdout, stderr := runConnectors(t, server, store, "", "list", "--workspace", testWorkspaceID)
+	code, stdout, stderr := runConnectors(t, server, store, "", "list", "--workspace", "Main")
 	if code != 0 {
 		t.Fatalf("list exit = %d stderr=%s", code, stderr)
 	}
@@ -459,7 +465,7 @@ func TestConnectorsListAndGetRenderSkillsRepo(t *testing.T) {
 			t.Errorf("list output missing %q:\n%s", want, stdout)
 		}
 	}
-	code, stdout, stderr = runConnectors(t, server, store, "", "get", testConnectorID, "--workspace", testWorkspaceID)
+	code, stdout, stderr = runConnectors(t, server, store, "", "get", testConnectorID, "--workspace", "Main")
 	if code != 0 {
 		t.Fatalf("get exit = %d stderr=%s", code, stderr)
 	}
@@ -473,7 +479,7 @@ func TestConnectorsListAndGetRenderSkillsRepo(t *testing.T) {
 func TestConnectorsCreateSealsSecretAndSetsItWithoutSendingPlaintext(t *testing.T) {
 	const secret = "tito-live-secret-value-0123456789"
 	rt := newSecretConsole(t, "")
-	code, stdout, stderr := runConnectors(t, rt.server, rt.store, secret+"\n", "create", "--workspace", testWorkspaceID, "--provider", "tito", "--name", "events", "--set", "account_slug=acme")
+	code, stdout, stderr := runConnectors(t, rt.server, rt.store, secret+"\n", "create", "--workspace", "Main", "--provider", "tito", "--name", "events", "--set", "account_slug=acme")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -509,7 +515,7 @@ func TestConnectorsCreateWithoutRecipientsCreatesNothing(t *testing.T) {
 	const secret = "tito-live-secret-value-0123456789"
 	rt := newSecretConsole(t, "")
 	rt.noRecipients = true
-	code, stdout, stderr := runConnectors(t, rt.server, rt.store, secret+"\n", "create", "--workspace", testWorkspaceID, "--provider", "tito", "--name", "events", "--set", "account_slug=acme")
+	code, stdout, stderr := runConnectors(t, rt.server, rt.store, secret+"\n", "create", "--workspace", "Main", "--provider", "tito", "--name", "events", "--set", "account_slug=acme")
 	if code != 1 || !strings.Contains(stderr, "Nothing was created") {
 		t.Fatalf("exit = %d stderr=%q", code, stderr)
 	}
@@ -523,7 +529,7 @@ func TestConnectorsCreateReportsSetSecretFailureWithRecovery(t *testing.T) {
 	const secret = "tito-live-secret-value-0123456789"
 	rt := newSecretConsole(t, "")
 	rt.failSetSecret = true
-	code, stdout, stderr := runConnectors(t, rt.server, rt.store, secret+"\n", "create", "--workspace", testWorkspaceID, "--provider", "tito", "--name", "events", "--set", "account_slug=acme")
+	code, stdout, stderr := runConnectors(t, rt.server, rt.store, secret+"\n", "create", "--workspace", "Main", "--provider", "tito", "--name", "events", "--set", "account_slug=acme")
 	if code != 1 || !strings.Contains(stderr, testConnectorID) || !strings.Contains(stderr, "kei connectors reconnect "+testConnectorID) {
 		t.Fatalf("exit = %d stderr=%q, want the created id and the reconnect retry", code, stderr)
 	}
@@ -558,7 +564,7 @@ func TestSealConnectorSecretOpensOnlyForItsRecipient(t *testing.T) {
 func TestConnectorsCreateInvalidSecretNamesFieldWithoutEchoingIt(t *testing.T) {
 	const secret = "short"
 	fake, server, store := newFakeConsole(t, failOnRequest(t))
-	code, stdout, stderr := runConnectors(t, server, store, secret+"\n", "create", "--workspace", testWorkspaceID, "--provider", "tito", "--name", "events", "--set", "account_slug=acme")
+	code, stdout, stderr := runConnectors(t, server, store, secret+"\n", "create", "--workspace", "Main", "--provider", "tito", "--name", "events", "--set", "account_slug=acme")
 	if code != 1 || !strings.Contains(stderr, `"api_token"`) {
 		t.Fatalf("exit = %d stderr=%q", code, stderr)
 	}
@@ -570,7 +576,7 @@ func TestConnectorsCreateInvalidSecretNamesFieldWithoutEchoingIt(t *testing.T) {
 func TestConnectorsCreateRejectsServiceAccountKeyWithoutPrivateKey(t *testing.T) {
 	fake, server, store := newFakeConsole(t, failOnRequest(t))
 	key := `{"type":"service_account","client_email":"svc@example.iam.gserviceaccount.com"}`
-	code, _, stderr := runConnectors(t, server, store, key+"\n", "create", "--workspace", testWorkspaceID, "--provider", "gmail", "--name", "mail", "--account-model", "domain_delegation", "--set", "impersonate_email=events@example.com")
+	code, _, stderr := runConnectors(t, server, store, key+"\n", "create", "--workspace", "Main", "--provider", "gmail", "--name", "mail", "--account-model", "domain_delegation", "--set", "impersonate_email=events@example.com")
 	if code != 1 || !strings.Contains(stderr, `"service_account_key"`) || strings.Contains(stderr, "svc@example") || fake.count() != 0 {
 		t.Fatalf("exit = %d stderr=%q requests=%d", code, stderr, fake.count())
 	}
@@ -579,7 +585,7 @@ func TestConnectorsCreateRejectsServiceAccountKeyWithoutPrivateKey(t *testing.T)
 func TestConnectorsCreateDomainDelegationWithCredentialRef(t *testing.T) {
 	fake, server, store := newFakeConsole(t, createdResponse)
 	store.token = workspaceTestToken()
-	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", testWorkspaceID, "--provider", "gmail", "--name", "mail", "--account-model", "domain_delegation", "--set", "impersonate_email=events@example.com", "--credential-ref", "kei/prod/google/sa-key")
+	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--provider", "gmail", "--name", "mail", "--account-model", "domain_delegation", "--set", "impersonate_email=events@example.com", "--credential-ref", "kei/prod/google/sa-key")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -618,7 +624,7 @@ func TestConnectorsCreateRejectsLocallyBeforeSending(t *testing.T) {
 	for name, args := range cases {
 		t.Run(name, func(t *testing.T) {
 			fake, server, store := newFakeConsole(t, failOnRequest(t))
-			full := append([]string{"create", "--workspace", testWorkspaceID}, args...)
+			full := append([]string{"create", "--workspace", "Main"}, args...)
 			code, _, stderr := runConnectors(t, server, store, "", full...)
 			if code == 0 || stderr == "" {
 				t.Fatalf("exit = %d stderr=%q, want a local rejection", code, stderr)
@@ -633,7 +639,7 @@ func TestConnectorsCreateRejectsLocallyBeforeSending(t *testing.T) {
 func TestConnectorsCreateCRMDefaultsToCapabilitiesItsResourcesAllow(t *testing.T) {
 	fake, server, store := newFakeConsole(t, createdResponse)
 	store.token = workspaceTestToken()
-	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", testWorkspaceID, "--provider", "crm", "--name", "crm", "--set", "base_url=https://crm.example.com", "--set", "assertion_audience=kei-crm", "--credential-ref", "kei/prod/crm/api-key")
+	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--provider", "crm", "--name", "crm", "--set", "base_url=https://crm.example.com", "--set", "assertion_audience=kei-crm", "--credential-ref", "kei/prod/crm/api-key")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -650,7 +656,7 @@ func TestConnectorsCreateCRMDefaultsToCapabilitiesItsResourcesAllow(t *testing.T
 func TestConnectorsCreatePromptsForMissingRequiredConfig(t *testing.T) {
 	fake, server, store := newFakeConsole(t, createdResponse)
 	store.token = workspaceTestToken()
-	code, stdout, stderr := runConnectors(t, server, store, "acme\n", "create", "--workspace", testWorkspaceID, "--provider", "tito", "--name", "events", "--credential-ref", "kei/prod/tito/api-token")
+	code, stdout, stderr := runConnectors(t, server, store, "acme\n", "create", "--workspace", "Main", "--provider", "tito", "--name", "events", "--credential-ref", "kei/prod/tito/api-token")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -668,7 +674,7 @@ func TestConnectorsCreateSurfacesCatalogError(t *testing.T) {
 		_, _ = w.Write([]byte(`{"reason":"provider_not_supported","message":"provider must be one of gmail"}`))
 	})
 	store.token = workspaceTestToken()
-	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", testWorkspaceID, "--provider", "linear", "--name", "x")
+	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--provider", "linear", "--name", "x")
 	if code != 1 || !strings.Contains(stderr, "provider must be one of gmail") || !strings.Contains(stderr, "400") {
 		t.Fatalf("exit = %d stderr=%q", code, stderr)
 	}
@@ -677,7 +683,7 @@ func TestConnectorsCreateSurfacesCatalogError(t *testing.T) {
 func TestConnectorsReconnectPrintsConsentURL(t *testing.T) {
 	rt := newSecretConsole(t, `{"id":"`+testConnectorID+`","provider":"gmail","status":"failed","credential_source":"oauth","account_model":"shared"}`)
 	rt.authURL = "https://accounts.example.test/o/oauth2/auth?state=s"
-	code, stdout, stderr := runConnectors(t, rt.server, rt.store, "", "reconnect", testConnectorID, "--workspace", testWorkspaceID, "--no-browser")
+	code, stdout, stderr := runConnectors(t, rt.server, rt.store, "", "reconnect", testConnectorID, "--workspace", "Main", "--no-browser")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -692,7 +698,7 @@ func TestConnectorsReconnectPrintsConsentURL(t *testing.T) {
 func TestConnectorsReconnectRotatesSecretThenReactivates(t *testing.T) {
 	const secret = "tito-rotated-secret-value-9876543210"
 	rt := newSecretConsole(t, `{"id":"`+testConnectorID+`","provider":"tito","status":"failed","credential_source":"opaque_ref"}`)
-	code, stdout, stderr := runConnectors(t, rt.server, rt.store, secret+"\n", "reconnect", testConnectorID, "--workspace", testWorkspaceID)
+	code, stdout, stderr := runConnectors(t, rt.server, rt.store, secret+"\n", "reconnect", testConnectorID, "--workspace", "Main")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -717,7 +723,7 @@ func TestConnectorsReconnectRotatesSecretThenReactivates(t *testing.T) {
 func TestConnectorsReconnectPendingSecretConnectorWaitsForDelivery(t *testing.T) {
 	const secret = "tito-first-secret-value-0123456789"
 	rt := newSecretConsole(t, `{"id":"`+testConnectorID+`","provider":"tito","status":"pending","credential_source":"opaque_ref"}`)
-	code, stdout, stderr := runConnectors(t, rt.server, rt.store, secret+"\n", "reconnect", testConnectorID, "--workspace", testWorkspaceID)
+	code, stdout, stderr := runConnectors(t, rt.server, rt.store, secret+"\n", "reconnect", testConnectorID, "--workspace", "Main")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -731,7 +737,7 @@ func TestConnectorsReconnectPendingSecretConnectorWaitsForDelivery(t *testing.T)
 
 func TestConnectorsReconnectKeepSecretOnlyReactivates(t *testing.T) {
 	rt := newSecretConsole(t, `{"id":"`+testConnectorID+`","provider":"tito","status":"failed","credential_source":"opaque_ref"}`)
-	code, stdout, stderr := runConnectors(t, rt.server, rt.store, "", "reconnect", testConnectorID, "--workspace", testWorkspaceID, "--keep-secret")
+	code, stdout, stderr := runConnectors(t, rt.server, rt.store, "", "reconnect", testConnectorID, "--workspace", "Main", "--keep-secret")
 	if code != 0 || !strings.Contains(stdout, "connected") {
 		t.Fatalf("exit = %d stdout=%q stderr=%s", code, stdout, stderr)
 	}
@@ -754,7 +760,7 @@ func TestConnectorsConnectFlow(t *testing.T) {
 	})
 	store.token = workspaceTestToken()
 
-	code, stdout, stderr := runConnectors(t, server, store, "", "connect", testConnectorID, "--workspace", testWorkspaceID, "--no-browser")
+	code, stdout, stderr := runConnectors(t, server, store, "", "connect", testConnectorID, "--workspace", "Main", "--no-browser")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -796,7 +802,7 @@ func TestConnectorsConnectPollsUntilConnected(t *testing.T) {
 	connectPollSleep = func(d time.Duration) {}
 	defer func() { connectPollSleep = origSleep }()
 
-	code, stdout, stderr := runConnectors(t, server, store, "", "connect", testConnectorID, "--workspace", testWorkspaceID, "--no-browser")
+	code, stdout, stderr := runConnectors(t, server, store, "", "connect", testConnectorID, "--workspace", "Main", "--no-browser")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -822,7 +828,7 @@ func TestConnectorsConnect403(t *testing.T) {
 	})
 	store.token = workspaceTestToken()
 
-	code, _, stderr := runConnectors(t, server, store, "", "connect", testConnectorID, "--workspace", testWorkspaceID, "--no-browser")
+	code, _, stderr := runConnectors(t, server, store, "", "connect", testConnectorID, "--workspace", "Main", "--no-browser")
 	if code != 1 || !strings.Contains(stderr, "403") {
 		t.Fatalf("exit = %d stderr=%q", code, stderr)
 	}
@@ -842,7 +848,7 @@ func TestConnectorsConnect400(t *testing.T) {
 	})
 	store.token = workspaceTestToken()
 
-	code, _, stderr := runConnectors(t, server, store, "", "connect", testConnectorID, "--workspace", testWorkspaceID, "--no-browser")
+	code, _, stderr := runConnectors(t, server, store, "", "connect", testConnectorID, "--workspace", "Main", "--no-browser")
 	if code != 1 || !strings.Contains(stderr, "400") {
 		t.Fatalf("exit = %d stderr=%q", code, stderr)
 	}
@@ -872,7 +878,7 @@ func TestConnectorsConnectTimeout(t *testing.T) {
 	connectPollMaxDuration = time.Millisecond
 	defer func() { connectPollMaxDuration = origTimeout }()
 
-	code, _, stderr := runConnectors(t, server, store, "", "connect", testConnectorID, "--workspace", testWorkspaceID, "--no-browser")
+	code, _, stderr := runConnectors(t, server, store, "", "connect", testConnectorID, "--workspace", "Main", "--no-browser")
 	if code != 1 || !strings.Contains(stderr, "timed out") {
 		t.Fatalf("exit = %d stderr=%q", code, stderr)
 	}
@@ -891,7 +897,7 @@ func TestConnectorsReconnectPerUserExplains(t *testing.T) {
 		_, _ = w.Write([]byte(`{"reason":"failed_precondition","message":"each user connects their own account for this connector from the console"}`))
 	})
 	store.token = workspaceTestToken()
-	code, _, stderr := runConnectors(t, server, store, "", "reconnect", testConnectorID, "--workspace", testWorkspaceID)
+	code, _, stderr := runConnectors(t, server, store, "", "reconnect", testConnectorID, "--workspace", "Main")
 	if code != 1 || !strings.Contains(stderr, "kei connectors connect "+testConnectorID) {
 		t.Fatalf("exit = %d stderr=%q", code, stderr)
 	}
@@ -902,7 +908,7 @@ func TestConnectorsReconnectPerUserExplains(t *testing.T) {
 
 func TestConnectorsDeleteRequiresYes(t *testing.T) {
 	fake, server, store := newFakeConsole(t, failOnRequest(t))
-	code, _, stderr := runConnectors(t, server, store, "", "delete", testConnectorID, "--workspace", testWorkspaceID)
+	code, _, stderr := runConnectors(t, server, store, "", "delete", testConnectorID, "--workspace", "Main")
 	if code != 2 || !strings.Contains(stderr, "--yes") || fake.count() != 0 {
 		t.Fatalf("exit = %d stderr=%q", code, stderr)
 	}
@@ -913,7 +919,7 @@ func TestConnectorsDeleteRevokes(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"` + testConnectorID + `","status":"revoked"}`))
 	})
 	store.token = workspaceTestToken()
-	code, stdout, stderr := runConnectors(t, server, store, "", "delete", testConnectorID, "--workspace", testWorkspaceID, "--yes")
+	code, stdout, stderr := runConnectors(t, server, store, "", "delete", testConnectorID, "--workspace", "Main", "--yes")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -927,7 +933,7 @@ func TestConnectorsDeleteRevokes(t *testing.T) {
 
 func TestConnectorsNotLoggedIn(t *testing.T) {
 	_, server, _ := newFakeConsole(t, failOnRequest(t))
-	code, _, stderr := runConnectors(t, server, &memoryCredentialStore{}, "", "list", "--workspace", testWorkspaceID)
+	code, _, stderr := runConnectors(t, server, &memoryCredentialStore{}, "", "list", "--workspace", "Main")
 	if code != 1 || !strings.Contains(stderr, "kei login") {
 		t.Fatalf("exit = %d stderr=%q", code, stderr)
 	}
@@ -1103,7 +1109,7 @@ func openKMP1ForTest(sealed, runtimeInstallationID, keyID string, private *ecdh.
 func TestConnectorsCreateReadsPromptedConfigThenSecretFromOneStdin(t *testing.T) {
 	const secret = "tito-live-secret-value-0123456789"
 	rt := newSecretConsole(t, "")
-	code, stdout, stderr := runConnectors(t, rt.server, rt.store, "acme\n"+secret+"\n", "create", "--workspace", testWorkspaceID, "--provider", "tito", "--name", "events")
+	code, stdout, stderr := runConnectors(t, rt.server, rt.store, "acme\n"+secret+"\n", "create", "--workspace", "Main", "--provider", "tito", "--name", "events")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}

@@ -164,18 +164,19 @@ func parseConnectorFlags(flags *flag.FlagSet, args []string) (string, error) {
 }
 
 func connectorWorkspaceFlag(flags *flag.FlagSet) *string {
-	return flags.String("workspace", "", "workspace ID or name (or set KEI_WORKSPACE_ID)")
+	return flags.String("workspace", "", "workspace name (or set KEI_WORKSPACE)")
 }
 
-func requireConnectorWorkspace(command, workspace string, stderr io.Writer) (string, bool) {
-	if workspace == "" {
-		workspace = os.Getenv("KEI_WORKSPACE_ID")
+func requireConnectorWorkspace(command, workspace string, stderr io.Writer) (workspaceSelection, bool) {
+	sel, err := selectWorkspace(workspace, keiWebURL())
+	if err != nil {
+		fmt.Fprintf(stderr, "connectors %s: %v\n", command, err)
+		return workspaceSelection{}, false
 	}
-	if workspace == "" {
-		fmt.Fprintf(stderr, "connectors %s requires --workspace WORKSPACE (or KEI_WORKSPACE_ID)\n", command)
-		return "", false
+	if sel.fromIDEnv {
+		fmt.Fprintln(stderr, deprecationNote)
 	}
-	return workspace, true
+	return sel, true
 }
 
 func requireConnectorID(command, id string, stderr io.Writer) bool {
@@ -199,7 +200,7 @@ type connectorSession struct {
 	workspaceID string
 }
 
-func openConnectorSession(command, workspace string, stderr io.Writer, client *http.Client, store credentialStore) (*connectorSession, bool) {
+func openConnectorSession(command string, sel workspaceSelection, stderr io.Writer, client *http.Client, store credentialStore) (*connectorSession, bool) {
 	baseURL, token, ok := loadCLIWebTokenAndBaseURL(store, stderr)
 	if !ok {
 		return nil, false
@@ -209,7 +210,7 @@ func openConnectorSession(command, workspace string, stderr io.Writer, client *h
 		fmt.Fprintf(stderr, "connectors %s: %v; run kei login again\n", command, err)
 		return nil, false
 	}
-	workspaceID, err := resolveWorkspaceID(context.Background(), client, baseURL, token, workspace)
+	workspaceID, err := resolveWorkspaceSelection(context.Background(), client, baseURL, token, sel)
 	if err != nil {
 		fmt.Fprintf(stderr, "connectors %s: %v\n", command, err)
 		return nil, false
@@ -555,7 +556,7 @@ func runConnectorsReconnect(args []string, stdout, stderr io.Writer, stdin io.Re
 		return fail(fmt.Errorf("decode connector: %w", err))
 	}
 	if current.CredentialSource == string(contract.CredentialSourceOAuth) && current.AccountModel == string(contract.AccountModelPerUser) {
-		return fail(fmt.Errorf("this is a per-user connector; connect your own account with: kei connectors connect %s --workspace %s", id, ws))
+		return fail(fmt.Errorf("this is a per-user connector; connect your own account with: kei connectors connect %s --workspace %s", id, ws.value))
 	}
 
 	// A shared-secret connector reconnects with a replacement secret: a new
@@ -742,7 +743,7 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	if err != nil {
 		return fail(fmt.Errorf("%w; run kei login again", err))
 	}
-	workspaceID, err := resolveWorkspaceID(context.Background(), client, baseURL, token, ws)
+	workspaceID, err := resolveWorkspaceSelection(context.Background(), client, baseURL, token, ws)
 	if err != nil {
 		return fail(err)
 	}
@@ -764,7 +765,7 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	var delivery secretStatus
 	if secret != "" {
 		if delivery, err = session.setSecret(created.ID, sealed); err != nil {
-			return fail(fmt.Errorf("connector %s was created, but its secret %q was not set: %w. Retry with: kei connectors reconnect %s --workspace %s", created.ID, secretField.Name, err, created.ID, ws))
+			return fail(fmt.Errorf("connector %s was created, but its secret %q was not set: %w. Retry with: kei connectors reconnect %s --workspace %s", created.ID, secretField.Name, err, created.ID, ws.value))
 		}
 	}
 	if *jsonOutput {
@@ -774,13 +775,13 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	fmt.Fprintf(stdout, "Created connector %s (%s, %s).\nConnector instance ID: %s\n", created.Name, created.Provider, connectorState(created.Status), created.ID)
 	switch {
 	case request.CredentialSource == contract.CredentialSourceOAuth && model == contract.AccountModelShared:
-		fmt.Fprintf(stdout, "Next, connect the shared account: kei connectors reconnect %s --workspace %s\n", created.ID, ws)
+		fmt.Fprintf(stdout, "Next, connect the shared account: kei connectors reconnect %s --workspace %s\n", created.ID, ws.value)
 	case request.CredentialSource == contract.CredentialSourceOAuth:
-		fmt.Fprintf(stdout, "Next, connect your account: kei connectors connect %s --workspace %s\n", created.ID, ws)
+		fmt.Fprintf(stdout, "Next, connect your account: kei connectors connect %s --workspace %s\n", created.ID, ws.value)
 	case secret != "":
 		fmt.Fprintf(stdout, "Secret %q sealed and queued for delivery (generation %d); the connector becomes connected when the runtime stores it.\n", secretField.Name, delivery.Generation)
 	default:
-		fmt.Fprintf(stdout, "Once the secret is stored at its reference, activate the connector: kei connectors reconnect %s --workspace %s --keep-secret\n", created.ID, ws)
+		fmt.Fprintf(stdout, "Once the secret is stored at its reference, activate the connector: kei connectors reconnect %s --workspace %s --keep-secret\n", created.ID, ws.value)
 	}
 	return 0
 }

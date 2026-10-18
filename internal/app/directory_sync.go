@@ -103,7 +103,7 @@ func runDirectorySyncGet(args []string, stdout, stderr io.Writer, client *http.C
 		fmt.Fprintln(stderr, "directory-sync get takes no positional arguments")
 		return 2
 	}
-	session, ok := openOrgSession("directory-sync get", "", stderr, client, store)
+	session, ok := openOrgSession("directory-sync get", workspaceSelection{}, stderr, client, store)
 	if !ok {
 		return 1
 	}
@@ -172,7 +172,7 @@ func runDirectorySyncSet(args []string, stdout, stderr io.Writer, stdin io.Reade
 	if !confirmWrite(stdin, stderr, *yes, "Set directory sync "+strings.Join(changes, ", ")+"? Pass --yes to confirm without prompting.") {
 		return 2
 	}
-	session, ok := openOrgSession("directory-sync set", "", stderr, client, store)
+	session, ok := openOrgSession("directory-sync set", workspaceSelection{}, stderr, client, store)
 	if !ok {
 		return 1
 	}
@@ -202,7 +202,7 @@ func runDirectorySyncSetEnabled(enabled bool, args []string, stdout, stderr io.W
 	if !confirmWrite(stdin, stderr, *yes, strings.ToUpper(command[:1])+command[1:]+" directory sync for the organization? Pass --yes to confirm without prompting.") {
 		return 2
 	}
-	session, ok := openOrgSession("directory-sync "+command, "", stderr, client, store)
+	session, ok := openOrgSession("directory-sync "+command, workspaceSelection{}, stderr, client, store)
 	if !ok {
 		return 1
 	}
@@ -247,7 +247,7 @@ func runDirectorySyncReport(args []string, stdout, stderr io.Writer, client *htt
 		fmt.Fprintln(stderr, "directory-sync report: --limit must be at least 1")
 		return 2
 	}
-	session, ok := openOrgSession("directory-sync report", "", stderr, client, store)
+	session, ok := openOrgSession("directory-sync report", workspaceSelection{}, stderr, client, store)
 	if !ok {
 		return 1
 	}

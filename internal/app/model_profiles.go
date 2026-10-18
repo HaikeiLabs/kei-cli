@@ -174,8 +174,10 @@ type orgSession struct {
 }
 
 // openOrgSession loads the CLI token, reads its organization, and resolves
-// workspace (a name or ID) when one is given.
-func openOrgSession(command, workspace string, stderr io.Writer, client *http.Client, store credentialStore) (*orgSession, bool) {
+// the selected workspace (a name, or a UUID from the deprecated
+// KEI_WORKSPACE_ID) when one is given. An empty selection stays
+// organization-level.
+func openOrgSession(command string, sel workspaceSelection, stderr io.Writer, client *http.Client, store credentialStore) (*orgSession, bool) {
 	baseURL, token, ok := loadCLIWebTokenAndBaseURL(store, stderr)
 	if !ok {
 		return nil, false
@@ -186,8 +188,8 @@ func openOrgSession(command, workspace string, stderr io.Writer, client *http.Cl
 		return nil, false
 	}
 	session := &orgSession{client: client, baseURL: baseURL, token: token, orgID: orgID}
-	if workspace != "" {
-		workspaceID, err := resolveWorkspaceID(context.Background(), client, baseURL, token, workspace)
+	if sel.value != "" {
+		workspaceID, err := resolveWorkspaceSelection(context.Background(), client, baseURL, token, sel)
 		if err != nil {
 			fmt.Fprintf(stderr, "%s: %v\n", command, err)
 			return nil, false
@@ -353,18 +355,19 @@ func readAPIKey(stdin io.Reader, stderr io.Writer) (string, error) {
 }
 
 func profileWorkspaceFlag(flags *flag.FlagSet) *string {
-	return flags.String("workspace", "", "workspace ID or name; omit for organization-level profiles")
+	return flags.String("workspace", "", "workspace name; omit for organization-level profiles")
 }
 
-func requireProfileWorkspace(command, workspace string, stderr io.Writer) (string, bool) {
-	if workspace == "" {
-		workspace = os.Getenv("KEI_WORKSPACE_ID")
+func requireProfileWorkspace(command, workspace string, stderr io.Writer) (workspaceSelection, bool) {
+	sel, err := selectWorkspace(workspace, keiWebURL())
+	if err != nil {
+		fmt.Fprintf(stderr, "model-profiles %s: %v\n", command, err)
+		return workspaceSelection{}, false
 	}
-	if workspace == "" {
-		fmt.Fprintf(stderr, "model-profiles %s requires --workspace WORKSPACE (or KEI_WORKSPACE_ID)\n", command)
-		return "", false
+	if sel.fromIDEnv {
+		fmt.Fprintln(stderr, deprecationNote)
 	}
-	return workspace, true
+	return sel, true
 }
 
 func requireAgentID(command, agentID string, stderr io.Writer) bool {
@@ -412,7 +415,7 @@ func runModelProfilesList(args []string, stdout, stderr io.Writer, client *http.
 		fmt.Fprintln(stderr, "model-profiles list takes no positional arguments")
 		return 2
 	}
-	session, ok := openOrgSession("model-profiles list", *workspace, stderr, client, store)
+	session, ok := openOrgSession("model-profiles list", workspaceSelection{value: *workspace}, stderr, client, store)
 	if !ok {
 		return 1
 	}
@@ -459,7 +462,7 @@ func runModelProfilesGet(args []string, stdout, stderr io.Writer, client *http.C
 	if !requireProfileArg("get", id, stderr) {
 		return 2
 	}
-	session, ok := openOrgSession("model-profiles get", *workspace, stderr, client, store)
+	session, ok := openOrgSession("model-profiles get", workspaceSelection{value: *workspace}, stderr, client, store)
 	if !ok {
 		return 1
 	}
@@ -523,7 +526,7 @@ func runModelProfilesCreate(args []string, stdout, stderr io.Writer, stdin io.Re
 			return 2
 		}
 	}
-	session, ok := openOrgSession("model-profiles create", *workspace, stderr, client, store)
+	session, ok := openOrgSession("model-profiles create", workspaceSelection{value: *workspace}, stderr, client, store)
 	if !ok {
 		return 1
 	}
@@ -602,7 +605,7 @@ func runModelProfilesUpdate(args []string, stdout, stderr io.Writer, stdin io.Re
 			return 2
 		}
 	}
-	session, ok := openOrgSession("model-profiles update", *workspace, stderr, client, store)
+	session, ok := openOrgSession("model-profiles update", workspaceSelection{value: *workspace}, stderr, client, store)
 	if !ok {
 		return 1
 	}
@@ -656,7 +659,7 @@ func runModelProfilesDelete(args []string, stdout, stderr io.Writer, client *htt
 		fmt.Fprintln(stderr, "model-profiles delete requires --yes to confirm")
 		return 2
 	}
-	session, ok := openOrgSession("model-profiles delete", *workspace, stderr, client, store)
+	session, ok := openOrgSession("model-profiles delete", workspaceSelection{value: *workspace}, stderr, client, store)
 	if !ok {
 		return 1
 	}
@@ -687,7 +690,7 @@ func runModelProfilesSetDefault(args []string, stdout, stderr io.Writer, client 
 	if !requireProfileArg("set-default", id, stderr) {
 		return 2
 	}
-	session, ok := openOrgSession("model-profiles set-default", *workspace, stderr, client, store)
+	session, ok := openOrgSession("model-profiles set-default", workspaceSelection{value: *workspace}, stderr, client, store)
 	if !ok {
 		return 1
 	}
@@ -857,7 +860,7 @@ func runModelProfilesTest(args []string, stdout, stderr io.Writer, client *http.
 		fmt.Fprintln(stdout, modelProfileTestOK)
 		return 0
 	}
-	session, ok := openOrgSession("model-profiles test", *workspace, stderr, client, store)
+	session, ok := openOrgSession("model-profiles test", workspaceSelection{value: *workspace}, stderr, client, store)
 	if !ok {
 		return 1
 	}
