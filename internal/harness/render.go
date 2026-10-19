@@ -115,7 +115,7 @@ func render(s nativeSyntax, harnessID string, b Bundle) (Rendered, error) {
 	if b.Schema != BundleSchemaV2 {
 		personSkipped = entries.PersonSources
 	}
-	mcpConnectors, mcpInvalid := renderMCPConnectors(b.Connectors)
+	mcpConnectors, mcpInvalid, mcpSkipped := renderMCPConnectors(b.Connectors)
 	return Rendered{
 		Kind:                   s.kind,
 		Allows:                 entries.Allows,
@@ -127,6 +127,7 @@ func render(s nativeSyntax, harnessID string, b Bundle) (Rendered, error) {
 		PermitsWithheld:        entries.Withheld,
 		MCPConnectors:          mcpConnectors,
 		MCPInvalid:             mcpInvalid,
+		MCPSkipped:             mcpSkipped,
 		BundleVersion:          b.BundleVersion,
 		BundleDigest:           b.PayloadDigest,
 		NotAfter:               b.NotAfter,

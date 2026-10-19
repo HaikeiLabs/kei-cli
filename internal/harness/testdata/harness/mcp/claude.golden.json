@@ -5,16 +5,16 @@
     "github": {"type": "http", "url": "https://api.githubcopilot.com/mcp/"},
     "linear": {
       "type": "http",
-      "url": "http://127.0.0.1:8086/mcp/linear",
+      "url": "https://mcp.linear.example/mcp",
       "headers": {
-        "Authorization": "Bearer ${KEI_MCP_ROUTE_KEY}"
+        "Authorization": "Bearer ${KEI_MCP_LINEAR_TOKEN}"
       }
     },
     "notion": {
       "type": "http",
-      "url": "http://127.0.0.1:8086/mcp/notion",
+      "url": "https://mcp.notion.example/mcp",
       "headers": {
-        "Authorization": "Bearer ${KEI_MCP_ROUTE_KEY}"
+        "Authorization": "Bearer ${KEI_MCP_NOTION_TOKEN}"
       }
     }
   },

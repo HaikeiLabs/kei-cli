@@ -1,95 +1,32 @@
 package app
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/HaikeiLabs/kei-cli/internal/harness"
-	"github.com/HaikeiLabs/kei-connector-contracts/providers"
 )
 
-// proxySkillSource is one skills_repo connector read through `kei-proxy
-// connector invoke` (HAI-431): kei-proxy decides and audits every call and
-// holds the repository credential, so the CLI never calls the repository
-// host or reads a credential. The runtime token reaches kei-proxy only
-// through its environment.
-type proxySkillSource struct {
-	proxyPath   string
-	config      runtimeConfig
-	connectorID string
-}
-
-func (s proxySkillSource) ListSkills(ctx context.Context) (providers.SkillsRepoListing, error) {
-	var listing providers.SkillsRepoListing
-	err := s.invoke(ctx, providers.SkillsListPayload{}.Capability(), "skills", &listing)
-	return listing, err
-}
-
-func (s proxySkillSource) FetchSkill(ctx context.Context, name string) (providers.SkillsRepoArchive, error) {
-	var archive providers.SkillsRepoArchive
-	if err := providers.ValidateSkillName(name); err != nil {
-		return archive, err
-	}
-	err := s.invoke(ctx, providers.SkillsFetchPayload{}.Capability(), "skills/"+name, &archive)
-	return archive, err
-}
-
-// invoke runs one governed read and decodes its result. Anything but an
-// executed allow (a non-zero exit, a deny, no result) is an error.
-func (s proxySkillSource) invoke(ctx context.Context, capability, resource string, result any) error {
-	var stdout, stderr bytes.Buffer
-	cmd := runCommand(ctx, s.proxyPath, "connector", "invoke", "--connector", s.connectorID, "--capability", capability, "--action", "read", "--resource", resource)
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	cmd.Env = append(os.Environ(),
-		"KEI_RUNTIME_CONTROL_PLANE_URL="+s.config.ControlPlaneURL,
-		"KEI_RUNTIME_TOKEN="+s.config.RuntimeToken,
-	)
-	runErr := cmd.Run()
-	var out struct {
-		Decision   string          `json:"decision"`
-		ReasonCode string          `json:"reason_code"`
-		Reason     string          `json:"reason"`
-		Result     json.RawMessage `json:"result"`
-	}
-	decodeErr := json.Unmarshal(stdout.Bytes(), &out)
-	if decodeErr == nil && out.Decision != "" && out.Decision != "allow" {
-		return fmt.Errorf("kei-proxy denied %s %s: %s", capability, resource, joinReason(out.ReasonCode, out.Reason))
-	}
-	if runErr != nil {
-		return fmt.Errorf("kei-proxy %s %s: %w", capability, resource, runErr)
-	}
-	if decodeErr != nil || out.Decision != "allow" || len(out.Result) == 0 {
-		return fmt.Errorf("kei-proxy %s %s: no allowed result", capability, resource)
-	}
-	if err := json.Unmarshal(out.Result, result); err != nil {
-		return fmt.Errorf("kei-proxy %s %s: decode result: %w", capability, resource, err)
-	}
-	return nil
-}
-
-func joinReason(code, reason string) string {
-	switch {
-	case code != "" && reason != "":
-		return code + " (" + reason + ")"
-	case code != "":
-		return code
-	case reason != "":
-		return reason
-	}
-	return "no reason given"
-}
+// HAI-723 / ADR-039: the runtime no longer routes or invokes provider calls.
+// Skills are read directly from the repository by the harness, not through
+// kei-proxy connector invoke. The CLI renders the config; the harness
+// authenticates with the repository using the credential the runtime passes
+// through. The bundle must carry the connector's repo_url for the CLI to
+// render a skills source; until the catalog serves it, skills install is a
+// no-op with a warning.
 
 // installOrgSkills installs the bundle's permitted org skills into the
 // harnesses' skill dirs. With quiet set (from harness sync), a bundle with
 // no skills_repo connector prints nothing.
+//
+// HAI-723 / ADR-039: the runtime no longer routes provider calls, so the CLI
+// no longer reads skills through kei-proxy connector invoke. The bundle must
+// carry each skills_repo connector's repo_url for the CLI to render a source;
+// until the catalog serves it, skills install prints a warning and skips.
 func installOrgSkills(ctx context.Context, config runtimeConfig, bundle harness.Bundle, harnesses []harness.Harness, dryRun, quiet bool, stdout, stderr io.Writer, env harness.Env, now time.Time) error {
 	connectors, err := harness.SkillsRepoConnectors(bundle)
 	if err != nil {
@@ -101,17 +38,8 @@ func installOrgSkills(ctx context.Context, config runtimeConfig, bundle harness.
 		}
 		return nil
 	}
-	proxyPath := config.ProxyPath
-	if proxyPath == "" {
-		proxyPath = defaultProxyPath()
-	}
-	sources := make([]harness.SkillSource, len(connectors))
-	for i, id := range connectors {
-		sources[i] = proxySkillSource{proxyPath: proxyPath, config: config, connectorID: id}
-	}
-	result, err := harness.InstallSkills(ctx, sources, bundle, harnesses, harness.SkillsOpts{Env: env, DryRun: dryRun, Out: stdout, Now: now})
-	printLines(stderr, result.Warnings)
-	return err
+	fmt.Fprintln(stderr, "skills install: the bundle does not carry the skills_repo connector's repo_url; skills are not installed (HAI-723). The harness reads skills directly from the repository.")
+	return nil
 }
 
 func runSkillsCommand(args []string, stdout, stderr io.Writer, client *http.Client) int {

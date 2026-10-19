@@ -6,42 +6,46 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"regexp"
 	"sort"
+	"strings"
 )
 
-// BundleConnector is a connector bound to the installation's workspace. Only
-// the slug and kind are read: a harness reaches an mcp connector through
-// kei-proxy, which holds its upstream URL and credential, so nothing secret
-// is ever decoded here.
+// BundleConnector is a connector bound to the installation's workspace.
+// The slug, kind, and mcp_url are read; the harness renders the mcp_url
+// directly (ADR-039: the runtime decides and passes credentials through,
+// it no longer routes provider calls). Nothing secret is decoded here.
 //
 // TODO(HAI-485): the catalog does not serve connectors in the policy bundle
 // yet; this is the CLI's input shape until the connector kinds land.
 type BundleConnector struct {
-	Slug string `json:"slug"`
-	Kind string `json:"kind"`
+	Slug   string `json:"slug"`
+	Kind   string `json:"kind"`
+	MCPURL string `json:"mcp_url,omitempty"`
 }
 
 // mcpConnectorKind is the connector kind rendered as an MCP server.
 const mcpConnectorKind = "mcp"
 
-// mcpRoute is kei-proxy's governed MCP route (HAI-488); a server named slug
-// is reached at <base>/mcp/<slug>, and kei-proxy decides every call.
-const mcpRoute = "/mcp/"
-
-// mcpDefaultListenAddr is kei-proxy's default MCP listener.
-const mcpDefaultListenAddr = "127.0.0.1:8086"
-
 // mcpSlugRe is a slug safe as a server name in every harness config (a JSON
 // key, a bare TOML key) and as a URL path segment.
 var mcpSlugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 
-// mcpServer is one remote MCP server Kei renders.
+// mcpServer is one remote MCP server Kei renders. The URL is the connector's
+// upstream MCP endpoint (ADR-039); AuthEnvVar is the environment variable
+// name that holds the bearer token for that endpoint. The variable name is
+// derived from the slug so each connector has its own credential reference.
 type mcpServer struct {
-	Name string
-	URL  string
+	Name       string
+	URL        string
+	AuthEnvVar string
+}
+
+// mcpAuthEnvVar returns the environment variable name for a connector's
+// MCP bearer token: KEI_MCP_<SLUG_UPPER>_TOKEN.
+func mcpAuthEnvVar(slug string) string {
+	return "KEI_MCP_" + strings.ToUpper(slug) + "_TOKEN"
 }
 
 // mcpLedger records the MCP servers a sync wrote into one harness config, so
@@ -63,9 +67,11 @@ type mcpConfig interface {
 	mergeMCPServers(cfg []byte, remove []string, servers []mcpServer) (out []byte, added, skipped []string, err error)
 }
 
-// renderMCPConnectors returns the slugs of the bundle's mcp connectors,
-// sorted and unique, and the slugs that are not a valid server name.
-func renderMCPConnectors(connectors []BundleConnector) (slugs, invalid []string) {
+// renderMCPConnectors returns the bundle's mcp connectors as mcpServer
+// entries (upstream URL + auth env-var name), sorted by slug, and the
+// slugs that are not a valid server name. A connector without an mcp_url
+// is skipped with a warning.
+func renderMCPConnectors(connectors []BundleConnector) (servers []mcpServer, invalid []string, skipped []string) {
 	seen := map[string]bool{}
 	for _, c := range connectors {
 		if c.Kind != mcpConnectorKind || seen[c.Slug] {
@@ -76,44 +82,20 @@ func renderMCPConnectors(connectors []BundleConnector) (slugs, invalid []string)
 			invalid = append(invalid, c.Slug)
 			continue
 		}
-		slugs = append(slugs, c.Slug)
+		if c.MCPURL == "" {
+			skipped = append(skipped, c.Slug)
+			continue
+		}
+		servers = append(servers, mcpServer{
+			Name:       c.Slug,
+			URL:        c.MCPURL,
+			AuthEnvVar: mcpAuthEnvVar(c.Slug),
+		})
 	}
-	sort.Strings(slugs)
+	sort.Slice(servers, func(i, j int) bool { return servers[i].Name < servers[j].Name })
 	sort.Strings(invalid)
-	return slugs, invalid
-}
-
-// mcpProxyBaseURL is the base URL of the local kei-proxy daemon, from the
-// MCP listener (KEI_PROXY_MCP_LISTEN_ADDR, default 127.0.0.1:8086). A
-// wildcard or empty host is reached on loopback. When the host is not a
-// loopback address the function returns "" so the caller renders nothing.
-func mcpProxyBaseURL(env Env) string {
-	addr := env.getenv("KEI_PROXY_MCP_LISTEN_ADDR")
-	if addr == "" {
-		addr = mcpDefaultListenAddr
-	}
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil || port == "" {
-		host, port, _ = net.SplitHostPort(mcpDefaultListenAddr)
-	}
-	if ip := net.ParseIP(host); host == "" || ip != nil && ip.IsUnspecified() {
-		host = "127.0.0.1"
-	}
-	if !isLoopbackHost(host) {
-		return ""
-	}
-	return "http://" + net.JoinHostPort(host, port)
-}
-
-// isLoopbackHost reports whether host is a loopback address or localhost.
-func isLoopbackHost(host string) bool {
-	if host == "" || host == "localhost" {
-		return true
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		return ip.IsLoopback()
-	}
-	return false
+	sort.Strings(skipped)
+	return servers, invalid, skipped
 }
 
 // applyMCPServers is the MCP-servers render step of applyFiles. It merges
@@ -137,6 +119,9 @@ func applyMCPServers(f fileHarness, r Rendered, env Env, out io.Writer, prior *m
 	for _, slug := range r.MCPInvalid {
 		fmt.Fprintf(out, "%s: MCP connector %q not rendered; its slug is not a valid server name\n", f.displayName(), slug)
 	}
+	for _, slug := range r.MCPSkipped {
+		fmt.Fprintf(out, "%s: MCP connector %q not rendered; no upstream mcp_url in the bundle\n", f.displayName(), slug)
+	}
 	if len(remove) == 0 && len(r.MCPConnectors) == 0 {
 		return nil, nil
 	}
@@ -148,18 +133,7 @@ func applyMCPServers(f fileHarness, r Rendered, env Env, out io.Writer, prior *m
 		}
 		inputs[path], base = cfg, cfg
 	}
-	routeBase := mcpProxyBaseURL(env)
-	if routeBase == "" {
-		if len(r.MCPConnectors) > 0 {
-			fmt.Fprintf(out, "%s: MCP connectors not rendered; KEI_PROXY_MCP_LISTEN_ADDR must be a loopback address\n", f.displayName())
-		}
-		return nil, nil
-	}
-	servers := make([]mcpServer, len(r.MCPConnectors))
-	for i, slug := range r.MCPConnectors {
-		servers[i] = mcpServer{Name: slug, URL: routeBase + mcpRoute + slug}
-	}
-	merged, added, skipped, err := m.mergeMCPServers(base, remove, servers)
+	merged, added, skipped, err := m.mergeMCPServers(base, remove, r.MCPConnectors)
 	if err != nil {
 		return nil, fmt.Errorf("render MCP servers into %s: %w", path, err)
 	}

@@ -13,10 +13,10 @@ model = "gpt-5-mini"
 
 [mcp_servers.linear]
 # managed by kei harness sync
-url = "http://127.0.0.1:8086/mcp/linear"
-bearer_token_env_var = "KEI_MCP_ROUTE_KEY"
+url = "https://mcp.linear.example/mcp"
+bearer_token_env_var = "KEI_MCP_LINEAR_TOKEN"
 
 [mcp_servers.notion]
 # managed by kei harness sync
-url = "http://127.0.0.1:8086/mcp/notion"
-bearer_token_env_var = "KEI_MCP_ROUTE_KEY"
+url = "https://mcp.notion.example/mcp"
+bearer_token_env_var = "KEI_MCP_NOTION_TOKEN"

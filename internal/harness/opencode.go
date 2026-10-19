@@ -467,9 +467,10 @@ func (openCode) mcpConfigPath(env Env) string {
 	return path
 }
 
-// mergeMCPServers renders each server as an enabled remote server.
+// mergeMCPServers renders each server as an enabled remote server at its
+// upstream URL, with auth by environment-variable reference (ADR-039).
 func (openCode) mergeMCPServers(cfg []byte, remove []string, servers []mcpServer) ([]byte, []string, []string, error) {
 	return mergeMCPServersJSON(cfg, "mcp", remove, servers, func(s mcpServer) *orderedObject {
-		return orderedEntry("type", "remote", "url", s.URL, "enabled", true, "headers", orderedEntry("Authorization", "Bearer {env:KEI_MCP_ROUTE_KEY}"))
+		return orderedEntry("type", "remote", "url", s.URL, "enabled", true, "headers", orderedEntry("Authorization", "Bearer {env:"+s.AuthEnvVar+"}"))
 	})
 }
