@@ -42,6 +42,27 @@ func TestSetupWritesProtectedConfigWithoutPrintingToken(t *testing.T) {
 	}
 }
 
+func TestSetupDefaultControlPlaneURL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "kei.yaml")
+	var stdout, stderr strings.Builder
+	if code := runSetupCommand([]string{
+		"--config", path,
+		"--runtime-token", "test-token",
+		"--harness-url", "http://127.0.0.1:8088",
+		"--proxy-path", "/tmp/kei-proxy",
+		"--skip-verify",
+	}, &stdout, &stderr, strings.NewReader(""), &http.Client{}); code != 0 {
+		t.Fatalf("setup exit = %d, stderr = %s", code, stderr.String())
+	}
+	config, err := loadRuntimeConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.ControlPlaneURL != "https://runtime.haikeilabs.com" {
+		t.Fatalf("default control-plane URL = %q, want https://runtime.haikeilabs.com", config.ControlPlaneURL)
+	}
+}
+
 func TestVerifyRuntimeToken(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Path != "/api/v1/runtime/whoami" || r.Header.Get("Authorization") != "Bearer runtime-secret" {
