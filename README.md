@@ -109,7 +109,7 @@ in shell history):
 
 ```sh
 kei setup \
-  --control-plane-url https://app.haikeilabs.com \
+  --control-plane-url https://runtime.haikeilabs.com \
   --runtime-token RUNTIME_INSTALLATION_TOKEN
 ```
 
