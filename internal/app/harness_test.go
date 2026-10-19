@@ -387,6 +387,9 @@ func TestHarnessSyncFetchesBundleWritesManagedConfigWithBackupAndHook(t *testing
 			return
 		}
 		if r.Method == http.MethodPatch {
+			if r.URL.Query().Get("update_mask") == "installed_skills" {
+				return
+			}
 			if r.URL.Path != "/api/v1/runtime/harnesses/"+harnessID || r.URL.Query().Get("update_mask") != "last_synced_at,last_synced_bundle_version,last_synced_digest" {
 				t.Errorf("sync report request = %s?%s", r.URL.Path, r.URL.RawQuery)
 			}
@@ -799,6 +802,9 @@ func TestHarnessSyncDrivesRemoteHarness(t *testing.T) {
 		case r.URL.Path == "/api/v1/runtime/policy-bundles/current":
 			_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v1","bundle_id":"b","bundle_version":3,"policy_revision":1,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harness_match_semantics":"kei.harness-match/v1","harnesses":[{"agent_id":"` + agentID + `","kind":"remote_test"}],"policy_set":{"policies":[]}}`))
 		case r.Method == http.MethodPatch && r.URL.Path == "/api/v1/runtime/harnesses/"+agentID:
+			if r.URL.Query().Get("update_mask") == "installed_skills" {
+				return
+			}
 			reported++
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
@@ -1185,5 +1191,165 @@ func TestHarnessSyncManifestSync400(t *testing.T) {
 	}
 	if strings.Contains(out, token) || strings.Contains(errStr, token) {
 		t.Fatalf("token leaked in output\nstdout=%q\nstderr=%q", out, errStr)
+	}
+}
+
+// reportedHarnessPatch is one PATCH the sync sent to the control plane.
+type reportedHarnessPatch struct {
+	mask string
+	body map[string]any
+}
+
+// harnessSyncReportServer serves whoami and a v1 bundle that registers one
+// claude_code harness, and records every PATCH the sync sends. A non-zero
+// installedSkillsStatus is returned for the installed_skills PATCH.
+func harnessSyncReportServer(t *testing.T, harnessID string, installedSkillsStatus int) (*httptest.Server, *[]reportedHarnessPatch) {
+	t.Helper()
+	patches := &[]reportedHarnessPatch{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer runtime-secret" {
+			t.Errorf("request %s auth=%q", r.URL.Path, r.Header.Get("Authorization"))
+		}
+		switch r.URL.Path {
+		case "/api/v1/runtime/whoami":
+			_, _ = w.Write([]byte(`{"id":"runtime-id","org_id":"org-id","platform":"cli"}`))
+			return
+		case "/api/v1/runtime/policy-bundles/current":
+			_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v1","bundle_id":"bundle-1","bundle_version":2,"policy_revision":4,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harness_match_semantics":"kei.harness-match/v1","harnesses":[{"agent_id":"` + harnessID + `","kind":"claude_code"}],"policy_set":{"policies":[{"id":"p1","src_pattern":"*","dst_pattern":"shell:kei command","effect":"permit","enabled":true}]}}`))
+			return
+		}
+		if r.Method == http.MethodPatch {
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode %s body: %v", r.URL.Path, err)
+			}
+			mask := r.URL.Query().Get("update_mask")
+			*patches = append(*patches, reportedHarnessPatch{mask: mask, body: body})
+			if mask == "installed_skills" && installedSkillsStatus != 0 {
+				w.WriteHeader(installedSkillsStatus)
+			}
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+	return server, patches
+}
+
+func installedSkillsPatch(t *testing.T, patches []reportedHarnessPatch) reportedHarnessPatch {
+	t.Helper()
+	for _, patch := range patches {
+		if patch.mask == "installed_skills" {
+			return patch
+		}
+	}
+	t.Fatalf("sync sent no installed_skills PATCH: %#v", patches)
+	return reportedHarnessPatch{}
+}
+
+func syncHarnessForSkillsReport(t *testing.T, server *httptest.Server) (int, string, string) {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "runtime-secret"}, "claude_code", false, false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now)
+	return code, stdout.String(), stderr.String()
+}
+
+// HAI-641: only HaikeiLabs/skills lock entries are reported, matched
+// case-insensitively, and the body carries names and versions only.
+func TestHarnessSyncReportsInstalledHaikeiSkills(t *testing.T) {
+	home := skillsHome(t)
+	t.Chdir(t.TempDir())
+	writeSkillsLock(t, filepath.Join(home, ".agents", ".skill-lock.json"), map[string]map[string]string{
+		"haikei":        haikeiLockEntry("0123456789abcdef0123"),
+		"kei-cli":       {"source": "haikeilabs/SKILLS", "skillFolderHash": "fedcba9876543210abcd"},
+		"skill-creator": {"source": "anthropics/skills", "skillFolderHash": "deadbeefdeadbeef"},
+	})
+
+	server, patches := harnessSyncReportServer(t, testHarnessInstallationID, 0)
+	code, _, stderr := syncHarnessForSkillsReport(t, server)
+	if code != 0 {
+		t.Fatalf("sync exit=%d stderr=%s", code, stderr)
+	}
+	patch := installedSkillsPatch(t, *patches)
+	if len(patch.body) != 1 {
+		t.Fatalf("installed skills body has keys %v, want only installed_skills", patch.body)
+	}
+	entries, ok := patch.body["installed_skills"].([]any)
+	if !ok {
+		t.Fatalf("installed_skills = %#v, want a list", patch.body["installed_skills"])
+	}
+	if len(entries) != 2 {
+		t.Fatalf("reported %d skills, want the 2 Haikei ones: %#v", len(entries), entries)
+	}
+	got := map[string]string{}
+	for _, item := range entries {
+		entry, ok := item.(map[string]any)
+		if !ok || len(entry) != 2 {
+			t.Fatalf("skill entry = %#v, want only name and version", item)
+		}
+		name, _ := entry["name"].(string)
+		version, _ := entry["version"].(string)
+		got[name] = version
+	}
+	want := map[string]string{"haikei": "0123456789ab", "kei-cli": "fedcba987654"}
+	if len(got) != len(want) {
+		t.Fatalf("reported skills = %#v, want %#v", got, want)
+	}
+	for name, version := range want {
+		if got[name] != version {
+			t.Errorf("%s version = %q, want %q", name, got[name], version)
+		}
+	}
+	if _, ok := got["skill-creator"]; ok {
+		t.Fatalf("reported a non-Haikei skill: %#v", got)
+	}
+	// Deterministic order keeps the report diffable.
+	if first, _ := entries[0].(map[string]any); first["name"] != "haikei" {
+		t.Errorf("entries are not sorted by name: %#v", entries)
+	}
+}
+
+// HAI-641: no lock file means the sync reports an empty set, not an omission.
+func TestHarnessSyncReportsNoInstalledSkillsWithoutLockFile(t *testing.T) {
+	skillsHome(t)
+	t.Chdir(t.TempDir())
+
+	server, patches := harnessSyncReportServer(t, testHarnessInstallationID, 0)
+	code, _, stderr := syncHarnessForSkillsReport(t, server)
+	if code != 0 {
+		t.Fatalf("sync exit=%d stderr=%s", code, stderr)
+	}
+	patch := installedSkillsPatch(t, *patches)
+	entries, ok := patch.body["installed_skills"].([]any)
+	if !ok || len(entries) != 0 {
+		t.Fatalf("installed_skills = %#v, want an empty list", patch.body["installed_skills"])
+	}
+}
+
+// HAI-641: the catalog side may not accept the field yet. A 404 only warns;
+// the sync still exits 0.
+func TestHarnessSyncWarnsWhenInstalledSkillsReportFails(t *testing.T) {
+	home := skillsHome(t)
+	t.Chdir(t.TempDir())
+	writeSkillsLock(t, filepath.Join(home, ".agents", ".skill-lock.json"), map[string]map[string]string{
+		"haikei": haikeiLockEntry("0123456789abcdef0123"),
+	})
+
+	server, _ := harnessSyncReportServer(t, testHarnessInstallationID, http.StatusNotFound)
+	code, _, stderr := syncHarnessForSkillsReport(t, server)
+	if code != 0 {
+		t.Fatalf("sync exit=%d, want 0 when only the skills report fails; stderr=%s", code, stderr)
+	}
+	warnings := 0
+	for _, line := range strings.Split(strings.TrimSpace(stderr), "\n") {
+		if strings.Contains(line, "installed skills") {
+			warnings++
+			if !strings.Contains(line, "HTTP 404") {
+				t.Errorf("warning does not name the failure: %q", line)
+			}
+		}
+	}
+	if warnings != 1 {
+		t.Fatalf("want exactly one warning line, got %d; stderr=%s", warnings, stderr)
 	}
 }
