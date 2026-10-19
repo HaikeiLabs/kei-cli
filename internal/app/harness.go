@@ -446,6 +446,7 @@ func runHarnessSync(args []string, stdout, stderr io.Writer, client *http.Client
 	check := flags.Bool("check", false, "report drift between native config, the sync ledger and the current bundle; exit 1 on drift, 2 on error")
 	jsonOutput := flags.Bool("json", false, "with --check, print a machine-readable report ("+harness.DriftSchema+")")
 	openWebUIURL := flags.String("url", "", "with --harness openwebui, the Open WebUI base URL to report on (admin token from OPENWEBUI_ADMIN_TOKEN)")
+	installSkills := flags.Bool("install-skills", false, "check the Haikei skills after the sync and offer to update them now")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		return 2
 	}
@@ -535,7 +536,11 @@ func runHarnessSync(args []string, stdout, stderr io.Writer, client *http.Client
 	if manifestToolDefs != nil {
 		return syncManifestTools(context.Background(), config, *manifestPath, manifestToolDefs, stdout, stderr, client)
 	}
-	return syncHarnessBundle(context.Background(), config, *kindFilter, *dryRun, *noHook, stdout, stderr, client, registry, harness.OSEnv(), time.Now)
+	code := syncHarnessBundle(context.Background(), config, *kindFilter, *dryRun, *noHook, stdout, stderr, client, registry, harness.OSEnv(), time.Now)
+	if code == 0 && !*dryRun {
+		maybePromptSkillsUpdate(skillsPromptStdin, isTerminalReader(skillsPromptStdin), stdout, stderr, client, *installSkills)
+	}
+	return code
 }
 
 // syncManifestTools PUTs the --manifest tool definitions to the Kei catalog.
