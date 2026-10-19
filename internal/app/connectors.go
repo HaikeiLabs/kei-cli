@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -121,6 +122,8 @@ func runConnectorsCommand(args []string, stdout, stderr io.Writer, stdin io.Read
 	switch args[0] {
 	case "create":
 		return runConnectorsCreate(args[1:], stdout, stderr, stdin, client, store)
+	case "test":
+		return runConnectorsTest(args[1:], stdout, stderr, client, store)
 	case "list":
 		return runConnectorsList(args[1:], stdout, stderr, client, store)
 	case "get":
@@ -633,6 +636,71 @@ func runConnectorsDelete(args []string, stdout, stderr io.Writer, client *http.C
 	return 0
 }
 
+func runConnectorsTest(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
+	flags := flag.NewFlagSet("connectors test", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	workspace := connectorWorkspaceFlag(flags)
+	id, err := parseConnectorFlags(flags, args)
+	if err != nil || id == "" {
+		fmt.Fprintln(stderr, "connectors test requires a connector name or ID")
+		return 2
+	}
+	ws, ok := requireConnectorWorkspace("test", *workspace, stderr)
+	if !ok {
+		return 2
+	}
+	session, ok := openConnectorSession("test", ws, stderr, client, store)
+	if !ok {
+		return 1
+	}
+	resolved, err := resolveConnectorID(session, id)
+	if err != nil {
+		fmt.Fprintf(stderr, "connectors test: %v\n", err)
+		return 1
+	}
+	connectorBody, err := session.do(http.MethodGet, "/"+url.PathEscape(resolved), nil)
+	if err != nil {
+		fmt.Fprintln(stdout, "Decision: deny\nReason: connector lookup unavailable")
+		return 0
+	}
+	var target connector
+	if err := json.Unmarshal(connectorBody, &target); err != nil || len(target.Capabilities) == 0 {
+		fmt.Fprintln(stdout, "Decision: no_match\nReason: connector has no testable capability")
+		return 0
+	}
+	principal, err := userPrincipalFromCLIToken(session.token)
+	if err != nil {
+		fmt.Fprintln(stdout, "Decision: deny\nReason: calling user is unavailable in the login token")
+		return 0
+	}
+	orgID, err := organizationIDFromCLIToken(session.token)
+	if err != nil {
+		fmt.Fprintln(stdout, "Decision: deny\nReason: organization is unavailable in the login token")
+		return 0
+	}
+	testRequest := map[string]string{"as": principal, "target": "connector:" + target.Name}
+	api := &apiSession{client: session.client, baseURL: session.baseURL, token: session.token, orgID: orgID}
+	var result struct {
+		Decision  string `json:"decision"`
+		DecidedBy string `json:"decided_by"`
+	}
+	_, body, err := api.do(http.MethodPost, "/api/v1/organizations/"+url.PathEscape(orgID)+"/workspaces/"+url.PathEscape(session.workspaceID)+"/policies:test", nil, testRequest)
+	if err != nil {
+		fmt.Fprintln(stdout, "Decision: deny\nReason: smoke test unavailable")
+		return 0
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		fmt.Fprintf(stdout, "Smoke test unavailable: deny (invalid test response)\n")
+		return 0
+	}
+	reason := "no matching policy"
+	if result.DecidedBy != "" {
+		reason = "decided by policy " + result.DecidedBy
+	}
+	fmt.Fprintf(stdout, "Capability: %s\nDecision: %s\nReason: %s\n", target.Capabilities[0].Name, result.Decision, reason)
+	return 0
+}
+
 // setupValues collects repeated --set name=value flags.
 type setupValues map[string]string
 
@@ -647,6 +715,18 @@ func (s setupValues) Set(value string) error {
 	return nil
 }
 
+type repeatedStrings []string
+
+func (s *repeatedStrings) String() string { return strings.Join(*s, ",") }
+func (s *repeatedStrings) Set(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return errors.New("value cannot be empty")
+	}
+	*s = append(*s, value)
+	return nil
+}
+
 func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("connectors create", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -658,6 +738,9 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	flags.Var(values, "set", "non-secret setup field as name=value (repeatable)")
 	credentialRef := flags.String("credential-ref", "", "existing secret-manager reference for the provider's secret field")
 	capabilitiesFlag := flags.String("capabilities", "", "comma-separated capabilities (default: the provider's read capabilities)")
+	var allowGroups repeatedStrings
+	flags.Var(&allowGroups, "allow-group", "group name to allow (repeatable)")
+	yes := flags.Bool("yes", false, "confirm without prompting")
 	httpAPI := registerHTTPAPIFlags(flags)
 	fromTemplate := registerTemplateCreateFlags(flags)
 	jsonOutput := flags.Bool("json", false, "output as JSON")
@@ -673,7 +756,7 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 		return 2
 	}
 	if *fromTemplate.template != "" {
-		return runConnectorsCreateFromTemplate(fromTemplate, *name, ws, *jsonOutput, stdout, stderr, client, store)
+		return runConnectorsCreateFromTemplate(fromTemplate, *name, ws, splitList(*capabilitiesFlag), allowGroups, *yes, stdin, *jsonOutput, stdout, stderr, client, store)
 	}
 	provider := contract.Provider(*providerFlag)
 	if !slices.Contains(offeredConnectorProviders, provider) {
@@ -748,6 +831,19 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 		return fail(err)
 	}
 	session := &connectorSession{client: client, baseURL: baseURL, token: token, orgID: orgID, workspaceID: workspaceID}
+	groupIDs, err := resolveConnectorGroupIDs(session, allowGroups)
+	if err != nil {
+		return fail(err)
+	}
+	orgName, err := getOrganizationName(context.Background(), client, baseURL, token, orgID)
+	if err != nil {
+		return fail(err)
+	}
+	workspaceName := workspaceNameByID(context.Background(), client, baseURL, token, orgID, workspaceID)
+	fmt.Fprintf(stdout, "Organization: %s\nWorkspace: %s\n", orgName, workspaceName)
+	if !confirmWrite(stdin, stderr, *yes, "Create connector "+*name+"? This may grant the selected groups access.") {
+		return 2
+	}
 	var sealed setSecretRequest
 	if secret != "" {
 		if sealed, err = session.sealForWorkspace(secretField.Name, secret); err != nil {
@@ -761,6 +857,26 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	var created connector
 	if err := json.Unmarshal(payload, &created); err != nil {
 		return fail(fmt.Errorf("decode response: %w", err))
+	}
+	if err := createConnectorGroupAllows(session, groupIDs, allowGroups, *name); err != nil {
+		return fail(fmt.Errorf("connector created, but group allow policy failed: %w", err))
+	}
+	for attempt := 0; len(allowGroups) > 0 && attempt < 3; attempt++ {
+		latestBody, pollErr := session.do(http.MethodGet, "/"+url.PathEscape(created.ID), nil)
+		if pollErr != nil {
+			break
+		}
+		var latest connector
+		if json.Unmarshal(latestBody, &latest) != nil {
+			break
+		}
+		created.Status = latest.Status
+		if latest.Status == string(contract.StatusActive) {
+			break
+		}
+		if attempt < 2 {
+			connectPollSleep(250 * time.Millisecond)
+		}
 	}
 	var delivery secretStatus
 	if secret != "" {
@@ -784,6 +900,96 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 		fmt.Fprintf(stdout, "Once the secret is stored at its reference, activate the connector: kei connectors reconnect %s --workspace %s --keep-secret\n", created.ID, ws.value)
 	}
 	return 0
+}
+
+func workspaceNameByID(ctx context.Context, client *http.Client, baseURL, token, orgID, workspaceID string) string {
+	workspaces, err := listWorkspaces(ctx, client, baseURL, token)
+	if err == nil {
+		for _, ws := range workspaces {
+			if ws.ID == workspaceID {
+				return ws.Name
+			}
+		}
+	}
+	return workspaceID
+}
+
+func resolveConnectorID(s *connectorSession, name string) (string, error) {
+	if _, err := uuid.Parse(name); err == nil {
+		return name, nil
+	}
+	body, err := s.do(http.MethodGet, "", nil)
+	if err != nil {
+		return "", err
+	}
+	var list []connector
+	if err := json.Unmarshal(body, &list); err != nil {
+		return "", err
+	}
+	for _, item := range list {
+		if item.Name == name {
+			return item.ID, nil
+		}
+	}
+	return "", fmt.Errorf("connector %q not found", name)
+}
+
+func userPrincipalFromCLIToken(token string) (string, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return "", errors.New("invalid login token")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", errors.New("invalid login token")
+	}
+	var claims struct {
+		Subject string `json:"sub"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil || strings.TrimSpace(claims.Subject) == "" {
+		return "", errors.New("user claim missing")
+	}
+	return "user:" + claims.Subject, nil
+}
+
+func resolveConnectorGroupIDs(connectorSession *connectorSession, groupNames []string) (map[string]string, error) {
+	resolved := make(map[string]string, len(groupNames))
+	if len(groupNames) == 0 {
+		return resolved, nil
+	}
+	api := &apiSession{client: connectorSession.client, baseURL: connectorSession.baseURL, token: connectorSession.token, orgID: connectorSession.orgID}
+	_, body, err := api.do(http.MethodGet, "/api/v1/groups", groupsQuery(api, connectorSession.workspaceID), nil)
+	if err != nil {
+		return nil, err
+	}
+	var groups []catalogGroup
+	if err := json.Unmarshal(body, &groups); err != nil {
+		return nil, err
+	}
+	for _, group := range groups {
+		for _, name := range groupNames {
+			if group.Name == name {
+				resolved[name] = group.ID
+			}
+		}
+	}
+	for _, name := range groupNames {
+		if resolved[name] == "" {
+			return nil, fmt.Errorf("group %q was not found in this workspace", name)
+		}
+	}
+	return resolved, nil
+}
+
+func createConnectorGroupAllows(connectorSession *connectorSession, groupIDs map[string]string, groupNames []string, connectorName string) error {
+	policies := &policySession{client: connectorSession.client, baseURL: connectorSession.baseURL, token: connectorSession.token, workspaceID: connectorSession.workspaceID}
+	for _, groupName := range groupNames {
+		request := createPolicyRequest{Name: "Allow " + groupName + " " + connectorName, SrcPattern: "group:" + groupIDs[groupName], DstPattern: "connector:" + connectorName, Effect: "permit", Action: "permit", Priority: 100, Enabled: true}
+		if _, err := policies.do(http.MethodPost, "", request, nil); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func offeredProviderNames() string {
