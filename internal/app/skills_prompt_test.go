@@ -222,8 +222,7 @@ func TestHarnessSyncOffersSkillsUpdate(t *testing.T) {
 	t.Chdir(t.TempDir())
 	skillsPromptTestEnv(t, map[string]string{"OPENCODE": "1"})
 	bundleServer := skillsBundleServer(t)
-	proxy, _ := fakeKeiProxy(t, false)
-	config := writeSkillsConfig(t, bundleServer.URL, proxy)
+	config := writeSkillsConfig(t, bundleServer.URL, "")
 	staleUpstream(t)
 	writeStaleHaikeiLock(t, home, map[string]string{"haikei": "old-hash"})
 
