@@ -155,46 +155,50 @@ type aipErrorDetail struct {
 
 // Main dispatches CLI commands and returns the process exit code.
 func Main(version, command string, args []string, stdout, stderr io.Writer, stdin io.Reader) int {
+	commandPath := dispatchedCommandPath(command, args)
+	newClient := func(timeout time.Duration) *http.Client {
+		return newHTTPClient(version, commandPath, timeout)
+	}
 	switch command {
 	case "setup":
-		return runSetupCommand(args, stdout, stderr, stdin, &http.Client{Timeout: 15 * time.Second})
+		return runSetupCommand(args, stdout, stderr, stdin, newClient(15*time.Second))
 	case "connect":
-		return runConnectCommand(args, stdout, stderr, stdin, &http.Client{Timeout: 30 * time.Second}, osKeychainStore{}, defaultConnectSteps())
+		return runConnectCommand(args, stdout, stderr, stdin, newClient(30*time.Second), osKeychainStore{}, defaultConnectSteps())
 	case "login":
-		return runLoginCommand(version, args, stdout, stderr, &http.Client{Timeout: 15 * time.Second}, osKeychainStore{})
+		return runLoginCommand(version, args, stdout, stderr, newClient(15*time.Second), osKeychainStore{})
 	case "logout":
 		return runLogoutCommand(args, stdout, stderr, osKeychainStore{})
 	case "feedback":
-		return runFeedbackCommand(args, stdout, stderr, stdin, &http.Client{Timeout: 30 * time.Second}, osKeychainStore{}, version)
+		return runFeedbackCommand(args, stdout, stderr, stdin, newClient(30*time.Second), osKeychainStore{}, version)
 	case "bot":
-		return runBotCommand(args, stdout, stderr, &http.Client{Timeout: 15 * time.Second}, osKeychainStore{})
+		return runBotCommand(args, stdout, stderr, newClient(15*time.Second), osKeychainStore{})
 	case "runtime":
-		return runRuntimeCommand(args, stdout, stderr, &http.Client{Timeout: 15 * time.Second}, osKeychainStore{})
+		return runRuntimeCommand(args, stdout, stderr, newClient(15*time.Second), osKeychainStore{})
 	case "service":
 		// "kei service" is a hidden alias for "kei runtime service"
-		return runRuntimeCommand(append([]string{"service"}, args...), stdout, stderr, &http.Client{Timeout: 30 * time.Second}, osKeychainStore{})
+		return runRuntimeCommand(append([]string{"service"}, args...), stdout, stderr, newClient(30*time.Second), osKeychainStore{})
 	case "model-profiles":
-		return runModelProfilesCommand(args, stdout, stderr, stdin, &http.Client{Timeout: 30 * time.Second}, osKeychainStore{})
+		return runModelProfilesCommand(args, stdout, stderr, stdin, newClient(30*time.Second), osKeychainStore{})
 	case "credential-store":
-		return runCredentialStoreCommand(args, stdout, stderr, &http.Client{Timeout: 30 * time.Second}, osKeychainStore{})
+		return runCredentialStoreCommand(args, stdout, stderr, newClient(30*time.Second), osKeychainStore{})
 	case "directory-sync":
-		return runDirectorySyncCommand(args, stdout, stderr, stdin, &http.Client{Timeout: 30 * time.Second}, osKeychainStore{})
+		return runDirectorySyncCommand(args, stdout, stderr, stdin, newClient(30*time.Second), osKeychainStore{})
 	case "workspaces":
-		return runWorkspaceCommand(args, stdout, stderr, stdin, &http.Client{Timeout: 30 * time.Second}, osKeychainStore{})
+		return runWorkspaceCommand(args, stdout, stderr, stdin, newClient(30*time.Second), osKeychainStore{})
 	case "users":
-		return runUsersCommand(args, stdout, stderr, stdin, &http.Client{Timeout: 30 * time.Second}, osKeychainStore{})
+		return runUsersCommand(args, stdout, stderr, stdin, newClient(30*time.Second), osKeychainStore{})
 	case "groups":
-		return runGroupsCommand(args, stdout, stderr, stdin, &http.Client{Timeout: 30 * time.Second}, osKeychainStore{})
+		return runGroupsCommand(args, stdout, stderr, stdin, newClient(30*time.Second), osKeychainStore{})
 	case "connectors":
-		return runConnectorsCommand(args, stdout, stderr, stdin, &http.Client{Timeout: 30 * time.Second}, osKeychainStore{})
+		return runConnectorsCommand(args, stdout, stderr, stdin, newClient(30*time.Second), osKeychainStore{})
 	case "policies":
-		return runPoliciesCommand(args, stdout, stderr, stdin, &http.Client{Timeout: 30 * time.Second}, osKeychainStore{})
+		return runPoliciesCommand(args, stdout, stderr, stdin, newClient(30*time.Second), osKeychainStore{})
 	case "harness":
-		return runHarnessCommand(args, stdout, stderr, &http.Client{Timeout: 30 * time.Second}, osKeychainStore{})
+		return runHarnessCommand(args, stdout, stderr, newClient(30*time.Second), osKeychainStore{})
 	case "skills":
-		return runSkillsCommand(args, stdout, stderr, &http.Client{Timeout: 30 * time.Second})
+		return runSkillsCommand(args, stdout, stderr, newClient(30*time.Second))
 	case "audit":
-		return runAuditCommand(args, stdout, stderr, stdin, &http.Client{Timeout: 15 * time.Second}, osKeychainStore{})
+		return runAuditCommand(args, stdout, stderr, stdin, newClient(15*time.Second), osKeychainStore{})
 	case "doctor":
 		return runDoctorCommand(args, stdout, stderr)
 	case "upgrade":
