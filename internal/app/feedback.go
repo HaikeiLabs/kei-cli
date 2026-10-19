@@ -189,7 +189,7 @@ func runFeedbackCommand(args []string, stdout, stderr io.Writer, stdin io.Reader
 	if !ok {
 		return 1
 	}
-	consoleURL, err := legacyWebHost(baseURL)
+	consoleURL, err := consoleWebHost(baseURL)
 	if err != nil {
 		fmt.Fprintf(stderr, "feedback: determine Console host: %v\n", err)
 		return 1

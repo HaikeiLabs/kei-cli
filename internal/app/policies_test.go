@@ -42,9 +42,6 @@ func TestPoliciesList(t *testing.T) {
 	if req.Auth != "Bearer "+workspaceTestToken() {
 		t.Fatalf("Authorization = %q", req.Auth)
 	}
-	if req.Headers["X-Kei-API-Shape"] != "aip" {
-		t.Fatalf("X-Kei-API-Shape header = %q, want aip", req.Headers["X-Kei-API-Shape"])
-	}
 	for _, want := range []string{testPolicyID, "allow-git", "harness:claude", "shell:git", "permit", "deny-rm", "deny"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("list output missing %q:\n%s", want, stdout)
@@ -148,9 +145,6 @@ func TestPoliciesGet(t *testing.T) {
 	if req.Method != http.MethodGet || req.Path != "/api/v1/policies/"+testPolicyID || req.Query != "workspace_id="+testWorkspaceID {
 		t.Fatalf("request = %s %s?%s", req.Method, req.Path, req.Query)
 	}
-	if req.Headers["X-Kei-API-Shape"] != "aip" {
-		t.Fatalf("X-Kei-API-Shape header = %q, want aip", req.Headers["X-Kei-API-Shape"])
-	}
 	for _, want := range []string{testPolicyID, "allow-git", "harness:claude", "shell:git", "permit", "100"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("get output missing %q:\n%s", want, stdout)
@@ -233,9 +227,6 @@ func TestPoliciesCreate(t *testing.T) {
 	req := fake.only(t)
 	if req.Method != http.MethodPost || req.Path != "/api/v1/policies" || req.Query != "workspace_id="+testWorkspaceID {
 		t.Fatalf("request = %s %s?%s", req.Method, req.Path, req.Query)
-	}
-	if req.Headers["X-Kei-API-Shape"] != "aip" {
-		t.Fatalf("X-Kei-API-Shape header = %q, want aip", req.Headers["X-Kei-API-Shape"])
 	}
 	if req.Body["name"] != "allow-git" || req.Body["src_pattern"] != "harness:claude" || req.Body["dst_pattern"] != "shell:git" || req.Body["effect"] != "permit" || req.Body["action"] != "permit" {
 		t.Fatalf("body = %v", req.Body)
@@ -408,9 +399,6 @@ func TestPoliciesUpdate(t *testing.T) {
 	if q.Get("update_mask") != "name,effect" {
 		t.Fatalf("query = %q, want update_mask=name,effect", req.Query)
 	}
-	if req.Headers["X-Kei-API-Shape"] != "aip" {
-		t.Fatalf("X-Kei-API-Shape header = %q, want aip", req.Headers["X-Kei-API-Shape"])
-	}
 	if req.Body["name"] != "renamed" || req.Body["effect"] != "deny" || req.Body["action"] != "deny" {
 		t.Fatalf("body = %v", req.Body)
 	}
@@ -496,9 +484,6 @@ func TestPoliciesDelete(t *testing.T) {
 	}
 	if !strings.Contains(req.Query, "workspace_id="+testWorkspaceID) {
 		t.Fatalf("query = %q, want workspace_id", req.Query)
-	}
-	if req.Headers["X-Kei-API-Shape"] != "aip" {
-		t.Fatalf("X-Kei-API-Shape header = %q, want aip", req.Headers["X-Kei-API-Shape"])
 	}
 	if !strings.Contains(stdout, "deleted") {
 		t.Fatalf("delete output = %q", stdout)
@@ -751,10 +736,6 @@ func TestPoliciesImportSrcOverride(t *testing.T) {
 func TestPoliciesImportApplyCreatesPolicies(t *testing.T) {
 	created := 0
 	_, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		if r.Path == "/api/cli/workspaces" {
-			_, _ = w.Write([]byte(`{"workspaces":[{"id":"` + testWorkspaceID + `","name":"Main"}]}`))
-			return
-		}
 		if r.Method == http.MethodPost && r.Path == "/api/v1/policies" {
 			created++
 			name, _ := r.Body["name"].(string)
@@ -787,10 +768,6 @@ func TestPoliciesImportApplyCreatesPolicies(t *testing.T) {
 
 func TestPoliciesImportApplyDeclined(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		if r.Path == "/api/cli/workspaces" {
-			_, _ = w.Write([]byte(`{"workspaces":[{"id":"` + testWorkspaceID + `","name":"Main"}]}`))
-			return
-		}
 		t.Errorf("unexpected request %s %s", r.Method, r.Path)
 		w.WriteHeader(http.StatusTeapot)
 	})
@@ -834,7 +811,7 @@ func TestPoliciesImportMissingFile(t *testing.T) {
 
 // --- API error ---
 
-// --- Effect / Action field mapping ---
+// --- Policy JSON fields ---
 
 func TestPolicyUnmarshalAcceptsEffect(t *testing.T) {
 	var p policy
@@ -843,26 +820,6 @@ func TestPolicyUnmarshalAcceptsEffect(t *testing.T) {
 	}
 	if p.Effect != "deny" {
 		t.Fatalf("Effect = %q, want deny", p.Effect)
-	}
-}
-
-func TestPolicyUnmarshalAcceptsAction(t *testing.T) {
-	var p policy
-	if err := json.Unmarshal([]byte(`{"action":"permit"}`), &p); err != nil {
-		t.Fatal(err)
-	}
-	if p.Effect != "permit" {
-		t.Fatalf("Effect = %q, want permit (from action)", p.Effect)
-	}
-}
-
-func TestPolicyUnmarshalEffectTakesPriority(t *testing.T) {
-	var p policy
-	if err := json.Unmarshal([]byte(`{"effect":"deny","action":"permit"}`), &p); err != nil {
-		t.Fatal(err)
-	}
-	if p.Effect != "deny" {
-		t.Fatalf("Effect = %q, want deny (effect takes priority)", p.Effect)
 	}
 }
 
@@ -880,48 +837,8 @@ func TestPolicyMarshalUsesEffect(t *testing.T) {
 	}
 }
 
-func TestPoliciesListLegacyActionShape(t *testing.T) {
-	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		_, _ = w.Write([]byte(`{"policies":[
-			{"id":"` + testPolicyID + `","org_id":"org-1","workspace_id":"` + testWorkspaceID + `","name":"allow-git","src_pattern":"harness:claude","dst_pattern":"shell:git","action":"permit","priority":100,"enabled":true,"approval_required":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"},
-			{"id":"55555555-5555-5555-5555-555555555555","org_id":"org-1","workspace_id":"` + testWorkspaceID + `","name":"deny-rm","src_pattern":"harness:claude","dst_pattern":"shell:rm","action":"deny","priority":200,"enabled":true,"approval_required":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}
-		],"next_page_token":""}`))
-	})
-	code, stdout, stderr := runPolicies(t, server, store, "", "list", "--workspace", "Main")
-	if code != 0 {
-		t.Fatalf("exit = %d stderr=%s", code, stderr)
-	}
-	for _, want := range []string{"permit", "deny"} {
-		if !strings.Contains(stdout, want) {
-			t.Errorf("list output missing effect %q (from action field):\n%s", want, stdout)
-		}
-	}
-	_ = fake
-}
-
-func TestPoliciesListLegacyBareArrayWithAction(t *testing.T) {
-	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		_, _ = w.Write([]byte(`[
-			{"id":"` + testPolicyID + `","name":"allow-git","action":"permit"},
-			{"id":"55555555-5555-5555-5555-555555555555","name":"deny-rm","action":"deny"}
-		]`))
-	})
-	code, stdout, stderr := runPolicies(t, server, store, "", "list", "--workspace", "Main")
-	if code != 0 {
-		t.Fatalf("exit = %d stderr=%s", code, stderr)
-	}
-	for _, want := range []string{"permit", "deny"} {
-		if !strings.Contains(stdout, want) {
-			t.Errorf("list output missing effect %q (from action in bare array):\n%s", want, stdout)
-		}
-	}
-	_ = fake
-}
-
 func TestPoliciesCreateSendsActionField(t *testing.T) {
-	// The kei-policy-catalog legacy route reads "action" when the console
-	// does not forward X-Kei-API-Shape. This test verifies the CLI sends
-	// both "action" and "effect" so both code paths work.
+	// The CLI includes the effect and its action alias in policy writes.
 	var gotBody map[string]any
 	_, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
 		if r.Body["action"] == nil || r.Body["action"] != r.Body["effect"] {
@@ -1021,10 +938,6 @@ func importApplyCapturingSrc(t *testing.T, stdin string, interactive bool, extra
 	t.Cleanup(func() { stdinIsInteractive = previous })
 	var srcs []string
 	_, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		if r.Path == "/api/cli/workspaces" {
-			_, _ = w.Write([]byte(`{"workspaces":[{"id":"` + testWorkspaceID + `","name":"Main"}]}`))
-			return
-		}
 		if r.Method == http.MethodPost && r.Path == "/api/v1/policies" {
 			src, _ := r.Body["src_pattern"].(string)
 			srcs = append(srcs, src)

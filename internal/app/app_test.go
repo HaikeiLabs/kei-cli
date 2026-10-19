@@ -71,7 +71,7 @@ func TestLoginStoresTokenWithoutPrintingIt(t *testing.T) {
 	store := &memoryCredentialStore{}
 	sleeps := 0
 	openedURL := ""
-	err := login(context.Background(), server.URL, "kei", "v0.0.1", &output, server.Client(), store, func(time.Duration) { sleeps++ }, func(url string) error {
+	err := login(context.Background(), server.URL, "v0.0.1", &output, server.Client(), store, func(time.Duration) { sleeps++ }, func(url string) error {
 		openedURL = url
 		return nil
 	})
@@ -111,7 +111,7 @@ func TestLoginReportsBrowserOpenFailureAndKeepsURLVisible(t *testing.T) {
 
 	var output bytes.Buffer
 	store := &memoryCredentialStore{}
-	err := login(context.Background(), server.URL, "kei", "v0.0.1", &output, server.Client(), store, func(time.Duration) {}, func(string) error {
+	err := login(context.Background(), server.URL, "v0.0.1", &output, server.Client(), store, func(time.Duration) {}, func(string) error {
 		return errors.New("no graphical session")
 	})
 	if err != nil {
@@ -125,43 +125,27 @@ func TestLoginReportsBrowserOpenFailureAndKeepsURLVisible(t *testing.T) {
 	}
 }
 
-func TestLogin404FallsBackToLegacy(t *testing.T) {
-	var legacyCalled bool
+func TestLoginDoesNotFallbackWhenAIPEndpointIsMissing(t *testing.T) {
+	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/deviceAuthorizations":
-			w.WriteHeader(http.StatusNotFound)
-		case "/api/cli/device/authorize":
-			legacyCalled = true
-			json.NewEncoder(w).Encode(deviceAuthorizationStartResponse{
-				DeviceCode: "legacy-device", UserCode: "LEGACY-12345",
-				ExpiresAt: time.Now().Add(time.Minute), IntervalSeconds: 1,
-			})
-		case "/api/cli/device/token":
-			json.NewEncoder(w).Encode(deviceAuthorizationPollResponse{Status: "approved", AccessToken: "legacy-token", OrgID: "org-legacy"})
-		case "/api/v1/organizations",
-			"/api/v1/organizations/org-legacy/workspaces":
-			w.WriteHeader(http.StatusNotFound)
-		default:
-			t.Fatalf("unexpected path %s", r.URL.Path)
+		requests++
+		if r.URL.Path != "/api/v1/deviceAuthorizations" {
+			t.Errorf("unexpected path %s", r.URL.Path)
 		}
+		http.NotFound(w, r)
 	}))
 	defer server.Close()
 
-	var output bytes.Buffer
 	store := &memoryCredentialStore{}
-	err := login(context.Background(), server.URL, "kei", "v0.0.1", &output, server.Client(), store, func(time.Duration) {}, func(string) error { return nil })
-	if err != nil {
-		t.Fatal(err)
+	err := login(context.Background(), server.URL, "v0.0.1", io.Discard, server.Client(), store, func(time.Duration) {}, func(string) error { return nil })
+	if err == nil {
+		t.Fatal("login succeeded without the AIP device-authorization endpoint")
 	}
-	if !legacyCalled {
-		t.Fatal("expected legacy flow to be called on 404")
+	if requests != 1 {
+		t.Fatalf("requests = %d, want only the AIP request", requests)
 	}
-	if store.token != "legacy-token" {
-		t.Fatalf("token = %q, want %q", store.token, "legacy-token")
-	}
-	if !strings.Contains(output.String(), "Note: AIP device authorization not available") {
-		t.Fatalf("output missing fallback notice: %q", output.String())
+	if store.token != "" {
+		t.Fatalf("token = %q, want no saved token", store.token)
 	}
 }
 
@@ -197,7 +181,7 @@ func TestLoginSlowDownIncreasesInterval(t *testing.T) {
 	var output bytes.Buffer
 	store := &memoryCredentialStore{}
 	sleepDurations := make([]time.Duration, 0)
-	err := login(context.Background(), server.URL, "kei", "v0.0.1", &output, server.Client(), store, func(d time.Duration) { sleepDurations = append(sleepDurations, d) }, func(string) error { return nil })
+	err := login(context.Background(), server.URL, "v0.0.1", &output, server.Client(), store, func(d time.Duration) { sleepDurations = append(sleepDurations, d) }, func(string) error { return nil })
 	if err == nil {
 		t.Fatal("expected denied error")
 	}
@@ -234,7 +218,7 @@ func TestLoginAccessDenied(t *testing.T) {
 
 	var output bytes.Buffer
 	store := &memoryCredentialStore{}
-	err := login(context.Background(), server.URL, "kei", "v0.0.1", &output, server.Client(), store, func(time.Duration) {}, func(string) error { return nil })
+	err := login(context.Background(), server.URL, "v0.0.1", &output, server.Client(), store, func(time.Duration) {}, func(string) error { return nil })
 	if err == nil {
 		t.Fatal("expected denied error")
 	}
@@ -264,7 +248,7 @@ func TestLoginExpiredToken(t *testing.T) {
 
 	var output bytes.Buffer
 	store := &memoryCredentialStore{}
-	err := login(context.Background(), server.URL, "kei", "v0.0.1", &output, server.Client(), store, func(time.Duration) {}, func(string) error { return nil })
+	err := login(context.Background(), server.URL, "v0.0.1", &output, server.Client(), store, func(time.Duration) {}, func(string) error { return nil })
 	if err == nil {
 		t.Fatal("expected expired error")
 	}
@@ -292,7 +276,7 @@ func TestLoginDeviceCodeNeverInOutput(t *testing.T) {
 
 	var output bytes.Buffer
 	store := &memoryCredentialStore{}
-	err := login(context.Background(), server.URL, "kei", "v0.0.1", &output, server.Client(), store, func(time.Duration) {}, func(string) error { return nil })
+	err := login(context.Background(), server.URL, "v0.0.1", &output, server.Client(), store, func(time.Duration) {}, func(string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -733,65 +717,6 @@ func TestBotAgentsAddUsesCLIOrganizationScopedEndpoint(t *testing.T) {
 func TestDefaultKeiWebURLIsHTTPS(t *testing.T) {
 	if defaultKeiWebURL != "https://api.haikeilabs.com" {
 		t.Fatalf("defaultKeiWebURL = %q, want https://api.haikeilabs.com", defaultKeiWebURL)
-	}
-}
-
-func TestLegacyWebHost(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{defaultKeiWebURL, "https://app.haikeilabs.com"},
-		{"https://api.haikeilabs.com", "https://app.haikeilabs.com"},
-		{"https://app.haikeilabs.com", "https://app.haikeilabs.com"},
-		{"https://api.custom.io", "https://app.custom.io"},
-		{"https://app.custom.io", "https://app.custom.io"},
-		{"https://console.custom.io", "https://console.custom.io"},
-		{"http://127.0.0.1:8443", "http://127.0.0.1:8443"},
-	}
-	for _, tc := range tests {
-		got, err := legacyWebHost(tc.input)
-		if err != nil {
-			t.Errorf("legacyWebHost(%q) = _, %v", tc.input, err)
-			continue
-		}
-		if got != tc.want {
-			t.Errorf("legacyWebHost(%q) = %q, want %q", tc.input, got, tc.want)
-		}
-	}
-}
-
-func TestLoginLegacyFallbackUsesWebHostForActivationURL(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/cli/device/authorize":
-			json.NewEncoder(w).Encode(deviceAuthorizationStartResponse{
-				DeviceCode: "legacy-dev", UserCode: "LGCY-99999",
-				ExpiresAt: time.Now().Add(time.Minute), IntervalSeconds: 1,
-			})
-		case "/api/cli/device/token":
-			json.NewEncoder(w).Encode(deviceAuthorizationPollResponse{Status: "approved", AccessToken: "t", OrgID: "o"})
-		case "/api/v1/organizations",
-			"/api/v1/organizations/o/workspaces":
-			w.WriteHeader(http.StatusNotFound)
-		default:
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
-	}))
-	defer server.Close()
-
-	var output bytes.Buffer
-	store := &memoryCredentialStore{}
-	// Call legacyLogin directly with a webURL that differs from the API server URL.
-	err := legacyLogin(context.Background(), "https://app.haikeilabs.com", server.URL, "kei", &output, server.Client(), store, func(time.Duration) {}, func(string) error { return nil })
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(output.String(), "https://app.haikeilabs.com/cli/activate") {
-		t.Fatalf("activation URL should use web host, got:\n%s", output.String())
-	}
-	if strings.Contains(output.String(), server.URL+"/cli/activate") {
-		t.Fatalf("activation URL should NOT use the API server URL, got:\n%s", output.String())
 	}
 }
 
@@ -1457,7 +1382,7 @@ func TestLoginPrintsOrgNameAndWorkspaceName(t *testing.T) {
 
 	var output bytes.Buffer
 	store := &memoryCredentialStore{}
-	err := login(context.Background(), server.URL, "kei", "v0.0.1", &output, server.Client(), store, func(time.Duration) {}, func(string) error { return nil })
+	err := login(context.Background(), server.URL, "v0.0.1", &output, server.Client(), store, func(time.Duration) {}, func(string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1512,7 +1437,7 @@ func TestLoginPrintsOrgNameOnlyWhenNoWorkspaces(t *testing.T) {
 
 	var output bytes.Buffer
 	store := &memoryCredentialStore{}
-	err := login(context.Background(), server.URL, "kei", "v0.0.1", &output, server.Client(), store, func(time.Duration) {}, func(string) error { return nil })
+	err := login(context.Background(), server.URL, "v0.0.1", &output, server.Client(), store, func(time.Duration) {}, func(string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1557,7 +1482,7 @@ func TestLoginFallbackWhenOrgAPIFails(t *testing.T) {
 
 	var output bytes.Buffer
 	store := &memoryCredentialStore{}
-	err := login(context.Background(), server.URL, "kei", "v0.0.1", &output, server.Client(), store, func(time.Duration) {}, func(string) error { return nil })
+	err := login(context.Background(), server.URL, "v0.0.1", &output, server.Client(), store, func(time.Duration) {}, func(string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
