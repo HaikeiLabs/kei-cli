@@ -26,9 +26,9 @@ import (
 	"github.com/HaikeiLabs/kei-connector-contracts/providers"
 )
 
-// SkillSource is one skills_repo connector (HAI-431). The CLI implements it
-// with kei-proxy connector invoke, so every read is governed and audited;
-// this package never calls the repository host or reads a credential.
+// SkillSource is one skills_repo connector (HAI-431, HAI-723). The harness
+// reads skills directly from the repository; this package never calls the
+// repository host or reads a credential.
 type SkillSource interface {
 	ListSkills(ctx context.Context) (providers.SkillsRepoListing, error)
 	FetchSkill(ctx context.Context, name string) (providers.SkillsRepoArchive, error)

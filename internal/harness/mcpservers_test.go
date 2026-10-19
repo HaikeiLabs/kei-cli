@@ -70,11 +70,11 @@ func mcpBundle(t *testing.T, version int64, connectors string) Bundle {
 }
 
 const mcpConnectors = `[
-	{"slug":"notion","kind":"mcp"},
-	{"slug":"linear","kind":"mcp","credential_ref":"` + mcpCredentialRef + `","token":"` + mcpConnectorTok + `"},
-	{"slug":"github","kind":"mcp"},
+	{"slug":"notion","kind":"mcp","mcp_url":"https://mcp.notion.example/mcp"},
+	{"slug":"linear","kind":"mcp","mcp_url":"https://mcp.linear.example/mcp","credential_ref":"` + mcpCredentialRef + `","token":"` + mcpConnectorTok + `"},
+	{"slug":"github","kind":"mcp","mcp_url":"https://api.githubcopilot.com/mcp/"},
 	{"slug":"crm","kind":"http_api"},
-	{"slug":"Bad Slug","kind":"mcp"}
+	{"slug":"Bad Slug","kind":"mcp","mcp_url":"https://mcp.bad.example/mcp"}
 ]`
 
 func mcpEnv(home string) Env {
@@ -117,10 +117,10 @@ func seedMCP(t *testing.T, c mcpCase, home string) string {
 	return path
 }
 
-// HAI-489: a bound mcp connector renders as a remote server named after its
-// slug at kei-proxy's /mcp/{slug} route; the user's servers and every other
-// byte stay as they were; the entries a previous sync managed (remote or
-// stdio) are removed.
+// HAI-489/HAI-723: a bound mcp connector renders as a remote server named
+// after its slug at its upstream mcp_url (ADR-039); the user's servers and
+// every other byte stay as they were; the entries a previous sync managed
+// (remote or stdio) are removed.
 func TestMCPServersRenderGolden(t *testing.T) {
 	for _, c := range mcpCases {
 		t.Run(c.harness.Kind(), func(t *testing.T) {
@@ -173,7 +173,7 @@ func TestMCPServersRemoveStaleManagedEntry(t *testing.T) {
 			path := seedMCP(t, c, home)
 			env := mcpEnv(home)
 			syncMCP(t, c.harness, env, mcpBundle(t, 2, mcpConnectors))
-			syncMCP(t, c.harness, env, mcpBundle(t, 3, `[{"slug":"notion","kind":"mcp"}]`))
+			syncMCP(t, c.harness, env, mcpBundle(t, 3, `[{"slug":"notion","kind":"mcp","mcp_url":"https://mcp.notion.example/mcp"}]`))
 			got, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
@@ -181,8 +181,8 @@ func TestMCPServersRemoveStaleManagedEntry(t *testing.T) {
 			if bytes.Contains(got, []byte("linear")) {
 				t.Fatalf("stale managed entry linear still rendered:\n%s", got)
 			}
-			if !bytes.Contains(got, []byte("/mcp/notion")) {
-				t.Fatalf("bound connector notion missing:\n%s", got)
+			if !bytes.Contains(got, []byte("https://mcp.notion.example/mcp")) {
+				t.Fatalf("bound connector notion missing upstream URL:\n%s", got)
 			}
 			for _, entry := range c.userEntries {
 				if !bytes.Contains(got, []byte(entry)) {
@@ -267,28 +267,6 @@ func TestMCPServersNothingManagedLeavesConfigAlone(t *testing.T) {
 				t.Fatalf("%s created with nothing to manage (err %v)", c.config, err)
 			}
 		})
-	}
-}
-
-// The route base uses KEI_PROXY_MCP_LISTEN_ADDR (default 127.0.0.1:8086) and
-// returns "" for non-loopback addresses.
-func TestMCPProxyBaseURL(t *testing.T) {
-	cases := map[string]string{
-		"":                 "http://127.0.0.1:8086",
-		":9090":            "http://127.0.0.1:9090",
-		"0.0.0.0:7000":     "http://127.0.0.1:7000",
-		"127.0.0.1:7001":   "http://127.0.0.1:7001",
-		"[::1]:7002":       "http://[::1]:7002",
-		"not-an-addr":      "http://127.0.0.1:8086",
-		"10.0.0.1:8086":    "",
-		"192.168.1.1:8086": "",
-		"203.0.113.1:8086": "",
-	}
-	for addr, want := range cases {
-		env := hermeticEnv(t.TempDir(), map[string]string{"KEI_PROXY_MCP_LISTEN_ADDR": addr})
-		if got := mcpProxyBaseURL(env); got != want {
-			t.Errorf("KEI_PROXY_MCP_LISTEN_ADDR=%q: base = %q, want %q", addr, got, want)
-		}
 	}
 }
 

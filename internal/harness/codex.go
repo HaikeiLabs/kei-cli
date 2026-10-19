@@ -522,7 +522,7 @@ func (codex) mergeMCPServers(cfg []byte, remove []string, servers []mcpServer) (
 		if out != "" {
 			out += "\n"
 		}
-		out += fmt.Sprintf("[mcp_servers.%s]\n%s\nurl = %s\nbearer_token_env_var = \"KEI_MCP_ROUTE_KEY\"\n", server.Name, codexMCPMarker, strconv.Quote(server.URL))
+		out += fmt.Sprintf("[mcp_servers.%s]\n%s\nurl = %s\nbearer_token_env_var = %s\n", server.Name, codexMCPMarker, strconv.Quote(server.URL), strconv.Quote(server.AuthEnvVar))
 		added = append(added, server.Name)
 	}
 	return []byte(out), added, skipped, nil

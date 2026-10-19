@@ -423,9 +423,10 @@ func (claudeCode) mcpConfigPath(env Env) string {
 	return filepath.Join(env.Home, ".claude.json")
 }
 
-// mergeMCPServers renders each server as an http (streamable HTTP) server.
+// mergeMCPServers renders each server as an http (streamable HTTP) server
+// at its upstream URL, with auth by environment-variable reference (ADR-039).
 func (claudeCode) mergeMCPServers(cfg []byte, remove []string, servers []mcpServer) ([]byte, []string, []string, error) {
 	return mergeMCPServersJSON(cfg, "mcpServers", remove, servers, func(s mcpServer) *orderedObject {
-		return orderedEntry("type", "http", "url", s.URL, "headers", orderedEntry("Authorization", "Bearer ${KEI_MCP_ROUTE_KEY}"))
+		return orderedEntry("type", "http", "url", s.URL, "headers", orderedEntry("Authorization", "Bearer ${"+s.AuthEnvVar+"}"))
 	})
 }
