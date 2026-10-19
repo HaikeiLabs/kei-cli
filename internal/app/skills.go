@@ -114,12 +114,39 @@ func installOrgSkills(ctx context.Context, config runtimeConfig, bundle harness.
 	return err
 }
 
+// skillsUsage is the one dispatch line for the `kei skills` subcommands.
+const skillsUsage = "usage: kei skills status | kei skills update | kei skills add | kei skills install [--harness KIND] [--dry-run] [--config PATH]"
+
 func runSkillsCommand(args []string, stdout, stderr io.Writer, client *http.Client) int {
-	if len(args) == 0 || args[0] != "install" {
-		fmt.Fprintln(stderr, "usage: kei skills install [--harness KIND] [--dry-run] [--config PATH]")
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, skillsUsage)
 		return 2
 	}
-	return runSkillsInstall(args[1:], stdout, stderr, client, harness.Default, harness.OSEnv())
+	switch args[0] {
+	case "status":
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "usage: kei skills status")
+			return 2
+		}
+		return runSkillsStatus(stdout, stderr, client)
+	case "update":
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "usage: kei skills update")
+			return 2
+		}
+		return runSkillsUpdate(stdout, stderr, client)
+	case "add":
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "usage: kei skills add")
+			return 2
+		}
+		return runSkillsAdd(stdout, stderr)
+	case "install":
+		return runSkillsInstall(args[1:], stdout, stderr, client, harness.Default, harness.OSEnv())
+	default:
+		fmt.Fprintln(stderr, skillsUsage)
+		return 2
+	}
 }
 
 // runSkillsInstall is `kei skills install`: the skills step of harness sync
