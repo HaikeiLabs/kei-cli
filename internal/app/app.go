@@ -65,30 +65,13 @@ func (osKeychainStore) Delete(serverURL string) (bool, error) {
 	return removed, nil
 }
 
-type deviceAuthorizationStartRequest struct {
-	ClientName string `json:"client_name"`
-}
-
 type deviceAuthorizationStartResponse struct {
-	DeviceCode      string    `json:"device_code"`
-	UserCode        string    `json:"user_code"`
-	ExpiresAt       time.Time `json:"expires_at"`
-	IntervalSeconds int       `json:"interval_seconds"`
-	// AIP fields
+	DeviceCode              string `json:"device_code"`
+	UserCode                string `json:"user_code"`
 	VerificationURI         string `json:"verification_uri,omitempty"`
 	VerificationURIComplete string `json:"verification_uri_complete,omitempty"`
 	ExpiresIn               int    `json:"expires_in,omitempty"`
 	Interval                int    `json:"interval,omitempty"`
-}
-
-type deviceAuthorizationPollRequest struct {
-	DeviceCode string `json:"device_code"`
-}
-
-type deviceAuthorizationPollResponse struct {
-	Status      string `json:"status"`
-	AccessToken string `json:"access_token"`
-	OrgID       string `json:"org_id,omitempty"`
 }
 
 type deviceAuthorizationExchangeRequest struct {
@@ -268,7 +251,7 @@ func runLoginCommand(version string, args []string, stdout, stderr io.Writer, cl
 	if *noBrowser {
 		openBrowser = func(string) error { return nil }
 	}
-	if err := login(context.Background(), keiWebURL(), "kei", version, stdout, client, store, time.Sleep, openBrowser); err != nil {
+	if err := login(context.Background(), keiWebURL(), version, stdout, client, store, time.Sleep, openBrowser); err != nil {
 		fmt.Fprintf(stderr, "login failed: %v\n", err)
 		return 1
 	}
@@ -485,21 +468,14 @@ func createBotInstallationWithOptions(ctx context.Context, apiURL, agentID, plat
 	return &installation, nil
 }
 
-func login(ctx context.Context, apiURL, clientName, version string, stdout io.Writer, client *http.Client, store credentialStore, sleep func(time.Duration), openBrowser func(string) error) error {
+func login(ctx context.Context, apiURL, version string, stdout io.Writer, client *http.Client, store credentialStore, sleep func(time.Duration), openBrowser func(string) error) error {
 	baseURL, err := normalizedKeiWebURL(apiURL)
 	if err != nil {
 		return err
 	}
 
-	// Try the AIP device-authorization start endpoint.
 	start, err := startDeviceAuthorization(ctx, client, baseURL, version)
 	if err != nil {
-		var sErr *httpStatusError
-		if errors.As(err, &sErr) && sErr.StatusCode == http.StatusNotFound {
-			fmt.Fprintln(stdout, "Note: AIP device authorization not available; falling back to legacy flow")
-			webURL, _ := legacyWebHost(apiURL)
-			return legacyLogin(ctx, webURL, baseURL, clientName, stdout, client, store, sleep, openBrowser)
-		}
 		return err
 	}
 
@@ -574,8 +550,7 @@ func login(ctx context.Context, apiURL, clientName, version string, stdout io.Wr
 }
 
 // startDeviceAuthorization posts to the AIP device-authorization endpoint and
-// returns the start response. A 404 is propagated as *httpStatusError so the
-// caller can fall back to the legacy flow.
+// returns the start response.
 func startDeviceAuthorization(ctx context.Context, client *http.Client, baseURL, version string) (*deviceAuthorizationStartResponse, error) {
 	body, err := json.Marshal(map[string]any{
 		"client": map[string]any{
@@ -640,121 +615,6 @@ func exchangeDeviceAuthorization(ctx context.Context, client *http.Client, baseU
 	return nil, &httpStatusError{StatusCode: status, body: respBody}
 }
 
-// legacyLogin implements the original /api/cli/device/authorize + /api/cli/device/token flow.
-// webURL is the console's frontend URL for the activation page; apiBaseURL is the API base.
-func legacyLogin(ctx context.Context, webURL, apiBaseURL, clientName string, stdout io.Writer, client *http.Client, store credentialStore, sleep func(time.Duration), openBrowser func(string) error) error {
-	startRequestBody, err := json.Marshal(deviceAuthorizationStartRequest{ClientName: clientName})
-	if err != nil {
-		return fmt.Errorf("encode device authorization request: %w", err)
-	}
-	startResponse, err := client.Post(apiBaseURL+"/api/cli/device/authorize", "application/json", bytes.NewReader(startRequestBody))
-	if err != nil {
-		return fmt.Errorf("start device authorization: %w", err)
-	}
-	defer startResponse.Body.Close()
-	if startResponse.StatusCode != http.StatusOK {
-		return fmt.Errorf("start device authorization returned %d", startResponse.StatusCode)
-	}
-
-	var start deviceAuthorizationStartResponse
-	if err := json.NewDecoder(startResponse.Body).Decode(&start); err != nil {
-		return fmt.Errorf("decode device authorization response: %w", err)
-	}
-	if start.DeviceCode == "" || start.UserCode == "" || start.ExpiresAt.IsZero() {
-		return errors.New("device authorization response is incomplete")
-	}
-
-	verificationURL := webURL + "/cli/activate?user_code=" + url.QueryEscape(start.UserCode)
-	fmt.Fprintln(stdout, "Open this URL in a browser and approve the CLI:")
-	fmt.Fprintln(stdout, verificationURL)
-	fmt.Fprintf(stdout, "Verification code: %s\n", start.UserCode)
-	if err := openBrowser(verificationURL); err != nil {
-		fmt.Fprintf(stdout, "Could not open a browser automatically; use the URL above. (%v)\n", err)
-	}
-
-	interval := time.Duration(start.IntervalSeconds) * time.Second
-	if interval < time.Second {
-		interval = time.Second
-	}
-	for time.Now().Before(start.ExpiresAt) {
-		sleep(interval)
-		poll, err := pollLegacyDeviceAuthorization(ctx, client, apiBaseURL, start.DeviceCode)
-		if err != nil {
-			return err
-		}
-		switch poll.Status {
-		case "pending":
-			continue
-		case "approved":
-			if poll.AccessToken == "" || poll.OrgID == "" {
-				return errors.New("approved login response is incomplete")
-			}
-			if err := store.Save(apiBaseURL, poll.AccessToken); err != nil {
-				return fmt.Errorf("save CLI token in OS keychain: %w", err)
-			}
-			orgName, err := getOrganizationName(ctx, client, apiBaseURL, poll.AccessToken, poll.OrgID)
-			if err != nil {
-				// Fall back to today's line with the org ID.
-				fmt.Fprintf(stdout, "Logged in to Kei for organization %s.\n", poll.OrgID)
-				return nil
-			}
-			workspaces, wsErr := listWorkspaces(ctx, client, apiBaseURL, poll.AccessToken)
-			if wsName := pickDefaultWorkspaceName(workspaces, wsErr); wsName != "" {
-				fmt.Fprintf(stdout, "Logged in to Kei for organization %s.\nWorkspace: %s\n", orgName, wsName)
-			} else {
-				fmt.Fprintf(stdout, "Logged in to Kei for organization %s.\n", orgName)
-			}
-			return nil
-		case "denied":
-			return errors.New("device approval was denied")
-		case "expired":
-			return errors.New("device approval expired")
-		default:
-			return fmt.Errorf("unexpected device approval status %q", poll.Status)
-		}
-	}
-	return errors.New("device approval expired")
-}
-
-// legacyWebHost derives the console front-end URL for the legacy activation page
-// from the raw keiWebURL value. When the host starts with "api." it rewrites to
-// "app." on the same domain; otherwise it returns the URL unchanged.
-func legacyWebHost(apiURL string) (string, error) {
-	u, err := url.Parse(apiURL)
-	if err != nil {
-		return apiURL, err
-	}
-	if strings.HasPrefix(u.Hostname(), "api.") {
-		u.Host = strings.Replace(u.Host, "api.", "app.", 1)
-	}
-	return u.String(), nil
-}
-
-func pollLegacyDeviceAuthorization(ctx context.Context, client *http.Client, baseURL, deviceCode string) (*deviceAuthorizationPollResponse, error) {
-	body, err := json.Marshal(deviceAuthorizationPollRequest{DeviceCode: deviceCode})
-	if err != nil {
-		return nil, fmt.Errorf("encode device authorization poll: %w", err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/cli/device/token", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("build device authorization poll: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	response, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("poll device authorization: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("poll device authorization returned %d", response.StatusCode)
-	}
-	var poll deviceAuthorizationPollResponse
-	if err := json.NewDecoder(response.Body).Decode(&poll); err != nil {
-		return nil, fmt.Errorf("decode device authorization poll: %w", err)
-	}
-	return &poll, nil
-}
-
 // httpStatusError records an unexpected HTTP status code.
 type httpStatusError struct {
 	StatusCode int
@@ -770,6 +630,17 @@ func keiWebURL() string {
 		return value
 	}
 	return defaultKeiWebURL
+}
+
+func consoleWebHost(apiURL string) (string, error) {
+	u, err := url.Parse(apiURL)
+	if err != nil {
+		return apiURL, err
+	}
+	if strings.HasPrefix(u.Hostname(), "api.") {
+		u.Host = strings.Replace(u.Host, "api.", "app.", 1)
+	}
+	return u.String(), nil
 }
 
 func normalizedKeiWebURL(raw string) (string, error) {

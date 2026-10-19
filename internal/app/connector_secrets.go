@@ -36,8 +36,8 @@ type sealedRecipient struct {
 	SealedPayload         string `json:"sealed_payload"`
 }
 
-// setSecretRequest is the body of POST /api/cli/connectors/{id}:setSecret
-// (HAI-262). It carries only ciphertext.
+// setSecretRequest is the body of POST /api/v1/data-connectors/{id}:setSecret.
+// It carries only ciphertext.
 type setSecretRequest struct {
 	Field                         string            `json:"field"`
 	CredentialStoreInstallationID string            `json:"credential_store_installation_id"`

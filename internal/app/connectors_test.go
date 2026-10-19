@@ -66,12 +66,11 @@ func newFakeConsole(t *testing.T, respond func(w http.ResponseWriter, r consoleR
 		}
 		raw, _ := io.ReadAll(r.Body)
 		req := consoleRequest{
-			Method:  r.Method,
-			Path:    r.URL.Path,
-			Query:   r.URL.RawQuery,
-			Auth:    r.Header.Get("Authorization"),
-			Headers: map[string]string{"X-Kei-API-Shape": r.Header.Get("X-Kei-API-Shape")},
-			Raw:     string(raw),
+			Method: r.Method,
+			Path:   r.URL.Path,
+			Query:  r.URL.RawQuery,
+			Auth:   r.Header.Get("Authorization"),
+			Raw:    string(raw),
 		}
 		if len(raw) > 0 {
 			if err := json.Unmarshal(raw, &req.Body); err != nil {
