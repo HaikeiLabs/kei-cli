@@ -59,6 +59,11 @@ func newFakeConsole(t *testing.T, respond func(w http.ResponseWriter, r consoleR
 			_, _ = w.Write([]byte(`[{"id":"` + testWorkspaceID + `","name":"Main"}]`))
 			return
 		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/organizations" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"id":"org-1","name":"Acme Corp"}]`))
+			return
+		}
 		raw, _ := io.ReadAll(r.Body)
 		req := consoleRequest{
 			Method:  r.Method,
@@ -104,6 +109,9 @@ func (f *fakeConsole) count() int {
 
 func runConnectors(t *testing.T, server *httptest.Server, store credentialStore, stdin string, args ...string) (int, string, string) {
 	t.Helper()
+	if len(args) > 0 && args[0] == "create" {
+		args = append(args, "--yes")
+	}
 	var stdout, stderr bytes.Buffer
 	code := runConnectorsCommand(args, &stdout, &stderr, strings.NewReader(stdin), server.Client(), store)
 	return code, stdout.String(), stderr.String()
@@ -942,7 +950,7 @@ func TestConnectorsNotLoggedIn(t *testing.T) {
 func TestConnectorsUsageListsSubcommands(t *testing.T) {
 	var stdout bytes.Buffer
 	PrintUsage(&stdout)
-	if !strings.Contains(stdout.String(), "kei connectors create|list|get|connect|reconnect|delete") {
+	if !strings.Contains(stdout.String(), "kei connectors create --workspace") || !strings.Contains(stdout.String(), "| test NAME") {
 		t.Fatalf("usage missing connectors:\n%s", stdout.String())
 	}
 }
@@ -1120,4 +1128,147 @@ func TestConnectorsCreateReadsPromptedConfigThenSecretFromOneStdin(t *testing.T)
 		t.Fatalf("the runtime key opened %q, want the secret read after the prompted config", rt.opened)
 	}
 	assertNoPlaintext(t, secret, rt.requests, stdout, stderr)
+}
+
+func TestConnectorsCreateAdvertisesGroupAllowlist(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runConnectorsCommand([]string{"create", "--help"}, &stdout, &stderr, strings.NewReader(""), nil, nil)
+	if code != 2 {
+		t.Fatalf("create --help exit = %d, stderr: %s", code, stderr.String())
+	}
+	for _, flag := range []string{"allow-group", "capabilities"} {
+		if !strings.Contains(stderr.String(), flag) {
+			t.Errorf("create help missing %s: %s", flag, stderr.String())
+		}
+	}
+}
+
+func TestConnectorsCreateAllowGroupsCreatesGroupCapabilityPolicies(t *testing.T) {
+	const groupID = "55555555-5555-5555-5555-555555555555"
+	const groupID2 = "66666666-6666-6666-6666-666666666666"
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		switch {
+		case r.Method == http.MethodGet && r.Path == "/api/v1/groups":
+			_, _ = w.Write([]byte(`[{"id":"` + groupID + `","name":"Engineering"},{"id":"` + groupID2 + `","name":"Operations"}]`))
+		case r.Method == http.MethodPost && r.Path == "/api/v1/data-connectors":
+			createdResponse(w, r)
+		case r.Method == http.MethodPost && r.Path == "/api/v1/policies":
+			_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `"}`))
+		case r.Method == http.MethodGet && r.Path == "/api/v1/data-connectors/"+testConnectorID:
+			_, _ = w.Write([]byte(`{"id":"` + testConnectorID + `","name":"team-mail","status":"active"}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.Path)
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--provider", "gmail", "--name", "team-mail", "--allow-group", "Engineering", "--allow-group", "Operations", "--capabilities", "message.search,message.get")
+	if code != 0 {
+		t.Fatalf("exit = %d stderr=%s", code, stderr)
+	}
+	var policies []consoleRequest
+	for _, req := range fake.requests {
+		if req.Method == http.MethodPost && req.Path == "/api/v1/policies" {
+			policies = append(policies, req)
+		}
+	}
+	if len(policies) != 2 {
+		t.Fatalf("policy creates = %d, want one per group: %#v", len(policies), policies)
+	}
+	for i, group := range []struct{ name, id string }{{"Engineering", groupID}, {"Operations", groupID2}} {
+		body := policies[i].Body
+		if body["src_pattern"] != "group:"+group.id || body["dst_pattern"] != "connector:team-mail" || body["effect"] != "permit" {
+			t.Errorf("policy body = %#v", body)
+		}
+		if !strings.Contains(fmt.Sprint(body["name"]), group.name) {
+			t.Errorf("policy name missing group %q: %#v", group.name, body)
+		}
+		if _, ok := body["agent_id"]; ok {
+			t.Errorf("group policy has agent_id: %#v", body)
+		}
+	}
+	for _, req := range fake.requests {
+		if req.Path == "/api/v1/data-connectors" && req.Method == http.MethodPost {
+			caps := req.Body["capabilities"].([]any)
+			if len(caps) != 2 {
+				t.Fatalf("connector capabilities = %#v", caps)
+			}
+		}
+	}
+}
+
+func TestConnectorsCreateAllowGroupConfirmationDeclinedCreatesNothing(t *testing.T) {
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		if r.Method == http.MethodGet && r.Path == "/api/v1/groups" {
+			_, _ = w.Write([]byte(`[{"id":"55555555-5555-5555-5555-555555555555","name":"Engineering"}]`))
+			return
+		}
+		t.Errorf("unexpected create request %s %s", r.Method, r.Path)
+	})
+	var stdout, stderr bytes.Buffer
+	code := runConnectorsCommand([]string{"create", "--workspace", "Main", "--provider", "gmail", "--name", "team-mail", "--allow-group", "Engineering"}, &stdout, &stderr, strings.NewReader(""), server.Client(), store)
+	created := false
+	for _, req := range fake.requests {
+		if req.Method == http.MethodPost {
+			created = true
+		}
+	}
+	if code != 2 || created {
+		t.Fatalf("exit=%d requests=%d stderr=%q", code, fake.count(), stderr.String())
+	}
+}
+
+func TestConnectorsCreateUnknownAllowGroupCreatesNoConnector(t *testing.T) {
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		if r.Method == http.MethodGet && r.Path == "/api/v1/groups" {
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		t.Errorf("unexpected request %s %s", r.Method, r.Path)
+		http.Error(w, "unexpected", http.StatusNotFound)
+	})
+	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--provider", "gmail", "--name", "team-mail", "--allow-group", "Missing")
+	if code != 1 || fake.count() != 1 || !strings.Contains(stderr, `group "Missing" was not found`) {
+		t.Fatalf("exit=%d requests=%d stderr=%q", code, fake.count(), stderr)
+	}
+}
+
+func TestConnectorsTestUsesPoliciesTestAndPrintsDecision(t *testing.T) {
+	const userID = "alice"
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		switch {
+		case r.Method == http.MethodGet && r.Path == "/api/v1/data-connectors":
+			_, _ = w.Write([]byte(`[{"id":"` + testConnectorID + `","name":"team-mail","capabilities":[{"name":"gmail.messages.list"}]}]`))
+		case r.Method == http.MethodGet && r.Path == "/api/v1/data-connectors/"+testConnectorID:
+			_, _ = w.Write([]byte(`{"id":"` + testConnectorID + `","name":"team-mail","capabilities":[{"name":"message.search"}]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.Path, "/policies:test"):
+			_, _ = w.Write([]byte(`{"decision":"permit","decided_by":"policy-123","outranked":[]}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.Path)
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	store.token = testUserToken(userID)
+	code, stdout, stderr := runConnectors(t, server, store, "", "test", "team-mail", "--workspace", "Main")
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, "Decision: permit") || !strings.Contains(stdout, "policy-123") {
+		t.Fatalf("test output = %q", stdout)
+	}
+	var req *consoleRequest
+	for i := range fake.requests {
+		if strings.HasSuffix(fake.requests[i].Path, "/policies:test") {
+			req = &fake.requests[i]
+			break
+		}
+	}
+	if req == nil || req.Method != http.MethodPost || req.Body["as"] != "user:"+userID || req.Body["target"] != "connector:team-mail" {
+		t.Fatalf("policies:test request = %#v", req)
+	}
+}
+
+func testUserToken(sub string) string {
+	hdr := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
+	pld := base64.RawURLEncoding.EncodeToString([]byte(`{"org_id":"org-1","sub":"` + sub + `"}`))
+	return hdr + "." + pld + "."
 }

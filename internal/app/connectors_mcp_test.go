@@ -183,7 +183,6 @@ func TestConnectorsCreateTemplateFlagRules(t *testing.T) {
 		{[]string{"--template", "grafana", "--label", "G", "--provider", "linear"}, "--provider"},
 		{[]string{"--template", "grafana", "--label", "G", "--set", "a=b"}, "--set"},
 		{[]string{"--template", "grafana", "--label", "G", "--credential-ref", "ref"}, "--credential-ref"},
-		{[]string{"--template", "grafana", "--label", "G", "--capabilities", "a"}, "--capabilities"},
 		{[]string{"--template", "grafana", "--label", "G", "--account-model", "shared"}, "--account-model"},
 		{[]string{"--template", "grafana", "--label", "G", "--base-url", "https://x"}, "--base-url"},
 		{[]string{"--provider", "linear", "--name", "x", "--kind", "mcp"}, "--kind"},
@@ -334,5 +333,39 @@ func TestConnectorsGetShowsMCPFields(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("get output missing %q:\n%s", want, stdout)
 		}
+	}
+}
+
+func TestConnectorsCreateTemplateAllowsGroup(t *testing.T) {
+	const groupID = "55555555-5555-5555-5555-555555555555"
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		switch {
+		case r.Method == http.MethodGet && r.Path == "/api/v1/connector-templates/custom_mcp":
+			_, _ = w.Write([]byte(`{"id":"custom_mcp","kind":"mcp","default_url":"https://mcp.example.com"}`))
+		case r.Method == http.MethodGet && r.Path == "/api/v1/groups":
+			_, _ = w.Write([]byte(`[{"id":"` + groupID + `","name":"Engineering"}]`))
+		case r.Method == http.MethodPost && r.Path == "/api/v1/data-connectors":
+			_, _ = w.Write([]byte(`{"id":"` + testConnectorID + `","name":"Grafana","status":"pending","slug":"grafana","mcp_url":"https://mcp.example.com"}`))
+		case r.Method == http.MethodPost && r.Path == "/api/v1/policies":
+			_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `"}`))
+		case r.Method == http.MethodGet && r.Path == "/api/v1/data-connectors/"+testConnectorID:
+			_, _ = w.Write([]byte(`{"id":"` + testConnectorID + `","name":"Grafana","status":"active"}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.Path)
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--template", "custom_mcp", "--label", "Grafana", "--allow-group", "Engineering", "--capabilities", "grafana.search")
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%q", code, stderr)
+	}
+	var gotPolicy bool
+	for _, req := range fake.requests {
+		if req.Method == http.MethodPost && req.Path == "/api/v1/policies" {
+			gotPolicy = req.Body["src_pattern"] == "group:"+groupID && req.Body["dst_pattern"] == "connector:Grafana"
+		}
+	}
+	if !gotPolicy {
+		t.Fatalf("no group capability policy posted: %#v", fake.requests)
 	}
 }

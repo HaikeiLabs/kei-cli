@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -8,6 +9,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
+
+	"github.com/HaikeiLabs/kei-connector-contracts/contract"
 )
 
 // connectorKindMCP is the kind of a connector template whose connectors are
@@ -53,7 +57,7 @@ func registerTemplateCreateFlags(flags *flag.FlagSet) templateCreateFlags {
 
 // nativeOnlyCreateFlags are the create flags of the provider path; the
 // template path rejects them.
-var nativeOnlyCreateFlags = []string{"provider", "account-model", "set", "credential-ref", "capabilities", "base-url", "methods", "paths"}
+var nativeOnlyCreateFlags = []string{"provider", "account-model", "set", "credential-ref", "base-url", "methods", "paths"}
 
 // templateOnlyCreateFlags are the create flags of the template path; the
 // provider path rejects them.
@@ -93,7 +97,7 @@ func optionalFlag(value string) *string {
 // runConnectorsCreateFromTemplate creates a connector from a catalog template
 // (HAI-489). The template's kind, read from the catalog, picks the path; only
 // mcp templates are created here.
-func runConnectorsCreateFromTemplate(f templateCreateFlags, name string, ws workspaceSelection, jsonOutput bool, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
+func runConnectorsCreateFromTemplate(f templateCreateFlags, name string, ws workspaceSelection, capabilities []string, allowGroups []string, yes bool, stdin io.Reader, jsonOutput bool, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	if *f.label == "" {
 		fmt.Fprintln(stderr, "connectors create --template requires --label")
 		return 2
@@ -126,6 +130,19 @@ func runConnectorsCreateFromTemplate(f templateCreateFlags, name string, ws work
 		Name: name, Provider: template.ID, DisplayName: *f.label,
 		Slug: optionalFlag(*f.slug), MCPURL: optionalFlag(*f.mcpURL), ExpectedIssuer: optionalFlag(*f.expectedIssuer),
 	}
+	orgName, err := getOrganizationName(context.Background(), client, session.baseURL, session.token, session.orgID)
+	if err != nil {
+		return fail(err)
+	}
+	workspaceName := workspaceNameByID(context.Background(), client, session.baseURL, session.token, session.orgID, session.workspaceID)
+	groupIDs, err := resolveConnectorGroupIDs(session, allowGroups)
+	if err != nil {
+		return fail(err)
+	}
+	fmt.Fprintf(stdout, "Organization: %s\nWorkspace: %s\n", orgName, workspaceName)
+	if !confirmWrite(stdin, stderr, yes, "Create connector "+name+"? This may grant the selected groups access.") {
+		return 2
+	}
 	payload, err := session.do(http.MethodPost, "", request)
 	if err != nil {
 		return fail(err)
@@ -133,6 +150,26 @@ func runConnectorsCreateFromTemplate(f templateCreateFlags, name string, ws work
 	var created connector
 	if err := json.Unmarshal(payload, &created); err != nil {
 		return fail(fmt.Errorf("decode response: %w", err))
+	}
+	if err := createConnectorGroupAllows(session, groupIDs, allowGroups, name); err != nil {
+		return fail(fmt.Errorf("connector created, but group allow policy failed: %w", err))
+	}
+	for attempt := 0; len(allowGroups) > 0 && attempt < 3; attempt++ {
+		latestBody, pollErr := session.do(http.MethodGet, "/"+url.PathEscape(created.ID), nil)
+		if pollErr != nil {
+			break
+		}
+		var latest connector
+		if json.Unmarshal(latestBody, &latest) != nil {
+			break
+		}
+		created.Status = latest.Status
+		if latest.Status == string(contract.StatusActive) {
+			break
+		}
+		if attempt < 2 {
+			connectPollSleep(250 * time.Millisecond)
+		}
 	}
 	// A catalog that predates expected_issuer (HAI-563) accepts the create
 	// and drops the field, leaving a connector that trusts any authorization
