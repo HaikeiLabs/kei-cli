@@ -471,6 +471,10 @@ func runConnectorsConnect(args []string, stdout, stderr io.Writer, client *http.
 		return 1
 	}
 	fail := func(err error) int {
+		var status *connectorStatusError
+		if errors.As(err, &status) && status.StatusCode == http.StatusForbidden {
+			err = fmt.Errorf("%w; ask an admin to allow your group, e.g. kei policies create --workspace %s --src-pattern group:<group> --dst-pattern connector:%s --effect permit", err, ws.value, id)
+		}
 		fmt.Fprintf(stderr, "connectors connect: %v\n", err)
 		return 1
 	}
@@ -739,7 +743,8 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	credentialRef := flags.String("credential-ref", "", "existing secret-manager reference for the provider's secret field")
 	capabilitiesFlag := flags.String("capabilities", "", "comma-separated capabilities (default: the provider's read capabilities)")
 	var allowGroups repeatedStrings
-	flags.Var(&allowGroups, "allow-group", "group name to allow (repeatable)")
+	flags.Var(&allowGroups, "allow-group", "group name to allow (repeatable; defaults to admins)")
+	noDefaultAccess := flags.Bool("no-default-access", false, "skip the default admins allow policy")
 	yes := flags.Bool("yes", false, "confirm without prompting")
 	httpAPI := registerHTTPAPIFlags(flags)
 	fromTemplate := registerTemplateCreateFlags(flags)
@@ -755,8 +760,16 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	if !checkCreateFlagPaths(flags, stderr) {
 		return 2
 	}
+	if *noDefaultAccess && len(allowGroups) > 0 {
+		fmt.Fprintln(stderr, "connectors create: --allow-group cannot be combined with --no-default-access")
+		return 2
+	}
+	defaultAccess := len(allowGroups) == 0 && !*noDefaultAccess
+	if defaultAccess {
+		allowGroups = []string{"admins"}
+	}
 	if *fromTemplate.template != "" {
-		return runConnectorsCreateFromTemplate(fromTemplate, *name, ws, splitList(*capabilitiesFlag), allowGroups, *yes, stdin, *jsonOutput, stdout, stderr, client, store)
+		return runConnectorsCreateFromTemplate(fromTemplate, *name, ws, splitList(*capabilitiesFlag), allowGroups, defaultAccess, *noDefaultAccess, *yes, stdin, *jsonOutput, stdout, stderr, client, store)
 	}
 	provider := contract.Provider(*providerFlag)
 	if !slices.Contains(offeredConnectorProviders, provider) {
@@ -831,8 +844,11 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 		return fail(err)
 	}
 	session := &connectorSession{client: client, baseURL: baseURL, token: token, orgID: orgID, workspaceID: workspaceID}
-	groupIDs, err := resolveConnectorGroupIDs(session, allowGroups)
+	_, err = resolveConnectorGroupIDs(session, allowGroups)
 	if err != nil {
+		if defaultAccess && strings.Contains(err.Error(), `group "admins" was not found`) {
+			return fail(fmt.Errorf("workspace group %q was not found; pass --allow-group NAME or --no-default-access", "admins"))
+		}
 		return fail(err)
 	}
 	orgName, err := getOrganizationName(context.Background(), client, baseURL, token, orgID)
@@ -841,7 +857,11 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	}
 	workspaceName := workspaceNameByID(context.Background(), client, baseURL, token, orgID, workspaceID)
 	fmt.Fprintf(stdout, "Organization: %s\nWorkspace: %s\n", orgName, workspaceName)
-	if !confirmWrite(stdin, stderr, *yes, "Create connector "+*name+"? This may grant the selected groups access.") {
+	confirmText := "Create connector " + *name + "? This may grant the selected groups access."
+	if defaultAccess {
+		confirmText = "Create connector " + *name + "? This will allow the admins group to use it."
+	}
+	if !confirmWrite(stdin, stderr, *yes, confirmText) {
 		return 2
 	}
 	var sealed setSecretRequest
@@ -858,7 +878,12 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	if err := json.Unmarshal(payload, &created); err != nil {
 		return fail(fmt.Errorf("decode response: %w", err))
 	}
-	if err := createConnectorGroupAllows(session, groupIDs, allowGroups, *name); err != nil {
+	capabilityNames = make([]string, 0, len(request.Capabilities))
+	for _, capability := range request.Capabilities {
+		capabilityNames = append(capabilityNames, capability.Name)
+	}
+	policyNames, err := createConnectorGroupAllows(session, allowGroups, created.ID, *name, string(request.Provider), capabilityNames)
+	if err != nil {
 		return fail(fmt.Errorf("connector created, but group allow policy failed: %w", err))
 	}
 	for attempt := 0; len(allowGroups) > 0 && attempt < 3; attempt++ {
@@ -886,9 +911,18 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	}
 	if *jsonOutput {
 		_, _ = stdout.Write(payload)
+		if *noDefaultAccess {
+			fmt.Fprintln(stderr, "Warning: nobody can connect until access is granted.")
+		}
 		return 0
 	}
 	fmt.Fprintf(stdout, "Created connector %s (%s, %s).\nConnector instance ID: %s\n", created.Name, created.Provider, connectorState(created.Status), created.ID)
+	for _, policy := range policyNames {
+		fmt.Fprintf(stdout, "Allowed group %s to use %s (policy %s).\n", policy.GroupName, *name, policy.Name)
+	}
+	if *noDefaultAccess {
+		fmt.Fprintln(stdout, "Warning: nobody can connect until access is granted.")
+	}
 	switch {
 	case request.CredentialSource == contract.CredentialSourceOAuth && model == contract.AccountModelShared:
 		fmt.Fprintf(stdout, "Next, connect the shared account: kei connectors reconnect %s --workspace %s\n", created.ID, ws.value)
@@ -981,15 +1015,37 @@ func resolveConnectorGroupIDs(connectorSession *connectorSession, groupNames []s
 	return resolved, nil
 }
 
-func createConnectorGroupAllows(connectorSession *connectorSession, groupIDs map[string]string, groupNames []string, connectorName string) error {
+type connectorAllowPolicy struct {
+	GroupName string
+	Name      string
+}
+
+func createConnectorGroupAllows(connectorSession *connectorSession, groupNames []string, connectorID, connectorName, source string, capabilityNames []string) ([]connectorAllowPolicy, error) {
 	policies := &policySession{client: connectorSession.client, baseURL: connectorSession.baseURL, token: connectorSession.token, workspaceID: connectorSession.workspaceID}
+	created := make([]connectorAllowPolicy, 0, len(groupNames)*max(1, len(capabilityNames)))
 	for _, groupName := range groupNames {
-		request := createPolicyRequest{Name: "Allow " + groupName + " " + connectorName, SrcPattern: "group:" + groupIDs[groupName], DstPattern: "connector:" + connectorName, Effect: "permit", Action: "permit", Priority: 100, Enabled: true}
-		if _, err := policies.do(http.MethodPost, "", request, nil); err != nil {
-			return err
+		targets := capabilityNames
+		if len(targets) == 0 {
+			targets = []string{""}
+		}
+		for _, capability := range targets {
+			policyName := "Allow " + groupName + " " + connectorName
+			dstPattern := "connector:" + connectorID
+			selector := &createPolicySelectorV2{ConnectorID: connectorID}
+			if capability != "" {
+				policyName += " " + capability
+				dstPattern = "capability:" + capability
+				selector.Source = source
+				selector.Capability = capability
+			}
+			request := createPolicyRequest{Name: policyName, SrcPattern: "group:" + groupName, DstPattern: dstPattern, Effect: "permit", Action: "permit", Priority: 100, Enabled: true, SelectorV2: selector}
+			if _, err := policies.do(http.MethodPost, "", request, nil); err != nil {
+				return nil, err
+			}
+			created = append(created, connectorAllowPolicy{GroupName: groupName, Name: policyName})
 		}
 	}
-	return nil
+	return created, nil
 }
 
 func offeredProviderNames() string {

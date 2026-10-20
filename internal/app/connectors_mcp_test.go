@@ -47,7 +47,7 @@ func mcpConsole(t *testing.T, templates map[string]string) (*fakeConsole, func(.
 	})
 	store.token = workspaceTestToken()
 	return fake, func(args ...string) (int, string, string) {
-		return runConnectors(t, server, store, "", args...)
+		return runConnectorsWithoutDefaultAccess(t, server, store, "", args...)
 	}
 }
 
@@ -231,7 +231,7 @@ func TestConnectorsCreateMCPExpectedIssuerRejectedByCatalog(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":{"code":400,"status":"INVALID_ARGUMENT","message":"expected_issuer must be an https URL without query or fragment"}}`))
 	})
 	store.token = workspaceTestToken()
-	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--template", "grafana", "--label", "G", "--expected-issuer", "http://insecure.example")
+	code, _, stderr := runConnectorsWithoutDefaultAccess(t, server, store, "", "create", "--workspace", "Main", "--template", "grafana", "--label", "G", "--expected-issuer", "http://insecure.example")
 	if code != 1 || !strings.Contains(stderr, "expected_issuer must be an https URL") || !strings.Contains(stderr, "400") {
 		t.Fatalf("exit = %d stderr=%q", code, stderr)
 	}
@@ -254,7 +254,7 @@ func TestConnectorsCreateMCPExpectedIssuerIgnoredByAnOlderCatalog(t *testing.T) 
 		}
 	})
 	store.token = workspaceTestToken()
-	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--template", "grafana", "--label", "G", "--expected-issuer", testIssuer)
+	code, _, stderr := runConnectorsWithoutDefaultAccess(t, server, store, "", "create", "--workspace", "Main", "--template", "grafana", "--label", "G", "--expected-issuer", testIssuer)
 	if code != 1 || !strings.Contains(stderr, "does not support expected_issuer") || !strings.Contains(stderr, "deleted") {
 		t.Fatalf("exit = %d stderr=%q, want 1 explaining the catalog dropped expected_issuer and the connector was deleted", code, stderr)
 	}
@@ -279,7 +279,7 @@ func TestConnectorsCreateMCPExpectedIssuerRollbackFailure(t *testing.T) {
 		}
 	})
 	store.token = workspaceTestToken()
-	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--template", "grafana", "--label", "G", "--expected-issuer", testIssuer)
+	code, _, stderr := runConnectorsWithoutDefaultAccess(t, server, store, "", "create", "--workspace", "Main", "--template", "grafana", "--label", "G", "--expected-issuer", testIssuer)
 	if code != 1 || !strings.Contains(stderr, "kei connectors delete "+testConnectorID) {
 		t.Fatalf("exit = %d stderr=%q, want the delete command for the connector", code, stderr)
 	}
@@ -355,14 +355,15 @@ func TestConnectorsCreateTemplateAllowsGroup(t *testing.T) {
 			http.Error(w, "unexpected", http.StatusNotFound)
 		}
 	})
-	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--template", "custom_mcp", "--label", "Grafana", "--allow-group", "Engineering", "--capabilities", "grafana.search")
+	code, _, stderr := runConnectorsWithoutDefaultAccess(t, server, store, "", "create", "--workspace", "Main", "--template", "custom_mcp", "--label", "Grafana", "--allow-group", "Engineering", "--capabilities", "grafana.search")
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%q", code, stderr)
 	}
 	var gotPolicy bool
 	for _, req := range fake.requests {
 		if req.Method == http.MethodPost && req.Path == "/api/v1/policies" {
-			gotPolicy = req.Body["src_pattern"] == "group:"+groupID && req.Body["dst_pattern"] == "connector:Grafana"
+			selector, _ := req.Body["selector_v2"].(map[string]any)
+			gotPolicy = req.Body["src_pattern"] == "group:Engineering" && req.Body["dst_pattern"] == "connector:"+testConnectorID && selector["connector_id"] == testConnectorID
 		}
 	}
 	if !gotPolicy {
