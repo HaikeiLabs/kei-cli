@@ -106,6 +106,67 @@ func TestConnectorsCreateMCPSlugAndName(t *testing.T) {
 	}
 }
 
+func TestConnectorsCreateRejectsInvalidSlugBeforeRequest(t *testing.T) {
+	fake, run := mcpConsole(t, map[string]string{"/api/v1/connector-templates/grafana": grafanaTemplate})
+	code, _, stderr := run("create", "--workspace", "Main", "--template", "grafana", "--label", "Linear", "--slug", "linear-mcp")
+	if code != 2 || !strings.Contains(stderr, "^[a-z][a-z0-9_]{1,47}$") || !strings.Contains(stderr, "linear_mcp") {
+		t.Fatalf("exit = %d stderr=%q, want slug pattern and corrected slug", code, stderr)
+	}
+	if fake.count() != 0 {
+		t.Fatalf("invalid slug made %d requests, want none", fake.count())
+	}
+}
+
+func TestConnectorSlugValidation(t *testing.T) {
+	valid48 := "a" + strings.Repeat("b", 47)
+	invalid49 := "a" + strings.Repeat("b", 48)
+	for _, tc := range []struct {
+		value string
+		valid bool
+	}{
+		{value: "ab", valid: true},
+		{value: valid48, valid: true},
+		{value: "a", valid: false},
+		{value: "1a", valid: false},
+		{value: "A1", valid: false},
+		{value: "a-b", valid: false},
+		{value: invalid49, valid: false},
+	} {
+		if got := connectorSlugPattern.MatchString(tc.value); got != tc.valid {
+			t.Errorf("connectorSlugPattern.MatchString(%q) = %v, want %v", tc.value, got, tc.valid)
+		}
+	}
+}
+
+func TestConnectorsTemplatesList(t *testing.T) {
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		if r.Method != http.MethodGet || r.Path != "/api/v1/connector-templates" {
+			t.Fatalf("request = %s %s", r.Method, r.Path)
+		}
+		_, _ = w.Write([]byte("[{\"id\":\"linear_mcp\",\"kind\":\"mcp\",\"display_name\":\"Linear\"},{\"id\":\"linear\",\"kind\":\"native\",\"display_name\":\"Linear\"}]"))
+	})
+	code, stdout, stderr := runConnectors(t, server, store, "", "templates")
+	if code != 0 {
+		t.Fatalf("exit = %d stderr=%s", code, stderr)
+	}
+	if got := fake.only(t); got.Path != "/api/v1/connector-templates" {
+		t.Fatalf("request = %#v", got)
+	}
+	for _, want := range []string{"linear_mcp", "mcp", "Linear", "linear", "native"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("output missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
+func TestConnectorsCreateAccountModelHelpMentionsTemplateConflict(t *testing.T) {
+	_, server, store := newFakeConsole(t, failOnRequest(t))
+	_, _, stderr := runConnectors(t, server, store, "", "create", "--help")
+	if !strings.Contains(stderr, "cannot be combined with --template") {
+		t.Fatalf("create help = %q", stderr)
+	}
+}
+
 // TestConnectorsCreateMCPUsesTheTemplateURL: a template with a default_url
 // needs no --mcp-url, and none is sent, so the catalog uses the template's.
 func TestConnectorsCreateMCPUsesTheTemplateURL(t *testing.T) {

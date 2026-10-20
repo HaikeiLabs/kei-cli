@@ -227,6 +227,7 @@ func PrintUsage(w io.Writer) {
 	fmt.Fprintln(w, "  kei runtime service status")
 	fmt.Fprintln(w, "  kei feedback --description TEXT [--file PATH] [--screenshot PATH] [--session PATH] [--export claude|claude-desktop|codex|opencode] [--yes] (--session: repeatable file paths, or one session ID with --export; --export claude-desktop takes --file ZIP_OR_CONVERSATIONS_JSON and --session UUID_OR_NAME; transcripts are redacted before upload)")
 	fmt.Fprintln(w, "  kei connectors connect CONNECTOR_ID --workspace WORKSPACE [--no-browser] (connect a per-user OAuth connector)")
+	fmt.Fprintln(w, "  kei connectors templates [--json] (list connector template IDs, kinds and labels)")
 }
 
 func printVersion(w io.Writer, version string) {
