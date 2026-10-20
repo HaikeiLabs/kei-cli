@@ -38,17 +38,24 @@ type policy struct {
 }
 
 type createPolicyRequest struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	SrcPattern  string `json:"src_pattern"`
-	DstPattern  string `json:"dst_pattern"`
-	Effect      string `json:"effect"`
-	Action      string `json:"action,omitempty"`
-	Priority    int    `json:"priority"`
-	Enabled     bool   `json:"enabled"`
+	Name        string                  `json:"name"`
+	Description string                  `json:"description,omitempty"`
+	SrcPattern  string                  `json:"src_pattern"`
+	DstPattern  string                  `json:"dst_pattern"`
+	Effect      string                  `json:"effect"`
+	Action      string                  `json:"action,omitempty"`
+	Priority    int                     `json:"priority"`
+	Enabled     bool                    `json:"enabled"`
+	SelectorV2  *createPolicySelectorV2 `json:"selector_v2,omitempty"`
 	// AgentID scopes the policy to one agent; omitted, it applies to every
 	// agent in the workspace.
 	AgentID *string `json:"agent_id,omitempty"`
+}
+
+type createPolicySelectorV2 struct {
+	Source      string `json:"source,omitempty"`
+	ConnectorID string `json:"connector_id,omitempty"`
+	Capability  string `json:"capability,omitempty"`
 }
 
 type updatePolicyRequest struct {

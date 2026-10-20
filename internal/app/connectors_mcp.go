@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/HaikeiLabs/kei-connector-contracts/contract"
@@ -97,7 +98,7 @@ func optionalFlag(value string) *string {
 // runConnectorsCreateFromTemplate creates a connector from a catalog template
 // (HAI-489). The template's kind, read from the catalog, picks the path; only
 // mcp templates are created here.
-func runConnectorsCreateFromTemplate(f templateCreateFlags, name string, ws workspaceSelection, capabilities []string, allowGroups []string, yes bool, stdin io.Reader, jsonOutput bool, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
+func runConnectorsCreateFromTemplate(f templateCreateFlags, name string, ws workspaceSelection, capabilities []string, allowGroups []string, defaultAccess, noDefaultAccess, yes bool, stdin io.Reader, jsonOutput bool, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	if *f.label == "" {
 		fmt.Fprintln(stderr, "connectors create --template requires --label")
 		return 2
@@ -135,12 +136,19 @@ func runConnectorsCreateFromTemplate(f templateCreateFlags, name string, ws work
 		return fail(err)
 	}
 	workspaceName := workspaceNameByID(context.Background(), client, session.baseURL, session.token, session.orgID, session.workspaceID)
-	groupIDs, err := resolveConnectorGroupIDs(session, allowGroups)
+	_, err = resolveConnectorGroupIDs(session, allowGroups)
 	if err != nil {
+		if defaultAccess && strings.Contains(err.Error(), `group "admins" was not found`) {
+			return fail(fmt.Errorf("workspace group %q was not found; pass --allow-group NAME or --no-default-access", "admins"))
+		}
 		return fail(err)
 	}
 	fmt.Fprintf(stdout, "Organization: %s\nWorkspace: %s\n", orgName, workspaceName)
-	if !confirmWrite(stdin, stderr, yes, "Create connector "+name+"? This may grant the selected groups access.") {
+	confirmText := "Create connector " + name + "? This may grant the selected groups access."
+	if defaultAccess {
+		confirmText = "Create connector " + name + "? This will allow the admins group to use it."
+	}
+	if !confirmWrite(stdin, stderr, yes, confirmText) {
 		return 2
 	}
 	payload, err := session.do(http.MethodPost, "", request)
@@ -151,7 +159,16 @@ func runConnectorsCreateFromTemplate(f templateCreateFlags, name string, ws work
 	if err := json.Unmarshal(payload, &created); err != nil {
 		return fail(fmt.Errorf("decode response: %w", err))
 	}
-	if err := createConnectorGroupAllows(session, groupIDs, allowGroups, name); err != nil {
+	capabilityNames := make([]string, 0, len(created.Capabilities))
+	for _, capability := range created.Capabilities {
+		capabilityNames = append(capabilityNames, capability.Name)
+	}
+	source := created.Provider
+	if source == "" {
+		source = template.ID
+	}
+	policyNames, err := createConnectorGroupAllows(session, allowGroups, created.ID, name, source, capabilityNames)
+	if err != nil {
 		return fail(fmt.Errorf("connector created, but group allow policy failed: %w", err))
 	}
 	for attempt := 0; len(allowGroups) > 0 && attempt < 3; attempt++ {
@@ -183,9 +200,18 @@ func runConnectorsCreateFromTemplate(f templateCreateFlags, name string, ws work
 	}
 	if jsonOutput {
 		_, _ = stdout.Write(payload)
+		if noDefaultAccess {
+			fmt.Fprintln(stderr, "Warning: nobody can connect until access is granted.")
+		}
 		return 0
 	}
 	fmt.Fprintf(stdout, "Created MCP connector %s (slug %s, template %s, %s).\nConnector instance ID: %s\nMCP URL: %s\n", created.DisplayName, created.Slug, template.ID, connectorState(created.Status), created.ID, created.MCPURL)
+	for _, policy := range policyNames {
+		fmt.Fprintf(stdout, "Allowed group %s to use %s (policy %s).\n", policy.GroupName, name, policy.Name)
+	}
+	if noDefaultAccess {
+		fmt.Fprintln(stdout, "Warning: nobody can connect until access is granted.")
+	}
 	if created.ExpectedIssuer != "" {
 		fmt.Fprintf(stdout, "Issuer: %s\n", created.ExpectedIssuer)
 	}

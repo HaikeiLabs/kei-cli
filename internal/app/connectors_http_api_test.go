@@ -40,7 +40,7 @@ func stringsOf(value any) []string {
 func TestConnectorsCreateHTTPAPISendsRegistrationAndMethodCapabilities(t *testing.T) {
 	fake, server, store := newFakeConsole(t, createdResponse)
 	store.token = workspaceTestToken()
-	code, stdout, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main",
+	code, stdout, stderr := runConnectorsWithoutDefaultAccess(t, server, store, "", "create", "--workspace", "Main",
 		"--provider", "http_api", "--name", "crm", "--base-url", "https://crm.example.com/api",
 		"--methods", "get,HEAD,GET", "--paths", "/investors,/investors/*", "--query", "limit,cursor",
 		"--auth-header", "X-KEI-API-Key", "--credential-ref", "kei/prod/crm/api-key")
@@ -104,7 +104,7 @@ func TestConnectorsCreateHTTPAPIWriteMethods(t *testing.T) {
 	}
 	if _, ok := actions["http.post"]; !ok {
 		fake, server, store := newFakeConsole(t, failOnRequest(t))
-		code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main",
+		code, _, stderr := runConnectorsWithoutDefaultAccess(t, server, store, "", "create", "--workspace", "Main",
 			"--provider", "http_api", "--name", "crm", "--base-url", "https://crm.example.com",
 			"--methods", "GET,POST,PATCH", "--credential-ref", "kei/prod/crm/api-key")
 		if code == 0 || fake.count() != 0 || !strings.Contains(stderr, "POST") {
@@ -114,7 +114,7 @@ func TestConnectorsCreateHTTPAPIWriteMethods(t *testing.T) {
 	}
 	fake, server, store := newFakeConsole(t, createdResponse)
 	store.token = workspaceTestToken()
-	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main",
+	code, _, stderr := runConnectorsWithoutDefaultAccess(t, server, store, "", "create", "--workspace", "Main",
 		"--provider", "http_api", "--name", "crm", "--base-url", "https://crm.example.com",
 		"--methods", "GET,HEAD,POST,PATCH", "--auth-header", "X-KEI-API-Key", "--credential-ref", "kei/prod/crm/api-key")
 	if code != 0 {
@@ -158,7 +158,7 @@ func TestConnectorsCreateHTTPAPIAuthSchemeDefaults(t *testing.T) {
 			store.token = workspaceTestToken()
 			args := append([]string{"create", "--workspace", "Main", "--provider", "http_api", "--name", "crm",
 				"--base-url", "https://crm.example.com", "--credential-ref", "kei/prod/crm/api-key"}, tc.args...)
-			if code, _, stderr := runConnectors(t, server, store, "", args...); code != 0 {
+			if code, _, stderr := runConnectorsWithoutDefaultAccess(t, server, store, "", args...); code != 0 {
 				t.Fatalf("exit = %d stderr=%s", code, stderr)
 			}
 			h, _ := fake.only(t).Body["http_api"].(map[string]any)
@@ -174,7 +174,7 @@ func TestConnectorsCreateHTTPAPIAuthSchemeDefaults(t *testing.T) {
 func TestConnectorsCreateHTTPAPISealsTheSharedKey(t *testing.T) {
 	const secret = "crm-shared-api-key-0123456789abcdef"
 	rt := newSecretConsole(t, "")
-	code, stdout, stderr := runConnectors(t, rt.server, rt.store, secret+"\n", "create", "--workspace", "Main",
+	code, stdout, stderr := runConnectorsWithoutDefaultAccess(t, rt.server, rt.store, secret+"\n", "create", "--workspace", "Main",
 		"--provider", "http_api", "--name", "crm", "--base-url", "https://crm.example.com", "--auth-header", "X-KEI-API-Key")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)

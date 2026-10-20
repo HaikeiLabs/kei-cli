@@ -116,6 +116,24 @@ func runConnectors(t *testing.T, server *httptest.Server, store credentialStore,
 	return code, stdout.String(), stderr.String()
 }
 
+// runConnectorsWithoutDefaultAccess keeps older create tests focused on their
+// specific behavior; default-access behavior is covered by dedicated tests.
+func runConnectorsWithoutDefaultAccess(t *testing.T, server *httptest.Server, store credentialStore, stdin string, args ...string) (int, string, string) {
+	if len(args) > 0 && args[0] == "create" {
+		hasAccessFlag := false
+		for _, arg := range args {
+			if arg == "--allow-group" || arg == "--no-default-access" {
+				hasAccessFlag = true
+				break
+			}
+		}
+		if !hasAccessFlag {
+			args = append(args, "--no-default-access")
+		}
+	}
+	return runConnectors(t, server, store, stdin, args...)
+}
+
 func failOnRequest(t *testing.T) func(http.ResponseWriter, consoleRequest) {
 	return func(w http.ResponseWriter, r consoleRequest) {
 		t.Errorf("unexpected console request %s %s", r.Method, r.Path)
@@ -285,7 +303,7 @@ func TestConnectorsGetRequiresUUID(t *testing.T) {
 func TestConnectorsCreatePerUserOAuth(t *testing.T) {
 	fake, server, store := newFakeConsole(t, createdResponse)
 	store.token = workspaceTestToken()
-	code, stdout, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--provider", "gmail", "--name", "team-mail")
+	code, stdout, stderr := runConnectorsWithoutDefaultAccess(t, server, store, "", "create", "--workspace", "Main", "--provider", "gmail", "--name", "team-mail")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -313,7 +331,7 @@ func TestConnectorsCreatePerUserOAuth(t *testing.T) {
 func TestConnectorsCreateSharedOAuthPointsAtReconnect(t *testing.T) {
 	fake, server, store := newFakeConsole(t, createdResponse)
 	store.token = workspaceTestToken()
-	code, stdout, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--provider", "google_drive", "--name", "shared-drive", "--account-model", "shared", "--set", "drive_id=0AbCd")
+	code, stdout, stderr := runConnectorsWithoutDefaultAccess(t, server, store, "", "create", "--workspace", "Main", "--provider", "google_drive", "--name", "shared-drive", "--account-model", "shared", "--set", "drive_id=0AbCd")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -332,7 +350,7 @@ func TestConnectorsCreateSharedOAuthPointsAtReconnect(t *testing.T) {
 func TestConnectorsCreateSharedSecretWithCredentialRef(t *testing.T) {
 	fake, server, store := newFakeConsole(t, createdResponse)
 	store.token = workspaceTestToken()
-	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--provider", "tito", "--name", "events", "--set", "account_slug=acme", "--credential-ref", "kei/prod/tito/api-token")
+	code, _, stderr := runConnectorsWithoutDefaultAccess(t, server, store, "", "create", "--workspace", "Main", "--provider", "tito", "--name", "events", "--set", "account_slug=acme", "--credential-ref", "kei/prod/tito/api-token")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -355,7 +373,7 @@ func TestConnectorsCreateSharedSecretWithCredentialRef(t *testing.T) {
 func TestConnectorsCreateSkillsRepoPerUserWithDefaults(t *testing.T) {
 	fake, server, store := newFakeConsole(t, createdResponse)
 	store.token = workspaceTestToken()
-	code, stdout, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--provider", "skills_repo", "--name", "org-skills", "--set", "repo_url=https://github.com/HaikeiLabs/skills")
+	code, stdout, stderr := runConnectorsWithoutDefaultAccess(t, server, store, "", "create", "--workspace", "Main", "--provider", "skills_repo", "--name", "org-skills", "--set", "repo_url=https://github.com/HaikeiLabs/skills")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -393,7 +411,7 @@ func TestConnectorsCreateSkillsRepoPerUserWithDefaults(t *testing.T) {
 func TestConnectorsCreateSkillsRepoExplicitRefAndSubdirectory(t *testing.T) {
 	fake, server, store := newFakeConsole(t, createdResponse)
 	store.token = workspaceTestToken()
-	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--provider", "skills_repo", "--name", "org-skills",
+	code, _, stderr := runConnectorsWithoutDefaultAccess(t, server, store, "", "create", "--workspace", "Main", "--provider", "skills_repo", "--name", "org-skills",
 		"--account-model", "per_user", "--set", "repo_url=https://github.com/HaikeiLabs/skills", "--set", "ref=v1.2.0", "--set", "subdirectory=/")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
@@ -407,7 +425,7 @@ func TestConnectorsCreateSkillsRepoExplicitRefAndSubdirectory(t *testing.T) {
 func TestConnectorsCreateSkillsRepoSharedTokenByCredentialRef(t *testing.T) {
 	fake, server, store := newFakeConsole(t, createdResponse)
 	store.token = workspaceTestToken()
-	code, stdout, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--provider", "skills_repo", "--name", "org-skills",
+	code, stdout, stderr := runConnectorsWithoutDefaultAccess(t, server, store, "", "create", "--workspace", "Main", "--provider", "skills_repo", "--name", "org-skills",
 		"--set", "repo_url=https://github.com/HaikeiLabs/skills", "--credential-ref", "kei/prod/skills/github-token")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
@@ -486,7 +504,7 @@ func TestConnectorsListAndGetRenderSkillsRepo(t *testing.T) {
 func TestConnectorsCreateSealsSecretAndSetsItWithoutSendingPlaintext(t *testing.T) {
 	const secret = "tito-live-secret-value-0123456789"
 	rt := newSecretConsole(t, "")
-	code, stdout, stderr := runConnectors(t, rt.server, rt.store, secret+"\n", "create", "--workspace", "Main", "--provider", "tito", "--name", "events", "--set", "account_slug=acme")
+	code, stdout, stderr := runConnectorsWithoutDefaultAccess(t, rt.server, rt.store, secret+"\n", "create", "--workspace", "Main", "--provider", "tito", "--name", "events", "--set", "account_slug=acme")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -522,7 +540,7 @@ func TestConnectorsCreateWithoutRecipientsCreatesNothing(t *testing.T) {
 	const secret = "tito-live-secret-value-0123456789"
 	rt := newSecretConsole(t, "")
 	rt.noRecipients = true
-	code, stdout, stderr := runConnectors(t, rt.server, rt.store, secret+"\n", "create", "--workspace", "Main", "--provider", "tito", "--name", "events", "--set", "account_slug=acme")
+	code, stdout, stderr := runConnectorsWithoutDefaultAccess(t, rt.server, rt.store, secret+"\n", "create", "--workspace", "Main", "--provider", "tito", "--name", "events", "--set", "account_slug=acme")
 	if code != 1 || !strings.Contains(stderr, "Nothing was created") {
 		t.Fatalf("exit = %d stderr=%q", code, stderr)
 	}
@@ -536,7 +554,7 @@ func TestConnectorsCreateReportsSetSecretFailureWithRecovery(t *testing.T) {
 	const secret = "tito-live-secret-value-0123456789"
 	rt := newSecretConsole(t, "")
 	rt.failSetSecret = true
-	code, stdout, stderr := runConnectors(t, rt.server, rt.store, secret+"\n", "create", "--workspace", "Main", "--provider", "tito", "--name", "events", "--set", "account_slug=acme")
+	code, stdout, stderr := runConnectorsWithoutDefaultAccess(t, rt.server, rt.store, secret+"\n", "create", "--workspace", "Main", "--provider", "tito", "--name", "events", "--set", "account_slug=acme")
 	if code != 1 || !strings.Contains(stderr, testConnectorID) || !strings.Contains(stderr, "kei connectors reconnect "+testConnectorID) {
 		t.Fatalf("exit = %d stderr=%q, want the created id and the reconnect retry", code, stderr)
 	}
@@ -571,7 +589,7 @@ func TestSealConnectorSecretOpensOnlyForItsRecipient(t *testing.T) {
 func TestConnectorsCreateInvalidSecretNamesFieldWithoutEchoingIt(t *testing.T) {
 	const secret = "short"
 	fake, server, store := newFakeConsole(t, failOnRequest(t))
-	code, stdout, stderr := runConnectors(t, server, store, secret+"\n", "create", "--workspace", "Main", "--provider", "tito", "--name", "events", "--set", "account_slug=acme")
+	code, stdout, stderr := runConnectorsWithoutDefaultAccess(t, server, store, secret+"\n", "create", "--workspace", "Main", "--provider", "tito", "--name", "events", "--set", "account_slug=acme")
 	if code != 1 || !strings.Contains(stderr, `"api_token"`) {
 		t.Fatalf("exit = %d stderr=%q", code, stderr)
 	}
@@ -583,7 +601,7 @@ func TestConnectorsCreateInvalidSecretNamesFieldWithoutEchoingIt(t *testing.T) {
 func TestConnectorsCreateRejectsServiceAccountKeyWithoutPrivateKey(t *testing.T) {
 	fake, server, store := newFakeConsole(t, failOnRequest(t))
 	key := `{"type":"service_account","client_email":"svc@example.iam.gserviceaccount.com"}`
-	code, _, stderr := runConnectors(t, server, store, key+"\n", "create", "--workspace", "Main", "--provider", "gmail", "--name", "mail", "--account-model", "domain_delegation", "--set", "impersonate_email=events@example.com")
+	code, _, stderr := runConnectorsWithoutDefaultAccess(t, server, store, key+"\n", "create", "--workspace", "Main", "--provider", "gmail", "--name", "mail", "--account-model", "domain_delegation", "--set", "impersonate_email=events@example.com")
 	if code != 1 || !strings.Contains(stderr, `"service_account_key"`) || strings.Contains(stderr, "svc@example") || fake.count() != 0 {
 		t.Fatalf("exit = %d stderr=%q requests=%d", code, stderr, fake.count())
 	}
@@ -592,7 +610,7 @@ func TestConnectorsCreateRejectsServiceAccountKeyWithoutPrivateKey(t *testing.T)
 func TestConnectorsCreateDomainDelegationWithCredentialRef(t *testing.T) {
 	fake, server, store := newFakeConsole(t, createdResponse)
 	store.token = workspaceTestToken()
-	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--provider", "gmail", "--name", "mail", "--account-model", "domain_delegation", "--set", "impersonate_email=events@example.com", "--credential-ref", "kei/prod/google/sa-key")
+	code, _, stderr := runConnectorsWithoutDefaultAccess(t, server, store, "", "create", "--workspace", "Main", "--provider", "gmail", "--name", "mail", "--account-model", "domain_delegation", "--set", "impersonate_email=events@example.com", "--credential-ref", "kei/prod/google/sa-key")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -646,7 +664,7 @@ func TestConnectorsCreateRejectsLocallyBeforeSending(t *testing.T) {
 func TestConnectorsCreateCRMDefaultsToCapabilitiesItsResourcesAllow(t *testing.T) {
 	fake, server, store := newFakeConsole(t, createdResponse)
 	store.token = workspaceTestToken()
-	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--provider", "crm", "--name", "crm", "--set", "base_url=https://crm.example.com", "--set", "assertion_audience=kei-crm", "--credential-ref", "kei/prod/crm/api-key")
+	code, _, stderr := runConnectorsWithoutDefaultAccess(t, server, store, "", "create", "--workspace", "Main", "--provider", "crm", "--name", "crm", "--set", "base_url=https://crm.example.com", "--set", "assertion_audience=kei-crm", "--credential-ref", "kei/prod/crm/api-key")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -663,7 +681,7 @@ func TestConnectorsCreateCRMDefaultsToCapabilitiesItsResourcesAllow(t *testing.T
 func TestConnectorsCreatePromptsForMissingRequiredConfig(t *testing.T) {
 	fake, server, store := newFakeConsole(t, createdResponse)
 	store.token = workspaceTestToken()
-	code, stdout, stderr := runConnectors(t, server, store, "acme\n", "create", "--workspace", "Main", "--provider", "tito", "--name", "events", "--credential-ref", "kei/prod/tito/api-token")
+	code, stdout, stderr := runConnectorsWithoutDefaultAccess(t, server, store, "acme\n", "create", "--workspace", "Main", "--provider", "tito", "--name", "events", "--credential-ref", "kei/prod/tito/api-token")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -681,7 +699,7 @@ func TestConnectorsCreateSurfacesCatalogError(t *testing.T) {
 		_, _ = w.Write([]byte(`{"reason":"provider_not_supported","message":"provider must be one of gmail"}`))
 	})
 	store.token = workspaceTestToken()
-	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--provider", "linear", "--name", "x")
+	code, _, stderr := runConnectorsWithoutDefaultAccess(t, server, store, "", "create", "--workspace", "Main", "--provider", "linear", "--name", "x")
 	if code != 1 || !strings.Contains(stderr, "provider must be one of gmail") || !strings.Contains(stderr, "400") {
 		t.Fatalf("exit = %d stderr=%q", code, stderr)
 	}
@@ -836,11 +854,98 @@ func TestConnectorsConnect403(t *testing.T) {
 	store.token = workspaceTestToken()
 
 	code, _, stderr := runConnectors(t, server, store, "", "connect", testConnectorID, "--workspace", "Main", "--no-browser")
-	if code != 1 || !strings.Contains(stderr, "403") {
+	for _, want := range []string{"403", "ask an admin", "kei policies create --workspace Main", "group:<group>", "connector:" + testConnectorID} {
+		if code != 1 || !strings.Contains(stderr, want) {
+			t.Errorf("exit=%d stderr=%q missing %q", code, stderr, want)
+		}
+	}
+	if code != 1 {
 		t.Fatalf("exit = %d stderr=%q", code, stderr)
 	}
 	if fake.count() != 1 {
 		t.Fatalf("requests = %d, want 1", fake.count())
+	}
+}
+
+func TestConnectorsCreateDefaultsToAdminsAllowPolicy(t *testing.T) {
+	const adminGroupID = "77777777-7777-7777-7777-777777777777"
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		switch {
+		case r.Method == http.MethodGet && r.Path == "/api/v1/groups":
+			_, _ = w.Write([]byte(`[{"id":"` + adminGroupID + `","name":"admins"}]`))
+		case r.Method == http.MethodPost && r.Path == "/api/v1/data-connectors":
+			createdResponse(w, r)
+		case r.Method == http.MethodPost && r.Path == "/api/v1/policies":
+			_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `"}`))
+		case r.Method == http.MethodGet && r.Path == "/api/v1/data-connectors/"+testConnectorID:
+			_, _ = w.Write([]byte(`{"id":"` + testConnectorID + `","name":"team-mail","status":"active"}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.Path)
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	code, stdout, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--provider", "gmail", "--name", "team-mail")
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, stderr)
+	}
+	var policy *consoleRequest
+	for i := range fake.requests {
+		if fake.requests[i].Method == http.MethodPost && fake.requests[i].Path == "/api/v1/policies" {
+			policy = &fake.requests[i]
+		}
+	}
+	if policy == nil {
+		t.Fatal("default allow policy was not created")
+	}
+	selector, _ := policy.Body["selector_v2"].(map[string]any)
+	if policy.Body["src_pattern"] != "group:admins" || policy.Body["dst_pattern"] != "capability:"+fmt.Sprint(selector["capability"]) || policy.Body["effect"] != "permit" {
+		t.Fatalf("default policy = %#v", policy)
+	}
+	if selector["connector_id"] != testConnectorID || selector["source"] != "gmail" {
+		t.Fatalf("default selector = %#v", selector)
+	}
+	if !strings.Contains(fmt.Sprint(policy.Body["name"]), "admins") || !strings.Contains(stdout, "Allowed group admins to use team-mail") || !strings.Contains(stdout, "policy ") {
+		t.Fatalf("stdout=%q policy=%#v", stdout, policy.Body)
+	}
+}
+
+func TestConnectorsCreateMissingAdminsFailsBeforeCreate(t *testing.T) {
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		if r.Method == http.MethodGet && r.Path == "/api/v1/groups" {
+			_, _ = w.Write([]byte(`[{"id":"55555555-5555-5555-5555-555555555555","name":"Engineering"}]`))
+			return
+		}
+		t.Errorf("unexpected request %s %s", r.Method, r.Path)
+		http.Error(w, "unexpected", http.StatusNotFound)
+	})
+	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--provider", "gmail", "--name", "team-mail")
+	if code != 1 || !strings.Contains(stderr, "admins") || !strings.Contains(stderr, "--allow-group NAME") || !strings.Contains(stderr, "--no-default-access") {
+		t.Fatalf("exit=%d stderr=%q", code, stderr)
+	}
+	for _, req := range fake.requests {
+		if req.Method == http.MethodPost && req.Path == "/api/v1/data-connectors" {
+			t.Fatal("connector was created without an admins group")
+		}
+	}
+}
+
+func TestConnectorsCreateNoDefaultAccessSkipsPolicyAndWarns(t *testing.T) {
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		if r.Method == http.MethodPost && r.Path == "/api/v1/data-connectors" {
+			createdResponse(w, r)
+			return
+		}
+		t.Errorf("unexpected request %s %s", r.Method, r.Path)
+		http.Error(w, "unexpected", http.StatusNotFound)
+	})
+	code, stdout, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--provider", "gmail", "--name", "team-mail", "--no-default-access")
+	if code != 0 || !strings.Contains(stdout, "nobody can connect") {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	for _, req := range fake.requests {
+		if req.Method == http.MethodPost && req.Path == "/api/v1/policies" {
+			t.Fatal("unexpected allow policy")
+		}
 	}
 }
 
@@ -1116,7 +1221,7 @@ func openKMP1ForTest(sealed, runtimeInstallationID, keyID string, private *ecdh.
 func TestConnectorsCreateReadsPromptedConfigThenSecretFromOneStdin(t *testing.T) {
 	const secret = "tito-live-secret-value-0123456789"
 	rt := newSecretConsole(t, "")
-	code, stdout, stderr := runConnectors(t, rt.server, rt.store, "acme\n"+secret+"\n", "create", "--workspace", "Main", "--provider", "tito", "--name", "events")
+	code, stdout, stderr := runConnectorsWithoutDefaultAccess(t, rt.server, rt.store, "acme\n"+secret+"\n", "create", "--workspace", "Main", "--provider", "tito", "--name", "events")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -1135,7 +1240,7 @@ func TestConnectorsCreateAdvertisesGroupAllowlist(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("create --help exit = %d, stderr: %s", code, stderr.String())
 	}
-	for _, flag := range []string{"allow-group", "capabilities"} {
+	for _, flag := range []string{"allow-group", "no-default-access", "capabilities"} {
 		if !strings.Contains(stderr.String(), flag) {
 			t.Errorf("create help missing %s: %s", flag, stderr.String())
 		}
@@ -1145,10 +1250,11 @@ func TestConnectorsCreateAdvertisesGroupAllowlist(t *testing.T) {
 func TestConnectorsCreateAllowGroupsCreatesGroupCapabilityPolicies(t *testing.T) {
 	const groupID = "55555555-5555-5555-5555-555555555555"
 	const groupID2 = "66666666-6666-6666-6666-666666666666"
+	const adminGroupID = "77777777-7777-7777-7777-777777777777"
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
 		switch {
 		case r.Method == http.MethodGet && r.Path == "/api/v1/groups":
-			_, _ = w.Write([]byte(`[{"id":"` + groupID + `","name":"Engineering"},{"id":"` + groupID2 + `","name":"Operations"}]`))
+			_, _ = w.Write([]byte(`[{"id":"` + groupID + `","name":"Engineering"},{"id":"` + groupID2 + `","name":"Operations"},{"id":"` + adminGroupID + `","name":"admins"}]`))
 		case r.Method == http.MethodPost && r.Path == "/api/v1/data-connectors":
 			createdResponse(w, r)
 		case r.Method == http.MethodPost && r.Path == "/api/v1/policies":
@@ -1160,7 +1266,7 @@ func TestConnectorsCreateAllowGroupsCreatesGroupCapabilityPolicies(t *testing.T)
 			http.Error(w, "unexpected", http.StatusNotFound)
 		}
 	})
-	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--provider", "gmail", "--name", "team-mail", "--allow-group", "Engineering", "--allow-group", "Operations", "--capabilities", "message.search,message.get")
+	code, _, stderr := runConnectorsWithoutDefaultAccess(t, server, store, "", "create", "--workspace", "Main", "--provider", "gmail", "--name", "team-mail", "--allow-group", "Engineering", "--allow-group", "Operations", "--capabilities", "message.search,message.get")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -1170,16 +1276,21 @@ func TestConnectorsCreateAllowGroupsCreatesGroupCapabilityPolicies(t *testing.T)
 			policies = append(policies, req)
 		}
 	}
-	if len(policies) != 2 {
-		t.Fatalf("policy creates = %d, want one per group: %#v", len(policies), policies)
+	if len(policies) != 4 {
+		t.Fatalf("policy creates = %d, want one per group and capability: %#v", len(policies), policies)
 	}
-	for i, group := range []struct{ name, id string }{{"Engineering", groupID}, {"Operations", groupID2}} {
+	for i, group := range []string{"Engineering", "Engineering", "Operations", "Operations"} {
 		body := policies[i].Body
-		if body["src_pattern"] != "group:"+group.id || body["dst_pattern"] != "connector:team-mail" || body["effect"] != "permit" {
+		selector, _ := body["selector_v2"].(map[string]any)
+		capability := []string{"message.search", "message.get", "message.search", "message.get"}[i]
+		if body["src_pattern"] != "group:"+group || body["dst_pattern"] != "capability:"+capability || body["effect"] != "permit" {
 			t.Errorf("policy body = %#v", body)
 		}
-		if !strings.Contains(fmt.Sprint(body["name"]), group.name) {
-			t.Errorf("policy name missing group %q: %#v", group.name, body)
+		if selector["connector_id"] != testConnectorID || selector["source"] != "gmail" || selector["capability"] != capability {
+			t.Errorf("policy selector = %#v", selector)
+		}
+		if !strings.Contains(fmt.Sprint(body["name"]), group) {
+			t.Errorf("policy name missing group %q: %#v", group, body)
 		}
 		if _, ok := body["agent_id"]; ok {
 			t.Errorf("group policy has agent_id: %#v", body)
@@ -1225,7 +1336,7 @@ func TestConnectorsCreateUnknownAllowGroupCreatesNoConnector(t *testing.T) {
 		t.Errorf("unexpected request %s %s", r.Method, r.Path)
 		http.Error(w, "unexpected", http.StatusNotFound)
 	})
-	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--provider", "gmail", "--name", "team-mail", "--allow-group", "Missing")
+	code, _, stderr := runConnectorsWithoutDefaultAccess(t, server, store, "", "create", "--workspace", "Main", "--provider", "gmail", "--name", "team-mail", "--allow-group", "Missing")
 	if code != 1 || fake.count() != 1 || !strings.Contains(stderr, `group "Missing" was not found`) {
 		t.Fatalf("exit=%d requests=%d stderr=%q", code, fake.count(), stderr)
 	}
