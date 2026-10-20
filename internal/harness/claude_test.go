@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	policybundle "github.com/HaikeiLabs/kei-connector-contracts/bundle"
 )
 
 // HAI-469: the audit hook is rendered on all seven Claude Code events. The
@@ -275,7 +277,7 @@ func TestClaudeSyncWarnsOnOldOrUnknownVersion(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
 			env := claudeEnv(home, tc.versionOutput)
-			b := Bundle{BundleVersion: 1, PayloadDigest: "sha256:v1", NotAfter: time.Now().Add(time.Hour), PolicySet: json.RawMessage(`{"policies":[{"id":"p1","src_pattern":"*","dst_pattern":"shell:git","action":"permit","enabled":true}]}`)}
+			b := Bundle{Payload: policybundle.Payload{BundleVersion: 1, NotAfter: time.Now().Add(time.Hour), PolicySet: json.RawMessage(`{"policies":[{"id":"p1","src_pattern":"*","dst_pattern":"shell:git","action":"permit","enabled":true}]}`)}, PayloadDigest: "sha256:v1"}
 			_, result := syncWith(t, claudeCode{}, env, b)
 			found := false
 			for _, w := range result.Warnings {

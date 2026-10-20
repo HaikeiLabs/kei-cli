@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	policybundle "github.com/HaikeiLabs/kei-connector-contracts/bundle"
 	"github.com/HaikeiLabs/kei-connector-contracts/contract"
 	"github.com/HaikeiLabs/kei-connector-contracts/harnessmatch"
 	policyapi "github.com/HaikeiLabs/kei-connector-contracts/policy"
@@ -65,10 +66,7 @@ type skillLedger struct {
 // connectors (policy_set.connectors), in bundle order.
 func SkillsRepoConnectors(b Bundle) ([]string, error) {
 	var set struct {
-		Connectors []struct {
-			ID       string `json:"id"`
-			Provider string `json:"provider"`
-		} `json:"connectors"`
+		Connectors []policybundle.Connector `json:"connectors"`
 	}
 	if len(b.PolicySet) > 0 {
 		if err := json.Unmarshal(b.PolicySet, &set); err != nil {

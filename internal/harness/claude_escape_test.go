@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	policybundle "github.com/HaikeiLabs/kei-connector-contracts/bundle"
 )
 
 // HAI-481: the renderer must not rewrite lines it does not own. A settings
@@ -29,7 +31,7 @@ func TestClaudeRenderPreservesUnmanagedBytes(t *testing.T) {
 	}
 
 	policySet := json.RawMessage(`{"policies":[{"id":"p1","src_pattern":"*","dst_pattern":"shell:git","action":"permit","enabled":true},{"id":"p2","src_pattern":"*","dst_pattern":"shell:rm","action":"deny","enabled":true}]}`)
-	bundle := Bundle{PolicySet: policySet, Harnesses: []BundleHarness{{AgentID: "77777777-7777-7777-7777-777777777777", Kind: "claude_code"}}}
+	bundle := Bundle{Payload: policybundle.Payload{PolicySet: policySet, Harnesses: []policybundle.Harness{{AgentID: "77777777-7777-7777-7777-777777777777", Kind: "claude_code"}}}}
 	h := claudeCode{}
 	r, err := h.Render(bundle)
 	if err != nil {

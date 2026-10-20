@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	policybundle "github.com/HaikeiLabs/kei-connector-contracts/bundle"
 )
 
 // HAI-425: an owner-like bundle (tool:/skill: denies, Claude-scoped and
@@ -24,7 +26,7 @@ func TestCodexRenderOwnerBundleGolden(t *testing.T) {
 		t.Fatal(err)
 	}
 	rulesPath := filepath.Join(t.TempDir(), ".codex", "rules", "kei.rules")
-	got, err := renderNative("codex", "", Bundle{PolicySet: policySet}, map[string][]byte{rulesPath: nil})
+	got, err := renderNative("codex", "", Bundle{Payload: policybundle.Payload{PolicySet: policySet}}, map[string][]byte{rulesPath: nil})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +43,7 @@ func TestCodexRenderDenyIsForbidden(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	policySet := json.RawMessage(`{"policies":[{"id":"p1","name":"deny curl","src_pattern":"*","dst_pattern":"shell:curl","effect":"deny","enabled":true}]}`)
 	rulesPath := filepath.Join(t.TempDir(), ".codex", "rules", "kei.rules")
-	got, err := renderNative("codex", "", Bundle{PolicySet: policySet}, map[string][]byte{rulesPath: nil})
+	got, err := renderNative("codex", "", Bundle{Payload: policybundle.Payload{PolicySet: policySet}}, map[string][]byte{rulesPath: nil})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +96,7 @@ func TestCodexRenderEmptyBundleWritesEmptyManagedFile(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	rulesPath := filepath.Join(t.TempDir(), ".codex", "rules", "kei.rules")
 	prior := []byte("# managed by kei harness sync; edits are overwritten\nprefix_rule(pattern=[\"rm\"], decision=\"forbidden\", justification=\"kei policy\")\n")
-	got, err := renderNative("codex", "", Bundle{PolicySet: json.RawMessage(`{"policies":[]}`)}, map[string][]byte{rulesPath: prior})
+	got, err := renderNative("codex", "", Bundle{Payload: policybundle.Payload{PolicySet: json.RawMessage(`{"policies":[]}`)}}, map[string][]byte{rulesPath: prior})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +117,7 @@ func TestRenderCountsPoliciesScopedToAnotherHarness(t *testing.T) {
 		t.Fatal(err)
 	}
 	settings := filepath.Join(t.TempDir(), ".claude", "settings.json")
-	got, err := renderNative("claude_code", "", Bundle{PolicySet: policySet}, map[string][]byte{settings: nil})
+	got, err := renderNative("claude_code", "", Bundle{Payload: policybundle.Payload{PolicySet: policySet}}, map[string][]byte{settings: nil})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +125,7 @@ func TestRenderCountsPoliciesScopedToAnotherHarness(t *testing.T) {
 		t.Fatalf("claude_code other-harness scope = %+v, want %+v", got.OtherHarness, want)
 	}
 	rules := filepath.Join(t.TempDir(), ".codex", "rules", "kei.rules")
-	got, err = renderNative("codex", "", Bundle{PolicySet: policySet}, map[string][]byte{rules: nil})
+	got, err = renderNative("codex", "", Bundle{Payload: policybundle.Payload{PolicySet: policySet}}, map[string][]byte{rules: nil})
 	if err != nil {
 		t.Fatal(err)
 	}

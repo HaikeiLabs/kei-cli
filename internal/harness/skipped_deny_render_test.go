@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	policybundle "github.com/HaikeiLabs/kei-connector-contracts/bundle"
 )
 
 var updateSkippedDenyGolden = flag.Bool("update-skipped-deny", false, "rewrite testdata/harness/skipped-deny.golden.json")
@@ -30,7 +32,7 @@ func TestRenderWithholdsPermitsBelowSkippedDenies(t *testing.T) {
 		t.Fatal(err)
 	}
 	var fixture struct {
-		Subject BundleSubject `json:"subject"`
+		Subject policybundle.InstallationSubject `json:"subject"`
 		Cases   []struct {
 			Name        string          `json:"name"`
 			Schema      string          `json:"schema"`
@@ -43,7 +45,7 @@ func TestRenderWithholdsPermitsBelowSkippedDenies(t *testing.T) {
 	}
 	got := map[string]map[string]skippedDenyRender{}
 	for _, c := range fixture.Cases {
-		b := Bundle{Schema: c.Schema, PolicySet: json.RawMessage(`{"policies":` + string(c.Policies) + `}`)}
+		b := Bundle{Payload: policybundle.Payload{Schema: c.Schema, PolicySet: json.RawMessage(`{"policies":` + string(c.Policies) + `}`)}}
 		if c.WithSubject {
 			subject := fixture.Subject
 			b.Subject = &subject

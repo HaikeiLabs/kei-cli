@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	policybundle "github.com/HaikeiLabs/kei-connector-contracts/bundle"
 	policyapi "github.com/HaikeiLabs/kei-connector-contracts/policy"
 )
 
@@ -15,7 +16,7 @@ import (
 // user:<email> policy that previously matched a subject by email no longer
 // applies, forcing administrators to be explicit about the scheme.
 func TestMatchPrincipalUserSchemePinsHAI609(t *testing.T) {
-	s := &BundleSubject{UserID: "usr-fixture-dev", Email: "dev@example.com"}
+	s := &policybundle.InstallationSubject{UserID: "usr-fixture-dev", Email: "dev@example.com"}
 	if policyapi.MatchPrincipal("user:dev@example.com", s.UserID, s.Email, nil) {
 		t.Error("user:dev@example.com matched a subject whose user ID is usr-fixture-dev; user: matches user ID only, not email")
 	}
@@ -25,7 +26,7 @@ func TestMatchPrincipalUserSchemePinsHAI609(t *testing.T) {
 }
 
 func TestBundleSubjectMatches(t *testing.T) {
-	s := &BundleSubject{UserID: "usr-fixture-dev", Email: "dev@example.com", Groups: []string{"admins", "release_eng"}}
+	s := &policybundle.InstallationSubject{UserID: "usr-fixture-dev", Email: "dev@example.com", Groups: []string{"admins", "release_eng"}}
 	for src, want := range map[string]bool{
 		"user:usr-fixture-dev":   true,
 		"email:dev@example.com":  true,

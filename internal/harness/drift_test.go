@@ -9,10 +9,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	policybundle "github.com/HaikeiLabs/kei-connector-contracts/bundle"
 )
 
 func driftBundle(version int64, policies string) Bundle {
-	return Bundle{BundleVersion: version, PayloadDigest: "sha256:v" + string(rune('0'+version)), NotAfter: time.Now().Add(time.Hour), PolicySet: json.RawMessage(`{"policies":[` + policies + `]}`)}
+	return Bundle{Payload: policybundle.Payload{BundleVersion: version, NotAfter: time.Now().Add(time.Hour), PolicySet: json.RawMessage(`{"policies":[` + policies + `]}`)}, PayloadDigest: "sha256:v" + string(rune('0'+version))}
 }
 
 const driftPolicies = `{"id":"p1","src_pattern":"*","dst_pattern":"shell:git status","effect":"permit","enabled":true},` +
