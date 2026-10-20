@@ -20,9 +20,10 @@ import (
 // TODO(HAI-485): the catalog does not serve connectors in the policy bundle
 // yet; this is the CLI's input shape until the connector kinds land.
 type BundleConnector struct {
-	Slug   string `json:"slug"`
-	Kind   string `json:"kind"`
-	MCPURL string `json:"mcp_url,omitempty"`
+	Slug    string `json:"slug"`
+	Kind    string `json:"kind"`
+	MCPURL  string `json:"mcp_url,omitempty"`
+	RepoURL string `json:"repo_url,omitempty"`
 }
 
 // mcpConnectorKind is the connector kind rendered as an MCP server.

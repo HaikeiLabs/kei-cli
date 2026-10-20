@@ -51,6 +51,24 @@ func skillsBundleServer(t *testing.T) *httptest.Server {
 	return server
 }
 
+// skillsBundleWithRepoURLServer serves whoami and a v2 bundle that binds a
+// skills_repo connector carrying its repo_url (HAI-723) and permits skill:demo.
+func skillsBundleWithRepoURLServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/runtime/whoami":
+			_, _ = w.Write([]byte(`{"id":"runtime-id","org_id":"org-id","platform":"cli"}`))
+		case "/api/v1/runtime/policy-bundles/current":
+			_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v2","bundle_id":"bundle-1","bundle_version":3,"policy_revision":4,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harness_match_semantics":"kei.harness-match/v1","harnesses":[],"policy_set":{"connectors":[{"id":"` + skillsConnectorID + `","provider":"skills_repo"}],"harness_policies":[{"policy_id":"p2","name":"permit demo","src_pattern":"*","dst_pattern":"skill:demo","action":"permit","scope":{}}]},"connectors":[{"slug":"org-skills","kind":"skills_repo","repo_url":"https://github.com/HaikeiLabs/skills"}]}`))
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
 func writeSkillsConfig(t *testing.T, serverURL, proxyPath string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "kei.yaml")
@@ -78,6 +96,26 @@ func TestSkillsInstallSkipsWhenBundleLacksRepoURL(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".claude", "skills")); !os.IsNotExist(err) {
 		t.Fatalf("skill dir written: %v", err)
+	}
+}
+
+// HAI-723 / ADR-039: when the bundle carries the skills_repo connector's
+// repo_url, the install renders the skills source from it instead of
+// warning and skipping.
+func TestSkillsInstallRendersSourceFromRepoURL(t *testing.T) {
+	skillsHome(t)
+	server := skillsBundleWithRepoURLServer(t)
+	config := writeSkillsConfig(t, server.URL, "")
+
+	var stdout, stderr bytes.Buffer
+	if code := runSkillsCommand([]string{"install", "--config", config, "--harness", "claude_code"}, &stdout, &stderr, server.Client()); code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	if strings.Contains(stderr.String(), "does not carry the skills_repo connector's repo_url") {
+		t.Fatalf("still warns+skips despite the bundle carrying the repo_url:\n%s", stderr.String())
+	}
+	if out := stdout.String() + stderr.String(); !strings.Contains(out, "https://github.com/HaikeiLabs/skills") {
+		t.Fatalf("skills source not rendered from the repo_url:\nstdout=%s\nstderr=%s", stdout.String(), stderr.String())
 	}
 }
 

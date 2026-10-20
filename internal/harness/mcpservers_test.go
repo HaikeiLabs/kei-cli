@@ -270,6 +270,19 @@ func TestMCPServersNothingManagedLeavesConfigAlone(t *testing.T) {
 	}
 }
 
+// HAI-723: a skills_repo connector carries the repo_url the CLI renders the
+// skills source from; it decodes from the repo_url key like every other
+// connector field.
+func TestBundleConnectorDecodesRepoURL(t *testing.T) {
+	var c BundleConnector
+	if err := json.Unmarshal([]byte(`{"slug":"org-skills","kind":"skills_repo","repo_url":"https://github.com/HaikeiLabs/skills"}`), &c); err != nil {
+		t.Fatal(err)
+	}
+	if c.RepoURL != "https://github.com/HaikeiLabs/skills" {
+		t.Fatalf("RepoURL = %q, want the repo_url from the bundle", c.RepoURL)
+	}
+}
+
 // A sync of the same connectors leaves the config byte-identical.
 func TestMCPServersResyncIsStable(t *testing.T) {
 	for _, c := range mcpCases {
