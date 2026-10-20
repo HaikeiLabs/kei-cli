@@ -1637,12 +1637,8 @@ func TestAIPErrorUnmarshalJSON(t *testing.T) {
 			wantMsg:    "not yet approved",
 		},
 		{
-			name:       "flat body with error reason",
-			json:       `{"error":{"code":400,"reason":"SLOW_DOWN","message":"too fast"}}`,
-			wantOK:     true,
-			wantCode:   400,
-			wantReason: "SLOW_DOWN",
-			wantMsg:    "too fast",
+			name: "flat body without message is rejected",
+			json: `{"error":{"code":400,"reason":"SLOW_DOWN"}}`,
 		},
 		{
 			name:       "wrapped body with both top-level reason and details (identity transitional)",

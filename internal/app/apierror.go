@@ -26,17 +26,6 @@ func apiErrorMessage(payload []byte) string {
 		return wrapped.Error.Message
 	}
 
-	var flat struct {
-		Reason  string `json:"reason"`
-		Message string `json:"message"`
-	}
-	if json.Unmarshal(payload, &flat) == nil && flat.Message != "" {
-		if flat.Reason != "" {
-			return flat.Reason + ": " + flat.Message
-		}
-		return flat.Message
-	}
-
 	var errStr struct {
 		Error string `json:"error"`
 	}
