@@ -692,7 +692,7 @@ func TestModelProfilesTestStoredProfileNotLoggedIn(t *testing.T) {
 func TestModelProfilesWriteForbiddenForNonAdmin(t *testing.T) {
 	_, store := newProfileConsole(t, func(w http.ResponseWriter, r consoleRequest) {
 		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`{"reason":"permission_denied","message":"organization admin required"}`))
+		_, _ = w.Write([]byte(`{"error":{"code":7,"status":"PERMISSION_DENIED","message":"organization admin required","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"PERMISSION_DENIED","domain":"haikeilabs.com","metadata":{}}]}}`))
 	})
 	var stdout, stderr bytes.Buffer
 	if code := runModelProfilesSetDefault([]string{testProfileID}, &stdout, &stderr, http.DefaultClient, store); code != 1 {

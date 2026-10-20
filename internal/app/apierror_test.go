@@ -26,14 +26,9 @@ func TestAPIErrorMessage(t *testing.T) {
 			want:    "no details",
 		},
 		{
-			name:    "flat AIP reason and message",
+			name:    "flat reason and message are not parsed",
 			payload: []byte(`{"reason":"invalid_argument","message":"effect must be permit or deny"}`),
-			want:    "invalid_argument: effect must be permit or deny",
-		},
-		{
-			name:    "flat AIP message only (no reason)",
-			payload: []byte(`{"message":"some error occurred"}`),
-			want:    "some error occurred",
+			want:    `{"reason":"invalid_argument","message":"effect must be permit or deny"}`,
 		},
 		{
 			name:    "legacy structured error",

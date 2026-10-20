@@ -127,22 +127,6 @@ func (e *aipError) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 
-	// Try flat AIP: {"error":{"code":N,"reason":"R","message":"M"}}
-	var flat struct {
-		Error struct {
-			Code    int    `json:"code"`
-			Reason  string `json:"reason"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(data, &flat); err == nil && flat.Error.Reason != "" {
-		e.Detail = aipErrorDetail{
-			Code:    flat.Error.Code,
-			Reason:  flat.Error.Reason,
-			Message: flat.Error.Message,
-		}
-		return nil
-	}
 
 	return fmt.Errorf("unrecognized error body: %s", string(data))
 }
