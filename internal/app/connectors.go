@@ -167,7 +167,7 @@ func parseConnectorFlags(flags *flag.FlagSet, args []string) (string, error) {
 }
 
 func connectorWorkspaceFlag(flags *flag.FlagSet) *string {
-	return flags.String("workspace", "", "workspace name (or set KEI_WORKSPACE)")
+	return flags.String("workspace", "", "workspace name or ID (or set KEI_WORKSPACE)")
 }
 
 func requireConnectorWorkspace(command, workspace string, stderr io.Writer) (workspaceSelection, bool) {
@@ -213,7 +213,12 @@ func openConnectorSession(command string, sel workspaceSelection, stderr io.Writ
 		fmt.Fprintf(stderr, "connectors %s: %v; run kei login again\n", command, err)
 		return nil, false
 	}
-	workspaceID, err := resolveWorkspaceSelection(context.Background(), client, baseURL, token, sel)
+	var workspaceID string
+	if sel.pickDefault {
+		workspaceID, err = resolveWorkspaceSelection(context.Background(), client, baseURL, token, sel)
+	} else {
+		workspaceID, err = resolveScopedWorkspace(context.Background(), client, baseURL, token, sel)
+	}
 	if err != nil {
 		fmt.Fprintf(stderr, "connectors %s: %v\n", command, err)
 		return nil, false
@@ -256,10 +261,11 @@ func (s *connectorSession) doPath(method, path string, body any) ([]byte, error)
 		return nil, err
 	}
 	if err := checkHTMLFallthrough(resp, payload); err != nil {
-		return nil, err
+		return nil, withCLIUpgradeHint(s.client, err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, &connectorStatusError{StatusCode: resp.StatusCode, message: connectorErrorMessage(payload)}
+		statusErr := &connectorStatusError{StatusCode: resp.StatusCode, message: connectorErrorMessage(payload)}
+		return nil, withCLIUpgradeHint(s.client, statusErr)
 	}
 	return payload, nil
 }
@@ -870,7 +876,12 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	if err != nil {
 		return fail(fmt.Errorf("%w; run kei login again", err))
 	}
-	workspaceID, err := resolveWorkspaceSelection(context.Background(), client, baseURL, token, ws)
+	var workspaceID string
+	if ws.pickDefault {
+		workspaceID, err = resolveWorkspaceSelection(context.Background(), client, baseURL, token, ws)
+	} else {
+		workspaceID, err = resolveScopedWorkspace(context.Background(), client, baseURL, token, ws)
+	}
 	if err != nil {
 		return fail(err)
 	}

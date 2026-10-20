@@ -57,17 +57,17 @@ func runGroupsCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, 
 func runGroupsList(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("groups list", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	workspace := flags.String("workspace", "", "workspace name (required)")
+	workspace := flags.String("workspace", "", "workspace name or ID (required)")
 	jsonOutput := flags.Bool("json", false, "output as JSON")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || *workspace == "" {
-		fmt.Fprintln(stderr, "groups list requires --workspace WORKSPACE")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+		fmt.Fprintln(stderr, "groups list accepts no positional arguments")
 		return 2
 	}
 	session, ok := openAPISession("groups list", stderr, client, store)
 	if !ok {
 		return 1
 	}
-	workspaceID, ok := resolveGroupsWorkspace("list", *workspace, session, stderr)
+	workspaceID, ok := resolveGroupsWorkspace("list", *workspace, session, stderr, true)
 	if !ok {
 		return 1
 	}
@@ -118,15 +118,11 @@ func runGroupsCreate(args []string, stdout, stderr io.Writer, stdin io.Reader, c
 	flags.SetOutput(stderr)
 	name := flags.String("name", "", "group name (required)")
 	description := flags.String("description", "", "group description")
-	workspace := flags.String("workspace", "", "workspace name (required)")
+	workspace := flags.String("workspace", "", "workspace name or ID (required)")
 	jsonOutput := flags.Bool("json", false, "output as JSON")
 	yes := flags.Bool("yes", false, "confirm without prompting")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || *name == "" {
 		fmt.Fprintln(stderr, "groups create requires --name NAME and --workspace WORKSPACE")
-		return 2
-	}
-	if *workspace == "" {
-		fmt.Fprintln(stderr, "groups create requires --workspace WORKSPACE")
 		return 2
 	}
 	if !confirmWrite(stdin, stderr, *yes, "Create group "+*name+"?") {
@@ -136,7 +132,7 @@ func runGroupsCreate(args []string, stdout, stderr io.Writer, stdin io.Reader, c
 	if !ok {
 		return 1
 	}
-	workspaceID, ok := resolveGroupsWorkspace("create", *workspace, session, stderr)
+	workspaceID, ok := resolveGroupsWorkspace("create", *workspace, session, stderr, true)
 	if !ok {
 		return 1
 	}
@@ -176,19 +172,21 @@ func runGroupsMembersCommand(args []string, stdout, stderr io.Writer, stdin io.R
 	}
 }
 
-// resolveGroupsWorkspace resolves an optional --workspace NAME to a workspace
-// ID against the AIP host. An empty workspace is returned as-is so the
-// catalog falls back to the organization's default workspace.
-func resolveGroupsWorkspace(sub, workspace string, session *apiSession, stderr io.Writer) (string, bool) {
-	if workspace == "" {
+// resolveGroupsWorkspace resolves --workspace by name or ID against the AIP host.
+func resolveGroupsWorkspace(sub, workspace string, session *apiSession, stderr io.Writer, required ...bool) (string, bool) {
+	if workspace == "" && (len(required) == 0 || !required[0]) {
 		return "", true
 	}
-	ws, err := resolveWorkspaceByName(context.Background(), session.client, session.baseURL, session.token, workspace)
+	sel := workspaceSelection{value: workspace}
+	if workspace == "" {
+		sel.pickDefault = true
+	}
+	ws, err := resolveScopedWorkspace(context.Background(), session.client, session.baseURL, session.token, sel)
 	if err != nil {
-		fmt.Fprintf(stderr, "groups members %s: %v\n", sub, err)
+		fmt.Fprintf(stderr, "groups %s: %v\n", sub, err)
 		return "", false
 	}
-	return ws.ID, true
+	return ws, true
 }
 
 func groupsQuery(session *apiSession, workspaceID string) url.Values {
@@ -203,7 +201,7 @@ func runGroupsMembersList(args []string, stdout, stderr io.Writer, client *http.
 	flags := flag.NewFlagSet("groups members list", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	jsonOutput := flags.Bool("json", false, "output as JSON")
-	workspace := flags.String("workspace", "", "workspace name (default: the organization's default workspace)")
+	workspace := flags.String("workspace", "", "workspace name or ID (default: the organization's default workspace)")
 	pos, err := parsePositionals(flags, args, 1)
 	if err != nil {
 		fmt.Fprintln(stderr, "groups members list requires a group ID")
@@ -218,7 +216,7 @@ func runGroupsMembersList(args []string, stdout, stderr io.Writer, client *http.
 	if !ok {
 		return 1
 	}
-	workspaceID, ok := resolveGroupsWorkspace("list", *workspace, session, stderr)
+	workspaceID, ok := resolveGroupsWorkspace("members list", *workspace, session, stderr)
 	if !ok {
 		return 1
 	}
@@ -265,7 +263,7 @@ func runGroupsMembersList(args []string, stdout, stderr io.Writer, client *http.
 func runGroupsMembersAdd(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("groups members add", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	workspace := flags.String("workspace", "", "workspace name (default: the organization's default workspace)")
+	workspace := flags.String("workspace", "", "workspace name or ID (default: the organization's default workspace)")
 	yes := flags.Bool("yes", false, "confirm without prompting")
 	pos, err := parsePositionals(flags, args, 2)
 	if err != nil {
@@ -285,7 +283,7 @@ func runGroupsMembersAdd(args []string, stdout, stderr io.Writer, stdin io.Reade
 	if !ok {
 		return 1
 	}
-	workspaceID, ok := resolveGroupsWorkspace("add", *workspace, session, stderr)
+	workspaceID, ok := resolveGroupsWorkspace("members add", *workspace, session, stderr)
 	if !ok {
 		return 1
 	}
@@ -301,7 +299,7 @@ func runGroupsMembersAdd(args []string, stdout, stderr io.Writer, stdin io.Reade
 func runGroupsMembersRemove(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("groups members remove", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	workspace := flags.String("workspace", "", "workspace name (default: the organization's default workspace)")
+	workspace := flags.String("workspace", "", "workspace name or ID (default: the organization's default workspace)")
 	yes := flags.Bool("yes", false, "confirm without prompting")
 	pos, err := parsePositionals(flags, args, 2)
 	if err != nil {
@@ -321,7 +319,7 @@ func runGroupsMembersRemove(args []string, stdout, stderr io.Writer, stdin io.Re
 	if !ok {
 		return 1
 	}
-	workspaceID, ok := resolveGroupsWorkspace("remove", *workspace, session, stderr)
+	workspaceID, ok := resolveGroupsWorkspace("members remove", *workspace, session, stderr)
 	if !ok {
 		return 1
 	}

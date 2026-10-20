@@ -115,11 +115,11 @@ func TestGroupsCreateRequiresWorkspace(t *testing.T) {
 	hit := false
 	_, store := newUsersGroupsServer(t, func(w http.ResponseWriter, r *http.Request) { hit = true })
 	var stdout, stderr bytes.Buffer
-	// No --workspace: a group is never created in the default workspace implicitly.
-	if code := runGroupsCommand([]string{"create", "--name", "e2e-analysts", "--yes"}, &stdout, &stderr, strings.NewReader(""), http.DefaultClient, store); code != 2 {
-		t.Fatalf("create exit = %d, want 2, stderr=%s", code, stderr.String())
+	// No --workspace: show the accessible choices instead of guessing.
+	if code := runGroupsCommand([]string{"create", "--name", "e2e-analysts", "--yes"}, &stdout, &stderr, strings.NewReader(""), http.DefaultClient, store); code != 1 {
+		t.Fatalf("create exit = %d, want 1, stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "--workspace") {
+	if !strings.Contains(stderr.String(), "Main") || !strings.Contains(stderr.String(), testWorkspaceID) {
 		t.Fatalf("stderr = %s", stderr.String())
 	}
 	if hit {
@@ -180,8 +180,11 @@ func TestGroupsListRequiresWorkspace(t *testing.T) {
 	hit := false
 	_, store := newUsersGroupsServer(t, func(w http.ResponseWriter, r *http.Request) { hit = true })
 	var stdout, stderr bytes.Buffer
-	if code := runGroupsCommand([]string{"list"}, &stdout, &stderr, strings.NewReader(""), http.DefaultClient, store); code != 2 {
-		t.Fatalf("list exit = %d, want 2", code)
+	if code := runGroupsCommand([]string{"list"}, &stdout, &stderr, strings.NewReader(""), http.DefaultClient, store); code != 1 {
+		t.Fatalf("list exit = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "Main") || !strings.Contains(stderr.String(), testWorkspaceID) {
+		t.Fatalf("stderr = %s", stderr.String())
 	}
 	if hit {
 		t.Fatal("request was made without a workspace")
