@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -773,7 +774,14 @@ func TestConnectorsReconnectKeepSecretOnlyReactivates(t *testing.T) {
 
 func TestConnectorsConnectFlow(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		if r.Method == http.MethodGet && r.Path == "/api/v1/data-connectors/"+testConnectorID {
+			_, _ = w.Write([]byte(`{"id":"` + testConnectorID + `","capabilities":[{"name":"issue.read","required_oauth_scopes":["read"]}]}`))
+			return
+		}
 		if r.Method == http.MethodPost && strings.HasSuffix(r.Path, ":connect") {
+			if got, want := r.Body["capabilities"], []any{"issue.read"}; !reflect.DeepEqual(got, want) {
+				t.Errorf("connect capabilities = %#v, want %#v", got, want)
+			}
 			_, _ = w.Write([]byte(`{"auth_url":"https://auth.example.test/oauth?state=s","provider":"linear"}`))
 			return
 		}
@@ -798,14 +806,75 @@ func TestConnectorsConnectFlow(t *testing.T) {
 	if !strings.Contains(stdout, "connected") || !strings.Contains(stdout, "issue:read team:read") || !strings.Contains(stdout, "user@example.com") {
 		t.Fatalf("stdout = %q", stdout)
 	}
+	if fake.count() != 3 {
+		t.Fatalf("requests = %d, want 3 (connector lookup, POST then GET): %#v", fake.count(), fake.requests)
+	}
+}
+
+func TestConnectorsConnectWithoutEnabledCapabilitiesKeepsExistingFlow(t *testing.T) {
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		if r.Method == http.MethodGet && r.Path == "/api/v1/data-connectors/"+testConnectorID {
+			_, _ = w.Write([]byte(`{"id":"` + testConnectorID + `","capabilities":[]}`))
+			return
+		}
+		if r.Method == http.MethodPost && strings.HasSuffix(r.Path, ":connect") {
+			if r.Body != nil {
+				t.Errorf("connect body = %#v, want nil for no enabled capabilities", r.Body)
+			}
+			_, _ = w.Write([]byte(`{"auth_url":"https://auth.example.test/oauth?state=s","provider":"linear"}`))
+			return
+		}
+		if r.Method == http.MethodGet && strings.HasSuffix(r.Path, ":connect") {
+			_, _ = w.Write([]byte(`{"status":"connected"}`))
+			return
+		}
+		t.Errorf("unexpected request %s %s", r.Method, r.Path)
+		http.Error(w, "unexpected", http.StatusNotFound)
+	})
+	store.token = workspaceTestToken()
+
+	code, stdout, stderr := runConnectors(t, server, store, "", "connect", testConnectorID, "--workspace", "Main", "--no-browser")
+	if code != 0 || !strings.Contains(stdout, "Connect your account") {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if fake.count() != 3 {
+		t.Fatalf("requests = %d, want connector lookup, connect start, and poll", fake.count())
+	}
+}
+
+func TestConnectorsConnectSendsEnabledCapabilitiesAndSkipsConsentWhenGranted(t *testing.T) {
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		switch {
+		case r.Method == http.MethodGet && r.Path == "/api/v1/data-connectors/"+testConnectorID:
+			_, _ = w.Write([]byte(`{"id":"` + testConnectorID + `","provider":"linear","status":"active","credential_source":"oauth","account_model":"per_user","capabilities":[{"name":"issue.read","required_oauth_scopes":["read"]}]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.Path, ":connect"):
+			if got, want := r.Body["capabilities"], []any{"issue.read"}; !reflect.DeepEqual(got, want) {
+				t.Errorf("connect capabilities = %#v, want %#v", got, want)
+			}
+			_, _ = w.Write([]byte(`{"status":"connected","scope":"read"}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.Path)
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	store.token = workspaceTestToken()
+
+	code, stdout, stderr := runConnectors(t, server, store, "", "connect", testConnectorID, "--workspace", "Main")
+	if code != 0 || !strings.Contains(stdout, "already has the required OAuth scopes") || strings.Contains(stdout, "Connect your account") {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
 	if fake.count() != 2 {
-		t.Fatalf("requests = %d, want 2 (POST then GET): %#v", fake.count(), fake.requests)
+		t.Fatalf("requests = %#v, want connector lookup and connect start", fake.requests)
 	}
 }
 
 func TestConnectorsConnectPollsUntilConnected(t *testing.T) {
 	pollCount := 0
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		if r.Method == http.MethodGet && r.Path == "/api/v1/data-connectors/"+testConnectorID {
+			_, _ = w.Write([]byte(`{"id":"` + testConnectorID + `","capabilities":[{"name":"issue.read"}]}`))
+			return
+		}
 		if r.Method == http.MethodPost && strings.HasSuffix(r.Path, ":connect") {
 			_, _ = w.Write([]byte(`{"auth_url":"https://auth.example.test/oauth?state=s","provider":"linear"}`))
 			return
@@ -834,8 +903,8 @@ func TestConnectorsConnectPollsUntilConnected(t *testing.T) {
 	if pollCount != 3 {
 		t.Fatalf("poll count = %d, want 3", pollCount)
 	}
-	if fake.count() != 4 {
-		t.Fatalf("total requests = %d, want 4 (1 POST + 3 GETs)", fake.count())
+	if fake.count() != 5 {
+		t.Fatalf("total requests = %d, want 5 (connector lookup + 1 POST + 3 GETs)", fake.count())
 	}
 	if !strings.Contains(stdout, "connected") || !strings.Contains(stdout, "issue:read") {
 		t.Fatalf("stdout = %q", stdout)
@@ -844,6 +913,10 @@ func TestConnectorsConnectPollsUntilConnected(t *testing.T) {
 
 func TestConnectorsConnect403(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		if r.Method == http.MethodGet && r.Path == "/api/v1/data-connectors/"+testConnectorID {
+			_, _ = w.Write([]byte(`{"id":"` + testConnectorID + `"}`))
+			return
+		}
 		if r.Method == http.MethodPost && strings.HasSuffix(r.Path, ":connect") {
 			w.WriteHeader(http.StatusForbidden)
 			_, _ = w.Write([]byte(`{"reason":"permission_denied","message":"you don't have access to this connector"}`))
@@ -862,8 +935,8 @@ func TestConnectorsConnect403(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit = %d stderr=%q", code, stderr)
 	}
-	if fake.count() != 1 {
-		t.Fatalf("requests = %d, want 1", fake.count())
+	if fake.count() != 2 {
+		t.Fatalf("requests = %d, want 2", fake.count())
 	}
 }
 
@@ -951,6 +1024,10 @@ func TestConnectorsCreateNoDefaultAccessSkipsPolicyAndWarns(t *testing.T) {
 
 func TestConnectorsConnect400(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		if r.Method == http.MethodGet && r.Path == "/api/v1/data-connectors/"+testConnectorID {
+			_, _ = w.Write([]byte(`{"id":"` + testConnectorID + `"}`))
+			return
+		}
 		if r.Method == http.MethodPost && strings.HasSuffix(r.Path, ":connect") {
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"reason":"invalid_argument","message":"this connector is not a per-user OAuth connector"}`))
@@ -964,13 +1041,17 @@ func TestConnectorsConnect400(t *testing.T) {
 	if code != 1 || !strings.Contains(stderr, "400") {
 		t.Fatalf("exit = %d stderr=%q", code, stderr)
 	}
-	if fake.count() != 1 {
-		t.Fatalf("requests = %d, want 1", fake.count())
+	if fake.count() != 2 {
+		t.Fatalf("requests = %d, want 2", fake.count())
 	}
 }
 
 func TestConnectorsConnectTimeout(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		if r.Method == http.MethodGet && r.Path == "/api/v1/data-connectors/"+testConnectorID {
+			_, _ = w.Write([]byte(`{"id":"` + testConnectorID + `","capabilities":[{"name":"issue.read"}]}`))
+			return
+		}
 		if r.Method == http.MethodPost && strings.HasSuffix(r.Path, ":connect") {
 			_, _ = w.Write([]byte(`{"auth_url":"https://auth.example.test/oauth?state=s","provider":"linear"}`))
 			return

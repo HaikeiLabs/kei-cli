@@ -479,18 +479,49 @@ func runConnectorsConnect(args []string, stdout, stderr io.Writer, client *http.
 		return 1
 	}
 
-	payload, err := session.do(http.MethodPost, "/"+url.PathEscape(id)+":connect", nil)
+	payload, err := session.do(http.MethodGet, "/"+url.PathEscape(id), nil)
+	if err != nil {
+		return fail(err)
+	}
+	var current connector
+	if err := json.Unmarshal(payload, &current); err != nil {
+		return fail(fmt.Errorf("decode connector: %w", err))
+	}
+	capabilities := make([]string, 0, len(current.Capabilities))
+	for _, capability := range current.Capabilities {
+		capabilities = append(capabilities, capability.Name)
+	}
+	var connectBody any
+	if len(capabilities) > 0 {
+		connectBody = struct {
+			Capabilities []string `json:"capabilities"`
+		}{Capabilities: capabilities}
+	}
+	payload, err = session.do(http.MethodPost, "/"+url.PathEscape(id)+":connect", connectBody)
 	if err != nil {
 		return fail(err)
 	}
 	var startResult struct {
 		AuthURL  string `json:"auth_url"`
 		Provider string `json:"provider"`
+		Status   string `json:"status"`
+		Scope    string `json:"scope"`
 	}
 	if err := json.Unmarshal(payload, &startResult); err != nil {
 		return fail(fmt.Errorf("decode response: %w", err))
 	}
 
+	if startResult.AuthURL == "" && startResult.Status == "connected" {
+		fmt.Fprintf(stdout, "Connector %s already has the required OAuth scopes", id)
+		if startResult.Scope != "" {
+			fmt.Fprintf(stdout, ": %s", startResult.Scope)
+		}
+		fmt.Fprintln(stdout, ".")
+		return 0
+	}
+	if startResult.AuthURL == "" {
+		return fail(errors.New("connect response did not include an auth URL or connected status"))
+	}
 	fmt.Fprintf(stdout, "Connect your account for connector %s by approving access at:\n\n  %s\n\n", id, startResult.AuthURL)
 	if !*noBrowser {
 		_ = openConnectorConsentURL(startResult.AuthURL)
