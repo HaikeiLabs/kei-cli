@@ -84,7 +84,13 @@ func openPolicySession(command string, sel workspaceSelection, stderr io.Writer,
 	if !ok {
 		return nil, false
 	}
-	workspaceID, err := resolveWorkspaceSelection(context.Background(), client, baseURL, token, sel)
+	var workspaceID string
+	var err error
+	if sel.pickDefault {
+		workspaceID, err = resolveWorkspaceSelection(context.Background(), client, baseURL, token, sel)
+	} else {
+		workspaceID, err = resolveScopedWorkspace(context.Background(), client, baseURL, token, sel)
+	}
 	if err != nil {
 		fmt.Fprintf(stderr, "policies %s: %v\n", command, err)
 		return nil, false
@@ -122,15 +128,15 @@ func (s *policySession) request(method, endpoint string, body any) ([]byte, erro
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, withCLIUpgradeHint(s.client, err)
 	}
 	defer resp.Body.Close()
 	payload, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
-		return nil, err
+		return nil, withCLIUpgradeHint(s.client, err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, fmt.Errorf("%s (HTTP %d)", policyErrorMessage(payload), resp.StatusCode)
+		return nil, withCLIUpgradeHint(s.client, fmt.Errorf("%s (HTTP %d)", policyErrorMessage(payload), resp.StatusCode))
 	}
 	return payload, nil
 }
@@ -187,7 +193,7 @@ func runPoliciesCommand(args []string, stdout, stderr io.Writer, stdin io.Reader
 }
 
 func policiesWorkspaceFlag(flags *flag.FlagSet) *string {
-	return flags.String("workspace", "", "workspace name (or set KEI_WORKSPACE)")
+	return flags.String("workspace", "", "workspace name or ID (or set KEI_WORKSPACE)")
 }
 
 func requirePoliciesWorkspace(command, workspace string, stderr io.Writer) (workspaceSelection, bool) {

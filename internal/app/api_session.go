@@ -72,10 +72,10 @@ func (s *apiSession) do(method, path string, query url.Values, body any) (int, [
 	}
 	status, payload, err := doRequest(s.client, req, 4<<20)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, withCLIUpgradeHint(s.client, err)
 	}
 	if status < 200 || status > 299 {
-		return status, nil, fmt.Errorf("%s (HTTP %d)", connectorErrorMessage(payload), status)
+		return status, nil, withCLIUpgradeHint(s.client, fmt.Errorf("%s (HTTP %d)", connectorErrorMessage(payload), status))
 	}
 	return status, payload, nil
 }
