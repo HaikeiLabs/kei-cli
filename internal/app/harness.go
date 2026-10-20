@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -810,6 +811,11 @@ func syncHarnessBundle(ctx context.Context, config runtimeConfig, kindFilter str
 					fmt.Fprintf(stderr, "harness sync: report sync for %s: %v\n", registered.AgentID, err)
 					return 1
 				}
+				// HAI-641: the skills inventory is advisory. Until the catalog
+				// accepts installed_skills, a 400/404 only warns.
+				if err := reportInstalledSkills(ctx, client, config, registered.AgentID); err != nil {
+					fmt.Fprintf(stderr, "harness sync: report installed skills for %s: %v\n", registered.AgentID, err)
+				}
 			}
 		}
 		printLines(stdout, result.Notes)
@@ -863,6 +869,46 @@ func reportHarnessSync(ctx context.Context, client *http.Client, config runtimeC
 	}
 	return nil
 }
+
+// installedSkill is one HaikeiLabs/skills entry reported at sync: the folder
+// name and the first 12 characters of its installed folder hash. No file
+// contents ever leave the machine.
+type installedSkill struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+}
+
+// reportInstalledSkills replaces the harness's installed-skill set with the
+// Haikei skills in the local lock files. No lock file reports an empty set.
+func reportInstalledSkills(ctx context.Context, client *http.Client, config runtimeConfig, agentID string) error {
+	installed, err := installedHaikeiSkills()
+	if err != nil {
+		return err
+	}
+	skills := make([]installedSkill, 0, len(installed))
+	for name, hash := range installed {
+		skills = append(skills, installedSkill{Name: name, Version: skillVersion(hash)})
+	}
+	sort.Slice(skills, func(i, j int) bool { return skills[i].Name < skills[j].Name })
+	body := map[string]any{"installed_skills": skills}
+	path := "/api/v1/runtime/harnesses/" + agentID + "?update_mask=installed_skills"
+	_, status, err := harnessRequest(ctx, client, strings.TrimRight(config.ControlPlaneURL, "/"), config.RuntimeToken, http.MethodPatch, path, body)
+	if err != nil {
+		return err
+	}
+	if status < 200 || status > 299 {
+		return fmt.Errorf("runtime installed skills report returned HTTP %d", status)
+	}
+	return nil
+}
+
+func skillVersion(hash string) string {
+	if len(hash) > 12 {
+		return hash[:12]
+	}
+	return hash
+}
+
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
