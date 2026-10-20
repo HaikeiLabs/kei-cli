@@ -19,7 +19,7 @@ var cliSubcommands = map[string]map[string]bool{
 	"audit.keys":              {"create": true, "list": true, "disable": true},
 	"bot":                     {"list": true, "init": true, "agents": true, "status": true, "delete": true, "credential": true, "bind": true},
 	"bot.agents":              {"list": true, "add": true, "remove": true},
-	"connectors":              {"create": true, "test": true, "list": true, "get": true, "connect": true, "reconnect": true, "delete": true, "manifests": true, "tools": true},
+	"connectors":              {"create": true, "test": true, "list": true, "get": true, "connect": true, "reconnect": true, "delete": true, "manifests": true, "tools": true, "templates": true},
 	"connectors.tools":        {"list": true, "show": true, "approve": true},
 	"connectors.manifests":    {"list": true, "show": true, "approve": true},
 	"credential-store":        {"get": true, "put": true, "update": true},

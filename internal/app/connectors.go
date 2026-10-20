@@ -116,7 +116,7 @@ type connector struct {
 
 func runConnectorsCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "connectors requires a subcommand: create, list, get, connect, reconnect, delete, or manifests")
+		fmt.Fprintln(stderr, "connectors requires a subcommand: create, list, get, connect, reconnect, delete, manifests, or templates")
 		return 2
 	}
 	switch args[0] {
@@ -136,6 +136,8 @@ func runConnectorsCommand(args []string, stdout, stderr io.Writer, stdin io.Read
 		return runConnectorsDelete(args[1:], stdout, stderr, client, store)
 	case "manifests", "tools":
 		return runConnectorsManifests(args[1:], stdout, stderr, stdin, client, store)
+	case "templates":
+		return runConnectorsTemplates(args[1:], stdout, stderr, client, store)
 	default:
 		fmt.Fprintf(stderr, "unknown connectors command %q\n", args[0])
 		return 2
@@ -774,7 +776,7 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	workspace := connectorWorkspaceFlag(flags)
 	providerFlag := flags.String("provider", "", "provider: gmail, google_drive, linear, github, tito, skills_repo, crm, or http_api (or --template for a catalog template such as an MCP server)")
 	name := flags.String("name", "", "connector name (letters, digits, and . _ : / -)")
-	accountModelFlag := flags.String("account-model", "", "OAuth account model: per_user, shared, or domain_delegation (gmail, google_drive); skills_repo takes per_user, or --credential-ref instead")
+	accountModelFlag := flags.String("account-model", "", "OAuth account model: per_user, shared, or domain_delegation (gmail, google_drive); skills_repo takes per_user, or --credential-ref instead; cannot be combined with --template")
 	values := setupValues{}
 	flags.Var(values, "set", "non-secret setup field as name=value (repeatable)")
 	credentialRef := flags.String("credential-ref", "", "existing secret-manager reference for the provider's secret field")
