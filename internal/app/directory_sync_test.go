@@ -52,6 +52,7 @@ func TestDirectorySyncGet(t *testing.T) {
 		"tenant_id:     " + testTenantID + "\n" +
 		"client_id:     " + testSyncClientID + "\n" +
 		"app_id:        " + testSyncAppID + "\n" +
+		"group_id:      \n" +
 		"enabled:       true\n" +
 		"dry_run:       true\n" +
 		"create_users:  false\n" +
@@ -153,6 +154,46 @@ func TestDirectorySyncSetCreatesWithMaskOfGivenFlags(t *testing.T) {
 	}
 }
 
+func TestDirectorySyncSetWithGroupID(t *testing.T) {
+	const entraGroupID = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+	fake, store := newProfileConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		_, _ = w.Write([]byte(`{"provider":"entra","tenant_id":"` + testTenantID + `","client_id":"` + testSyncClientID + `","group_id":"` + entraGroupID + `","enabled":false,"dry_run":true,"version":1,"last_run":null}`))
+	})
+	var stdout, stderr bytes.Buffer
+	args := []string{"--group-id", entraGroupID, "--dry-run=true", "--yes"}
+	if code := runDirectorySyncSet(args, &stdout, &stderr, nil, http.DefaultClient, store); code != 0 {
+		t.Fatalf("set exit = %d, stderr=%s", code, stderr.String())
+	}
+	got := fake.only(t)
+	assertRequest(t, got, http.MethodPatch, directorySyncPath)
+	if paths := strings.Join(maskPaths(t, got.Body), ","); paths != "dry_run,group_id" {
+		t.Fatalf("update_mask = %s", paths)
+	}
+	if got.Body["group_id"] != entraGroupID {
+		t.Fatalf("group_id absent from request: body=%s", got.Raw)
+	}
+	if !strings.Contains(stdout.String(), "group_id:      "+entraGroupID) {
+		t.Fatalf("set output omitted group_id: %s", stdout.String())
+	}
+}
+
+func TestDirectorySyncSetConfirmationShowsGroupID(t *testing.T) {
+	const entraGroupID = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+	fake, store := newProfileConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		_, _ = w.Write([]byte(testDirectorySyncJSON))
+	})
+	var stdout, stderr bytes.Buffer
+	if code := runDirectorySyncSet([]string{"--group-id", entraGroupID}, &stdout, &stderr, strings.NewReader(""), http.DefaultClient, store); code != 2 {
+		t.Fatalf("set exit = %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "Set directory sync group_id="+entraGroupID+"?") {
+		t.Fatalf("confirmation omitted group_id: %q", stderr.String())
+	}
+	if len(fake.all()) != 0 {
+		t.Fatal("set sent a request without --yes")
+	}
+}
+
 func TestDirectorySyncSetBooleansSendFalse(t *testing.T) {
 	fake, store := newProfileConsole(t, func(w http.ResponseWriter, r consoleRequest) {
 		_, _ = w.Write([]byte(testDirectorySyncJSON))
@@ -186,6 +227,8 @@ func TestDirectorySyncSetUsageErrors(t *testing.T) {
 		{"no flags", nil, "requires at least one of"},
 		{"only --yes", []string{"--yes"}, "requires at least one of"},
 		{"bad bool", []string{"--dry-run=maybe", "--yes"}, "invalid boolean value"},
+		{"bad group ID", []string{"--group-id", "not-a-guid", "--yes"}, "--group-id must be a GUID"},
+		{"app and group IDs", []string{"--app-id", testSyncAppID, "--group-id", "dddddddd-dddd-dddd-dddd-dddddddddddd", "--yes"}, "--group-id and --app-id are mutually exclusive"},
 		{"positional", []string{"extra"}, "takes no positional arguments"},
 	}
 	for _, tt := range tests {

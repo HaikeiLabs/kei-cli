@@ -418,16 +418,19 @@ catalog with HAI-513 deployed. Older catalogs reject `agent_id` with 400
 ## Sync your Entra directory
 
 An organization admin can have Kei sync the organization's groups and members
-from Microsoft Entra app-role assignments. The settings live on your
+from Microsoft Entra app-role assignments or one security group. The settings live on your
 organization in Kei (`/api/v1/organizations/{org}/directory-sync`); the
 organization is the one your `kei login` token is bound to. You need three
 GUIDs from Entra: your tenant ID, the client ID of the sync app registration
-that has the Kei federated credential, and the client ID of the app whose app
-roles are synced.
+that has the Kei federated credential, and either the client ID of the app
+whose app roles are synced or the object ID of the security group to sync.
 
 ```sh
 # 1. Save the ids (the first set creates the configuration; dry run is on by default).
 kei directory-sync set --tenant-id TENANT_GUID --client-id SYNC_APP_GUID --app-id ROLES_APP_GUID
+
+# Or select one Entra security group by its object ID (mutually exclusive with --app-id).
+kei directory-sync set --tenant-id TENANT_GUID --client-id SYNC_APP_GUID --group-id GROUP_GUID
 
 # 2. Turn it on. Runs stay in dry run: nothing is written, each run records what it would do.
 kei directory-sync enable
@@ -445,7 +448,7 @@ kei directory-sync disable
 ```
 
 `set` changes only the flags you pass (`--tenant-id`, `--client-id`,
-`--app-id`, `--dry-run`, `--create-users`, `--revoke`); booleans take
+`--app-id` or `--group-id`, `--dry-run`, `--create-users`, `--revoke`); booleans take
 `=true` or `=false`. `--revoke=true` removes memberships that are no longer
 assigned in Entra. `set`, `enable`, and `disable` ask for confirmation; pass
 `--yes` in scripts. `get --json` and `report --json` print the API response.

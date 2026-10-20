@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
+
+	"github.com/google/uuid"
 )
 
 // Directory sync is the organization singleton
@@ -26,6 +28,7 @@ type directorySync struct {
 	TenantID       string            `json:"tenant_id"`
 	ClientID       string            `json:"client_id"`
 	AppID          string            `json:"app_id"`
+	GroupID        string            `json:"group_id"`
 	Enabled        bool              `json:"enabled"`
 	DryRun         bool              `json:"dry_run"`
 	CreateUsers    bool              `json:"create_users"`
@@ -59,6 +62,7 @@ type patchDirectorySyncRequest struct {
 	TenantID    *string   `json:"tenant_id,omitempty"`
 	ClientID    *string   `json:"client_id,omitempty"`
 	AppID       *string   `json:"app_id,omitempty"`
+	GroupID     *string   `json:"group_id,omitempty"`
 	Enabled     *bool     `json:"enabled,omitempty"`
 	DryRun      *bool     `json:"dry_run,omitempty"`
 	CreateUsers *bool     `json:"create_users,omitempty"`
@@ -131,6 +135,7 @@ func runDirectorySyncSet(args []string, stdout, stderr io.Writer, stdin io.Reade
 	tenantID := flags.String("tenant-id", "", "the customer's Entra tenant ID (GUID)")
 	clientID := flags.String("client-id", "", "client ID of the customer's sync app registration (GUID)")
 	appID := flags.String("app-id", "", "client ID of the app whose app roles are synced (GUID)")
+	groupID := flags.String("group-id", "", "Entra security group ID to sync (GUID; mutually exclusive with --app-id)")
 	dryRun := flags.Bool("dry-run", true, "report what would change without writing (true or false)")
 	createUsers := flags.Bool("create-users", false, "create Kei users for assigned Entra users (true or false)")
 	revoke := flags.Bool("revoke", false, "remove memberships no longer assigned in Entra (true or false)")
@@ -142,6 +147,20 @@ func runDirectorySyncSet(args []string, stdout, stderr io.Writer, stdin io.Reade
 		fmt.Fprintln(stderr, "directory-sync set takes no positional arguments")
 		return 2
 	}
+	if *groupID != "" {
+		if _, err := uuid.Parse(*groupID); err != nil {
+			fmt.Fprintln(stderr, "directory-sync set: --group-id must be a GUID")
+			return 2
+		}
+		appIDSet := false
+		flags.Visit(func(f *flag.Flag) {
+			appIDSet = appIDSet || f.Name == "app-id"
+		})
+		if appIDSet {
+			fmt.Fprintln(stderr, "directory-sync set: --group-id and --app-id are mutually exclusive")
+			return 2
+		}
+	}
 	var req patchDirectorySyncRequest
 	var changes []string
 	flags.Visit(func(f *flag.Flag) {
@@ -152,6 +171,8 @@ func runDirectorySyncSet(args []string, stdout, stderr io.Writer, stdin io.Reade
 			req.ClientID = clientID
 		case "app-id":
 			req.AppID = appID
+		case "group-id":
+			req.GroupID = groupID
 		case "dry-run":
 			req.DryRun = dryRun
 		case "create-users":
@@ -166,7 +187,7 @@ func runDirectorySyncSet(args []string, stdout, stderr io.Writer, stdin io.Reade
 		changes = append(changes, path+"="+f.Value.String())
 	})
 	if len(req.UpdateMask.Paths) == 0 {
-		fmt.Fprintln(stderr, "directory-sync set requires at least one of --tenant-id, --client-id, --app-id, --dry-run, --create-users, or --revoke")
+		fmt.Fprintln(stderr, "directory-sync set requires at least one of --tenant-id, --client-id, --app-id, --group-id, --dry-run, --create-users, or --revoke")
 		return 2
 	}
 	if !confirmWrite(stdin, stderr, *yes, "Set directory sync "+strings.Join(changes, ", ")+"? Pass --yes to confirm without prompting.") {
@@ -321,6 +342,7 @@ func printDirectorySync(command string, payload []byte, stdout, stderr io.Writer
 	fmt.Fprintf(table, "tenant_id:\t%s\n", ds.TenantID)
 	fmt.Fprintf(table, "client_id:\t%s\n", ds.ClientID)
 	fmt.Fprintf(table, "app_id:\t%s\n", ds.AppID)
+	fmt.Fprintf(table, "group_id:\t%s\n", ds.GroupID)
 	fmt.Fprintf(table, "enabled:\t%t\n", ds.Enabled)
 	fmt.Fprintf(table, "dry_run:\t%t\n", ds.DryRun)
 	fmt.Fprintf(table, "create_users:\t%t\n", ds.CreateUsers)
