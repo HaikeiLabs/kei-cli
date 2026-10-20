@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	policybundle "github.com/HaikeiLabs/kei-connector-contracts/bundle"
 )
 
 const testOpenWebUIToken = "sk-owui-admin-secret"
@@ -104,7 +106,7 @@ func TestOpenWebUIHarnessHasRemoteTargetAndRendersNothing(t *testing.T) {
 		{"id": "p2", "name": "claude only", "src_pattern": "harness:claude_code", "dst_pattern": "shell:git", "effect": "permit", "enabled": true},
 		{"id": "p3", "name": "disabled", "src_pattern": "*", "dst_pattern": "*", "effect": "deny", "enabled": false},
 	}})
-	r, err := h.Render(Bundle{PolicySet: policies})
+	r, err := h.Render(Bundle{Payload: policybundle.Payload{PolicySet: policies}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,8 +6,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"time"
 
+	policybundle "github.com/HaikeiLabs/kei-connector-contracts/bundle"
 	"github.com/HaikeiLabs/kei-connector-contracts/harnessmatch"
 	policyapi "github.com/HaikeiLabs/kei-connector-contracts/policy"
 )
@@ -16,43 +16,16 @@ import (
 // deprecated.
 const BundleSchemaV2 = "kei.policy-bundle/v2"
 
-// Bundle is an unsigned policy bundle fetched by the CLI and runtime.
+// Bundle is an unsigned policy bundle fetched by the CLI. The wire types are
+// the shared contracts ones (HAI-609), so the CLI and the runtime read the
+// same bundle; only the two fields the CLI alone knows stay here.
 type Bundle struct {
-	Schema         string `json:"schema"`
-	BundleID       string `json:"bundle_id"`
-	BundleVersion  int64  `json:"bundle_version"`
-	PolicyRevision int64  `json:"policy_revision"`
-	Audience       struct {
-		InstallationID string `json:"installation_id"`
-		OrgID          string `json:"org_id"`
-		WorkspaceID    string `json:"workspace_id"`
-	} `json:"audience"`
-	NotAfter              time.Time       `json:"not_after"`
-	HarnessMatchSemantics string          `json:"harness_match_semantics"`
-	Harnesses             []BundleHarness `json:"harnesses"`
-	PolicySet             json.RawMessage `json:"policy_set"`
-	Subject               *BundleSubject  `json:"subject"`
+	policybundle.Payload
+	// PayloadDigest is the sha256 of the fetched bytes, as the runtime
+	// records it.
+	PayloadDigest string `json:"-"`
 	// Connectors are the connectors bound to the workspace (TODO(HAI-485)).
-	Connectors    []BundleConnector `json:"connectors"`
-	PayloadDigest string            `json:"-"`
-}
-
-// BundleSubject is the installation's principal as the control plane resolved
-// it (HAI-433): the installation creator, their email, and their effective
-// group names. Only v2 bundles carry it. It is the only source of identity for
-// user:, email: and group: policy sources; the renderer never reads one from
-// the environment, argv or the harness. A bundle without it, including every
-// v1 bundle, renders none of those sources.
-type BundleSubject struct {
-	UserID string   `json:"user_id"`
-	Email  string   `json:"email"`
-	Groups []string `json:"groups"`
-}
-
-// BundleHarness is a harness registered on the installation the bundle is for.
-type BundleHarness struct {
-	AgentID string `json:"agent_id"`
-	Kind    string `json:"kind"`
+	Connectors []BundleConnector `json:"connectors"`
 }
 
 type bundlePolicy struct {
@@ -98,7 +71,7 @@ func render(s nativeSyntax, harnessID string, b Bundle) (Rendered, error) {
 			return Rendered{}, fmt.Errorf("decode bundle policies: %w", err)
 		}
 	}
-	var selected *BundleHarness
+	var selected *policybundle.Harness
 	for i := range b.Harnesses {
 		if b.Harnesses[i].AgentID == harnessID && b.Harnesses[i].Kind == s.kind {
 			selected = &b.Harnesses[i]
@@ -155,7 +128,7 @@ type nativeEntries struct {
 	Withheld []string
 }
 
-func nativePermissionEntries(s nativeSyntax, harnessID string, harness *BundleHarness, subject *BundleSubject, policies []bundlePolicy) nativeEntries {
+func nativePermissionEntries(s nativeSyntax, harnessID string, harness *policybundle.Harness, subject *policybundle.InstallationSubject, policies []bundlePolicy) nativeEntries {
 	kind := s.kind
 	var out nativeEntries
 
@@ -405,7 +378,7 @@ func policyDisplayName(policy bundlePolicy) string {
 	return policy.ID
 }
 
-func rendererCall(kind, harnessID string, harness *BundleHarness, dst string) harnessmatch.Call {
+func rendererCall(kind, harnessID string, harness *policybundle.Harness, dst string) harnessmatch.Call {
 	call := harnessmatch.Call{Kind: kind, HarnessID: harnessID}
 	if harness != nil {
 		call.AgentID = harness.AgentID

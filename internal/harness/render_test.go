@@ -9,13 +9,38 @@ import (
 	"strings"
 	"testing"
 
+	policybundle "github.com/HaikeiLabs/kei-connector-contracts/bundle"
 	"github.com/HaikeiLabs/kei-connector-contracts/harnessmatch"
 )
+
+// TestBundleDecodesRuntimeWireTypes pins that the CLI reads a bundle with the
+// shared contracts wire types (HAI-609): the audience, the registered
+// harnesses and the installation subject decode into the contracts' types, so
+// the CLI and the runtime see the same bundle.
+func TestBundleDecodesRuntimeWireTypes(t *testing.T) {
+	payload := []byte(`{"schema":"kei.policy-bundle/v2","bundle_id":"b1","bundle_version":7,"policy_revision":9,"audience":{"installation_id":"inst-1","org_id":"org-1","workspace_id":"ws-1"},"not_after":"2099-01-01T00:00:00Z","harness_match_semantics":"kei.harness-match/v1","harnesses":[{"agent_id":"agent-1","kind":"claude_code"}],"subject":{"user_id":"usr-1","email":"dev@example.com","groups":["release_eng"]},"policy_set":{"harness_policies":[]}}`)
+	var b Bundle
+	if err := json.Unmarshal(payload, &b); err != nil {
+		t.Fatal(err)
+	}
+	if b.Schema != BundleSchemaV2 || b.BundleID != "b1" || b.BundleVersion != 7 || b.PolicyRevision != 9 {
+		t.Fatalf("payload = %+v", b.Payload)
+	}
+	if b.Audience != (policybundle.Audience{InstallationID: "inst-1", OrgID: "org-1", WorkspaceID: "ws-1"}) {
+		t.Fatalf("audience = %+v", b.Audience)
+	}
+	if len(b.Harnesses) != 1 || b.Harnesses[0] != (policybundle.Harness{AgentID: "agent-1", Kind: "claude_code"}) {
+		t.Fatalf("harnesses = %+v", b.Harnesses)
+	}
+	if b.Subject == nil || b.Subject.UserID != "usr-1" || b.Subject.Email != "dev@example.com" || len(b.Subject.Groups) != 1 || b.Subject.Groups[0] != "release_eng" {
+		t.Fatalf("subject = %+v", b.Subject)
+	}
+}
 
 func TestHarnessRendererGoldenConfigs(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	policySet := json.RawMessage(`{"policies":[{"id":"p1","src_pattern":"*","dst_pattern":"shell:git status","action":"permit","enabled":true},{"id":"p2","src_pattern":"*","dst_pattern":"shell:rm","action":"deny","enabled":true},{"id":"p3","src_pattern":"user:someone","dst_pattern":"shell:secret","action":"permit","enabled":true},{"id":"p4","src_pattern":"*","dst_pattern":"shell:*","action":"permit","enabled":true},{"id":"p5","src_pattern":"*","dst_pattern":"skill:my-skill","action":"permit","enabled":true}]}`)
-	bundle := Bundle{PolicySet: policySet, Harnesses: []BundleHarness{{AgentID: "77777777-7777-7777-7777-777777777777", Kind: "claude_code"}, {AgentID: "88888888-8888-8888-8888-888888888888", Kind: "codex"}, {AgentID: "99999999-9999-9999-9999-999999999999", Kind: "opencode"}}}
+	bundle := Bundle{Payload: policybundle.Payload{PolicySet: policySet, Harnesses: []policybundle.Harness{{AgentID: "77777777-7777-7777-7777-777777777777", Kind: "claude_code"}, {AgentID: "88888888-8888-8888-8888-888888888888", Kind: "codex"}, {AgentID: "99999999-9999-9999-9999-999999999999", Kind: "opencode"}}}}
 	cases := []struct{ kind, id, input, golden, path string }{
 		{"claude_code", bundle.Harnesses[0].AgentID, "claude.settings.input.json", "claude.settings.golden.json", filepath.Join(t.TempDir(), ".claude", "settings.json")},
 		{"codex", bundle.Harnesses[1].AgentID, "codex.rules.input", "codex.rules.golden", filepath.Join(t.TempDir(), ".codex", "rules", "kei.rules")},
@@ -83,7 +108,7 @@ func TestNativePermissionEntriesSharedHarnessFixtures(t *testing.T) {
 		for _, p := range tc.Policies {
 			policies = append(policies, bundlePolicy{ID: p.ID, SrcPattern: p.Src, DstPattern: p.Dst, Action: p.Action, Effect: p.Action, Enabled: p.Enabled})
 		}
-		h := &BundleHarness{AgentID: tc.Call.AgentID, Kind: tc.Call.Kind}
+		h := &policybundle.Harness{AgentID: tc.Call.AgentID, Kind: tc.Call.Kind}
 		entries := nativePermissionEntries(syntaxFor(tc.Call.Kind), tc.Call.HarnessID, h, nil, policies)
 		allows, denies := entries.Allows, entries.Denies
 		switch tc.WantOutcome {

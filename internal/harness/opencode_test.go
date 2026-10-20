@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	policybundle "github.com/HaikeiLabs/kei-connector-contracts/bundle"
 )
 
 // No Kei-managed entries: an existing OpenCode config is left byte-for-byte
@@ -14,7 +16,7 @@ import (
 // put it under management.
 func TestOpencodeRenderNoEntriesLeavesConfigUntouched(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	bundle := Bundle{PolicySet: json.RawMessage(`{"policies":[]}`), Harnesses: []BundleHarness{{AgentID: "99999999-9999-9999-9999-999999999999", Kind: "opencode"}}}
+	bundle := Bundle{Payload: policybundle.Payload{PolicySet: json.RawMessage(`{"policies":[]}`), Harnesses: []policybundle.Harness{{AgentID: "99999999-9999-9999-9999-999999999999", Kind: "opencode"}}}}
 	id := "99999999-9999-9999-9999-999999999999"
 
 	userCfg := []byte(`{"model":"anthropic/claude-sonnet","permission":{"bash":{"npm":"allow"}}}`)
@@ -44,7 +46,7 @@ func TestOpencodeRenderNoEntriesLeavesConfigUntouched(t *testing.T) {
 func TestOpencodeRenderPreservesUserCatchAll(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	policySet := json.RawMessage(`{"policies":[{"id":"p1","src_pattern":"*","dst_pattern":"shell:git status","action":"permit","enabled":true}]}`)
-	bundle := Bundle{PolicySet: policySet, Harnesses: []BundleHarness{{AgentID: "99999999-9999-9999-9999-999999999999", Kind: "opencode"}}}
+	bundle := Bundle{Payload: policybundle.Payload{PolicySet: policySet, Harnesses: []policybundle.Harness{{AgentID: "99999999-9999-9999-9999-999999999999", Kind: "opencode"}}}}
 	id := "99999999-9999-9999-9999-999999999999"
 	userCfg := []byte(`{"permission":{"bash":{"*":"allow"}}}`)
 	path := filepath.Join(t.TempDir(), ".config", "opencode", "opencode.json")

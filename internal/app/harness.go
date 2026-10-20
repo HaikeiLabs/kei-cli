@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/HaikeiLabs/kei-cli/internal/harness"
+	policybundle "github.com/HaikeiLabs/kei-connector-contracts/bundle"
 	"github.com/google/uuid"
 )
 
@@ -916,7 +917,7 @@ func printLines(out io.Writer, lines []string) {
 
 // findRegisteredHarness returns the bundle's registered harness for a kind, or
 // nil when the bundle has none (HP-C11: sync works without one).
-func findRegisteredHarness(bundle harness.Bundle, kind string) *harness.BundleHarness {
+func findRegisteredHarness(bundle harness.Bundle, kind string) *policybundle.Harness {
 	for i := range bundle.Harnesses {
 		if bundle.Harnesses[i].Kind == kind {
 			return &bundle.Harnesses[i]
@@ -933,7 +934,7 @@ func isLoopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-func reportHarnessSync(ctx context.Context, client *http.Client, config runtimeConfig, h harness.BundleHarness, bundle harness.Bundle, payload []byte, now time.Time) error {
+func reportHarnessSync(ctx context.Context, client *http.Client, config runtimeConfig, h policybundle.Harness, bundle harness.Bundle, payload []byte, now time.Time) error {
 	digest := sha256.Sum256(payload)
 	body := map[string]any{"last_synced_at": now.UTC().Format(time.RFC3339Nano), "last_synced_bundle_version": bundle.BundleVersion, "last_synced_digest": "sha256:" + hex.EncodeToString(digest[:])}
 	path := "/api/v1/runtime/harnesses/" + h.AgentID + "?update_mask=last_synced_at,last_synced_bundle_version,last_synced_digest"

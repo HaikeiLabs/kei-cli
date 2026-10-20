@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	policybundle "github.com/HaikeiLabs/kei-connector-contracts/bundle"
 	"github.com/HaikeiLabs/kei-connector-contracts/providers"
 )
 
@@ -169,7 +170,7 @@ func skillsBundle(t *testing.T, version int64, policies ...skillPolicy) Bundle {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Bundle{Schema: BundleSchemaV2, BundleVersion: version, PayloadDigest: fmt.Sprintf("sha256:%d", version), NotAfter: time.Now().Add(time.Hour), PolicySet: raw}
+	return Bundle{Payload: policybundle.Payload{Schema: BundleSchemaV2, BundleVersion: version, NotAfter: time.Now().Add(time.Hour), PolicySet: raw}, PayloadDigest: fmt.Sprintf("sha256:%d", version)}
 }
 
 // defaultSkillPolicies permit demo, lint and codex-only and deny secret.
