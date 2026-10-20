@@ -9,7 +9,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/HaikeiLabs/kei-connector-contracts/contract"
@@ -19,13 +21,17 @@ import (
 // remote MCP servers (kei ADR-036 §3.1).
 const connectorKindMCP = "mcp"
 
+var connectorSlugPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{1,47}$`)
+
 // connectorTemplate is the part of a catalog connector template the CLI reads
 // to choose the create path. The CLI holds no template list of its own: the
 // templates and their kinds come from GET /api/v1/connector-templates/{id}.
 type connectorTemplate struct {
-	ID         string  `json:"id"`
-	Kind       string  `json:"kind"`
-	DefaultURL *string `json:"default_url"`
+	ID          string  `json:"id"`
+	Kind        string  `json:"kind"`
+	Label       string  `json:"label"`
+	DisplayName string  `json:"display_name"`
+	DefaultURL  *string `json:"default_url"`
 }
 
 // mcpConnectorCreateRequest is the body of POST /api/v1/data-connectors for
@@ -50,7 +56,7 @@ func registerTemplateCreateFlags(flags *flag.FlagSet) templateCreateFlags {
 		template:       flags.String("template", "", "connector template ID, from the catalog's connector templates (an mcp template creates an MCP connector)"),
 		kind:           flags.String("kind", "", "with --template: the template's expected kind, for example mcp"),
 		label:          flags.String("label", "", "with --template: the connector's label, shown to users"),
-		slug:           flags.String("slug", "", "with --template: the workspace-unique slug (default: derived from --label; it cannot be changed later)"),
+		slug:           flags.String("slug", "", "with --template: slug matching ^[a-z][a-z0-9_]{1,47}$ (default: derived from --label; it cannot be changed later)"),
 		mcpURL:         flags.String("mcp-url", "", "with an mcp template: the server's https MCP URL (required when the template has none)"),
 		expectedIssuer: flags.String("expected-issuer", "", "with an mcp template: the OAuth authorization server issuer the server must use"),
 	}
@@ -101,6 +107,10 @@ func optionalFlag(value string) *string {
 func runConnectorsCreateFromTemplate(f templateCreateFlags, name string, ws workspaceSelection, capabilities []string, allowGroups []string, defaultAccess, noDefaultAccess, yes bool, stdin io.Reader, jsonOutput bool, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	if *f.label == "" {
 		fmt.Fprintln(stderr, "connectors create --template requires --label")
+		return 2
+	}
+	if *f.slug != "" && !connectorSlugPattern.MatchString(*f.slug) {
+		fmt.Fprintf(stderr, "connectors create: slug must match ^[a-z][a-z0-9_]{1,47}$; try --slug %s\n", suggestConnectorSlug(*f.slug))
 		return 2
 	}
 	fail := func(err error) int {
@@ -216,6 +226,104 @@ func runConnectorsCreateFromTemplate(f templateCreateFlags, name string, ws work
 		fmt.Fprintf(stdout, "Issuer: %s\n", created.ExpectedIssuer)
 	}
 	fmt.Fprintln(stdout, "Users connect their own accounts through their chat harness. Its tools are usable once an admin approves its tool manifest.")
+	return 0
+}
+
+func suggestConnectorSlug(value string) string {
+	var slug strings.Builder
+	underscore := false
+	for _, r := range strings.ToLower(value) {
+		valid := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if valid {
+			slug.WriteRune(r)
+			underscore = false
+		} else if !underscore && slug.Len() > 0 {
+			slug.WriteByte('_')
+			underscore = true
+		}
+	}
+	value = strings.Trim(slug.String(), "_")
+	if value == "" {
+		value = "connector"
+	}
+	if value[0] < 'a' || value[0] > 'z' {
+		value = "connector_" + value
+	}
+	if len(value) > 48 {
+		value = strings.TrimRight(value[:48], "_")
+	}
+	if len(value) < 2 {
+		value += "_x"
+	}
+	return value
+}
+
+func runConnectorsTemplates(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
+	flags := flag.NewFlagSet("connectors templates", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	jsonOutput := flags.Bool("json", false, "output as JSON")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+		fmt.Fprintln(stderr, "connectors templates accepts no positional arguments")
+		return 2
+	}
+	baseURL, token, ok := loadCLIWebTokenAndBaseURL(store, stderr)
+	if !ok {
+		return 1
+	}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+"/api/v1/connector-templates", nil)
+	if err != nil {
+		fmt.Fprintf(stderr, "connectors templates: %v\n", err)
+		return 1
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	status, payload, err := doRequest(client, req, 4<<20)
+	if err != nil {
+		fmt.Fprintf(stderr, "connectors templates: %v\n", withCLIUpgradeHint(client, err))
+		return 1
+	}
+	if status < 200 || status > 299 {
+		err := fmt.Errorf("%s (HTTP %d)", connectorErrorMessage(payload), status)
+		fmt.Fprintf(stderr, "connectors templates: %v\n", withCLIUpgradeHint(client, err))
+		return 1
+	}
+	var templates []connectorTemplate
+	if len(payload) > 0 && payload[0] == '[' {
+		if err := json.Unmarshal(payload, &templates); err != nil {
+			fmt.Fprintf(stderr, "connectors templates: decode response: %v\n", err)
+			return 1
+		}
+	} else {
+		var response struct {
+			ConnectorTemplates []connectorTemplate `json:"connector_templates"`
+			Templates          []connectorTemplate `json:"templates"`
+		}
+		if err := json.Unmarshal(payload, &response); err != nil {
+			fmt.Fprintf(stderr, "connectors templates: decode response: %v\n", err)
+			return 1
+		}
+		templates = response.ConnectorTemplates
+		if templates == nil {
+			templates = response.Templates
+		}
+	}
+	if *jsonOutput {
+		_, _ = stdout.Write(payload)
+		return 0
+	}
+	if len(templates) == 0 {
+		fmt.Fprintln(stdout, "No connector templates found.")
+		return 0
+	}
+	table := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(table, "ID\tKIND\tLABEL")
+	for _, template := range templates {
+		label := template.Label
+		if label == "" {
+			label = template.DisplayName
+		}
+		fmt.Fprintf(table, "%s\t%s\t%s\n", template.ID, template.Kind, label)
+	}
+	_ = table.Flush()
 	return 0
 }
 

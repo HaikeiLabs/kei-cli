@@ -125,6 +125,7 @@ var connectorsGroup = commandGroup{
 		{name: "reconnect", summary: "Reconnect a connector"},
 		{name: "delete", summary: "Delete a connector"},
 		{name: "manifests", summary: "Manage connector tool manifests"},
+		{name: "templates", summary: "List connector templates"},
 	},
 	aliases: map[string]string{"tools": "manifests"},
 }
@@ -151,6 +152,8 @@ func runConnectorsCommand(args []string, stdout, stderr io.Writer, stdin io.Read
 		return runConnectorsDelete(rest, stdout, stderr, client, store)
 	case "manifests", "tools":
 		return runConnectorsManifests(rest, stdout, stderr, stdin, client, store)
+	case "templates":
+		return runConnectorsTemplates(rest, stdout, stderr, client, store)
 	default:
 		panic("unexpected subcommand: " + sub)
 	}
@@ -788,7 +791,7 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	workspace := connectorWorkspaceFlag(flags)
 	providerFlag := flags.String("provider", "", "provider: gmail, google_drive, linear, github, tito, skills_repo, crm, or http_api (or --template for a catalog template such as an MCP server)")
 	name := flags.String("name", "", "connector name (letters, digits, and . _ : / -)")
-	accountModelFlag := flags.String("account-model", "", "OAuth account model: per_user, shared, or domain_delegation (gmail, google_drive); skills_repo takes per_user, or --credential-ref instead")
+	accountModelFlag := flags.String("account-model", "", "OAuth account model: per_user, shared, or domain_delegation (gmail, google_drive); skills_repo takes per_user, or --credential-ref instead; cannot be combined with --template")
 	values := setupValues{}
 	flags.Var(values, "set", "non-secret setup field as name=value (repeatable)")
 	credentialRef := flags.String("credential-ref", "", "existing secret-manager reference for the provider's secret field")
