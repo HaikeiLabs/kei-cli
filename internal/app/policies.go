@@ -43,7 +43,7 @@ type createPolicyRequest struct {
 	SrcPattern  string `json:"src_pattern"`
 	DstPattern  string `json:"dst_pattern"`
 	Effect      string `json:"effect"`
-	Action      string `json:"action"`
+	Action      string `json:"action,omitempty"`
 	Priority    int    `json:"priority"`
 	Enabled     bool   `json:"enabled"`
 	// AgentID scopes the policy to one agent; omitted, it applies to every
@@ -92,6 +92,11 @@ func (s *policySession) do(method, path string, body any, extraQuery url.Values)
 			params.Add(k, v)
 		}
 	}
+	endpoint := s.baseURL + "/api/v1/policies" + path + "?" + params.Encode()
+	return s.request(method, endpoint, body)
+}
+
+func (s *policySession) request(method, endpoint string, body any) ([]byte, error) {
 	var reader io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
@@ -100,7 +105,6 @@ func (s *policySession) do(method, path string, body any, extraQuery url.Values)
 		}
 		reader = bytes.NewReader(encoded)
 	}
-	endpoint := s.baseURL + "/api/v1/policies" + path + "?" + params.Encode()
 	req, err := http.NewRequestWithContext(context.Background(), method, endpoint, reader)
 	if err != nil {
 		return nil, err
@@ -128,7 +132,30 @@ func policyErrorMessage(payload []byte) string {
 	return apiErrorMessage(payload)
 }
 
+func runPolicyCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "policy requires a subcommand: list, get, create, delete, or test")
+		return 2
+	}
+	switch args[0] {
+	case "list":
+		return runPoliciesList(args[1:], stdout, stderr, client, store)
+	case "get":
+		return runPoliciesGet(args[1:], stdout, stderr, client, store)
+	case "create":
+		return runPolicyCreate(args[1:], stdout, stderr, client, store)
+	case "delete":
+		return runPoliciesDelete(args[1:], stdout, stderr, client, store)
+	case "test":
+		return runPolicyTest(args[1:], stdout, stderr, client, store)
+	default:
+		fmt.Fprintf(stderr, "unknown policy command %q\n", args[0])
+		return 2
+	}
+}
+
 func runPoliciesCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
+	fmt.Fprintln(stderr, "Deprecated: use `kei policy` instead of `kei policies`.")
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "policies requires a subcommand: list, get, create, update, delete, or import")
 		return 2
@@ -448,6 +475,133 @@ func runPoliciesCreate(args []string, stdout, stderr io.Writer, client *http.Cli
 	return 0
 }
 
+// standingRuleSource validates --group for a standing rule and returns the
+// policy src_pattern. Standing rules apply to groups and autogroups; per-user
+// sources belong to access grants instead.
+func standingRuleSource(group string) (string, error) {
+	g := strings.TrimSpace(group)
+	if g == "" {
+		return "", fmt.Errorf("--group is required")
+	}
+	for _, prefix := range []string{"user:", "email:", "agent:"} {
+		if strings.HasPrefix(g, prefix) {
+			return "", fmt.Errorf("standing rules apply only to groups or autogroups; %s sources need `kei access grant`", prefix)
+		}
+	}
+	if strings.HasPrefix(g, "autogroup:") {
+		return g, nil
+	}
+	return "group:" + strings.TrimPrefix(g, "group:"), nil
+}
+
+func runPolicyCreate(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
+	flags := flag.NewFlagSet("policy create", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	workspace := policiesWorkspaceFlag(flags)
+	group := flags.String("group", "", "group or autogroup the rule applies to")
+	allow := flags.String("allow", "", "target to permit")
+	deny := flags.String("deny", "", "target to deny")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+		fmt.Fprintln(stderr, "policy create accepts no positional arguments")
+		return 2
+	}
+	src, err := standingRuleSource(*group)
+	if err != nil {
+		fmt.Fprintf(stderr, "policy create: %v\n", err)
+		return 2
+	}
+	var target, effect string
+	switch {
+	case *allow != "" && *deny != "":
+		fmt.Fprintln(stderr, "policy create: pass exactly one of --allow or --deny")
+		return 2
+	case *deny != "":
+		target, effect = *deny, "deny"
+	case *allow != "":
+		target, effect = *allow, "permit"
+	default:
+		fmt.Fprintln(stderr, "policy create requires --allow or --deny")
+		return 2
+	}
+	ws, ok := requirePoliciesWorkspace("create", *workspace, stderr)
+	if !ok {
+		return 2
+	}
+	session, ok := openPolicySession("create", ws, stderr, client, store)
+	if !ok {
+		return 1
+	}
+	request := createPolicyRequest{
+		Name:       target + " / " + src,
+		SrcPattern: src,
+		DstPattern: target,
+		Effect:     effect,
+		Enabled:    true,
+	}
+	payload, err := session.do(http.MethodPost, "", request, nil)
+	if err != nil {
+		fmt.Fprintf(stderr, "policy create: %v\n", err)
+		return 1
+	}
+	var created policy
+	if err := json.Unmarshal(payload, &created); err != nil {
+		fmt.Fprintf(stderr, "policy create: decode response: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "Created policy %s (%s → %s, %s).\nPolicy ID: %s\n", created.Name, created.SrcPattern, created.DstPattern, created.Effect, created.ID)
+	return 0
+}
+
+func runPolicyTest(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
+	flags := flag.NewFlagSet("policy test", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	workspace := policiesWorkspaceFlag(flags)
+	as := flags.String("as", "", "subject to evaluate (e.g. group:Engineering)")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if *as == "" || flags.NArg() != 1 {
+		fmt.Fprintln(stderr, `policy test requires --as <who> and one target, e.g. kei policy test --as group:Engineering "shell:git"`)
+		return 2
+	}
+	target := flags.Arg(0)
+	ws, ok := requirePoliciesWorkspace("test", *workspace, stderr)
+	if !ok {
+		return 2
+	}
+	session, ok := openPolicySession("test", ws, stderr, client, store)
+	if !ok {
+		return 1
+	}
+	orgID, err := organizationIDFromCLIToken(session.token)
+	if err != nil {
+		fmt.Fprintf(stderr, "policy test: determine organization from login: %v\n", err)
+		return 1
+	}
+	endpoint := session.baseURL + "/api/v1/organizations/" + url.PathEscape(orgID) +
+		"/workspaces/" + url.PathEscape(session.workspaceID) + "/policies:test"
+	payload, err := session.request(http.MethodPost, endpoint, map[string]string{"as": *as, "target": target})
+	if err != nil {
+		fmt.Fprintf(stderr, "policy test: %v\n", err)
+		return 1
+	}
+	var result struct {
+		Decision  string `json:"decision"`
+		DecidedBy string `json:"decided_by"`
+	}
+	if err := json.Unmarshal(payload, &result); err != nil {
+		fmt.Fprintf(stderr, "policy test: decode response: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "Decision: %s\n", result.Decision)
+	if result.DecidedBy == "" {
+		fmt.Fprintln(stdout, "Deciding rule: (none)")
+	} else {
+		fmt.Fprintf(stdout, "Deciding rule: %s\n", result.DecidedBy)
+	}
+	return 0
+}
+
 func runPoliciesUpdate(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("policies update", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -713,7 +867,8 @@ func runPoliciesImport(args []string, stdout, stderr io.Writer, stdin io.Reader,
 		}
 		if _, err := session.do(http.MethodPost, "", request, nil); err != nil {
 			fmt.Fprintf(stderr, "policies import: failed to create %s: %v\n", p.Name, err)
-			break
+			fmt.Fprintf(stdout, "Created %d policies.\n", created)
+			return 1
 		}
 		created++
 	}

@@ -418,8 +418,8 @@ func TestPoliciesUpdateSendsOnlySetFlags(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","name":"x","effect":"permit","priority":50,"enabled":true,"approval_required":false}`))
 	})
 	_, _, stderr := runPolicies(t, server, store, "", "update", testPolicyID, "--workspace", "Main", "--priority", "50")
-	if stderr != "" {
-		t.Fatalf("stderr = %q", stderr)
+	if !strings.Contains(stderr, "Deprecated: use `kei policy`") {
+		t.Fatalf("stderr = %q, want the deprecation notice", stderr)
 	}
 	req := fake.only(t)
 	if req.Body["priority"] != float64(50) {
