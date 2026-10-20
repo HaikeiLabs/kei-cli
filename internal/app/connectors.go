@@ -194,6 +194,15 @@ func requireConnectorID(command, id string, stderr io.Writer) bool {
 	return true
 }
 
+func printPerUserMCPNextSteps(w io.Writer, id, workspace string) {
+	fmt.Fprintln(w, "Next steps:")
+	fmt.Fprintln(w, "1. Activate the connector in Kei.")
+	fmt.Fprintf(w, "2. Connect your account: kei connectors connect %s --workspace %s\n", id, workspace)
+	fmt.Fprintln(w, "3. From a harness, make a first tool-list call; this submits the tool manifest.")
+	fmt.Fprintf(w, "4. Find the manifest ID: kei connectors manifests list %s --workspace %s\n", id, workspace)
+	fmt.Fprintf(w, "   Then approve it: kei connectors manifests approve %s <manifest-id> --workspace %s\n", id, workspace)
+}
+
 // connectorSession is a logged-in CLI call scoped to one workspace.
 type connectorSession struct {
 	client      *http.Client
@@ -594,6 +603,11 @@ func runConnectorsReconnect(args []string, stdout, stderr io.Writer, stdin io.Re
 		return fail(fmt.Errorf("decode connector: %w", err))
 	}
 	if current.CredentialSource == string(contract.CredentialSourceOAuth) && current.AccountModel == string(contract.AccountModelPerUser) {
+		if current.Kind == connectorKindMCP {
+			fmt.Fprintln(stderr, "connectors reconnect: this is a per-user MCP connector; use the connect command below")
+			printPerUserMCPNextSteps(stderr, id, ws.value)
+			return 1
+		}
 		return fail(fmt.Errorf("this is a per-user connector; connect your own account with: kei connectors connect %s --workspace %s", id, ws.value))
 	}
 

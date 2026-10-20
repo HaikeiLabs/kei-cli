@@ -1099,6 +1099,20 @@ func TestConnectorsReconnectPerUserExplains(t *testing.T) {
 	}
 }
 
+func TestConnectorsReconnectPerUserMCPPrintsOrderedNextSteps(t *testing.T) {
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		_, _ = w.Write([]byte(`{"id":"` + testConnectorID + `","kind":"mcp","provider":"linear_mcp","status":"active","credential_source":"oauth","account_model":"per_user"}`))
+	})
+	store.token = workspaceTestToken()
+	code, _, stderr := runConnectors(t, server, store, "", "reconnect", testConnectorID, "--workspace", "Main")
+	if code != 1 || !strings.Contains(stderr, "1. Activate the connector") || !strings.Contains(stderr, "2. Connect your account: kei connectors connect "+testConnectorID+" --workspace Main") || !strings.Contains(stderr, "first tool-list call") || !strings.Contains(stderr, "manifests approve") {
+		t.Fatalf("exit = %d stderr=%q", code, stderr)
+	}
+	if got := fake.only(t); got.Method != http.MethodGet {
+		t.Fatalf("per-user MCP reconnect made an unexpected request: %#v", got)
+	}
+}
+
 func TestConnectorsDeleteRequiresYes(t *testing.T) {
 	fake, server, store := newFakeConsole(t, failOnRequest(t))
 	code, _, stderr := runConnectors(t, server, store, "", "delete", testConnectorID, "--workspace", "Main")

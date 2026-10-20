@@ -89,7 +89,7 @@ func TestConnectorsToolsIsAnAliasForManifests(t *testing.T) {
 func TestConnectorsManifestsListEmpty(t *testing.T) {
 	_, run := manifestConsole(t)
 	code, stdout, stderr := run("manifests", "list", testConnectorID, "--workspace", "Main")
-	if code != 0 || !strings.Contains(stdout, "No tool manifests") {
+	if code != 0 || !strings.Contains(stdout, "No tool manifests") || !strings.Contains(stdout, "first tool-list call") || !strings.Contains(stdout, "connect the account") {
 		t.Fatalf("exit = %d stdout=%q stderr=%s", code, stdout, stderr)
 	}
 }

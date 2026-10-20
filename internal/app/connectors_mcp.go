@@ -215,7 +215,7 @@ func runConnectorsCreateFromTemplate(f templateCreateFlags, name string, ws work
 	if created.ExpectedIssuer != "" {
 		fmt.Fprintf(stdout, "Issuer: %s\n", created.ExpectedIssuer)
 	}
-	fmt.Fprintln(stdout, "Users connect their own accounts through their chat harness. Its tools are usable once an admin approves its tool manifest.")
+	printPerUserMCPNextSteps(stdout, created.ID, ws.value)
 	return 0
 }
 

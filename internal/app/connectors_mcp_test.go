@@ -93,6 +93,25 @@ func TestConnectorsCreateMCPFromTemplate(t *testing.T) {
 	}
 }
 
+func TestConnectorsCreateMCPPrintsOrderedNextSteps(t *testing.T) {
+	_, run := mcpConsole(t, map[string]string{customMCPPath: customMCPNoURL})
+	code, stdout, stderr := run("create", "--workspace", "Main", "--kind", "mcp", "--template", "custom_mcp", "--label", "Grafana", "--mcp-url", "https://mcp.grafana.example/mcp")
+	if code != 0 {
+		t.Fatalf("exit = %d stderr=%s", code, stderr)
+	}
+	for _, want := range []string{
+		"1. Activate the connector",
+		"2. Connect your account: kei connectors connect " + testConnectorID + " --workspace Main",
+		"3. From a harness, make a first tool-list call",
+		"4. Find the manifest ID: kei connectors manifests list " + testConnectorID + " --workspace Main",
+		"kei connectors manifests approve " + testConnectorID + " <manifest-id> --workspace Main",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("create output missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
 // TestConnectorsCreateMCPSlugAndName: --slug and --name are sent as given.
 func TestConnectorsCreateMCPSlugAndName(t *testing.T) {
 	fake, run := mcpConsole(t, map[string]string{"/api/v1/connector-templates/grafana": grafanaTemplate})

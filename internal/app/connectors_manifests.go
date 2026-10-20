@@ -126,7 +126,7 @@ func runConnectorsManifestsList(args []string, stdout, stderr io.Writer, client 
 		return 0
 	}
 	if len(manifests) == 0 {
-		fmt.Fprintln(stdout, "No tool manifests yet. The runtime submits one when it first lists the server's tools.")
+		fmt.Fprintln(stdout, "No tool manifests yet. A connected account's first tool-list call from a harness submits one. If none appears, connect the account and retry the tool-list call.")
 		return 0
 	}
 	table := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
