@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/HaikeiLabs/kei-cli/internal/docs"
 	"github.com/google/uuid"
 	"github.com/pkg/browser"
 	"github.com/zalando/go-keyring"
@@ -184,6 +185,8 @@ func Main(version, command string, args []string, stdout, stderr io.Writer, stdi
 		return runSkillsCommand(args, stdout, stderr, newClient(30*time.Second))
 	case "audit":
 		return runAuditCommand(args, stdout, stderr, stdin, newClient(15*time.Second), osKeychainStore{})
+	case "docs":
+		return runDocsCommand(args, stdout, stderr, docs.DefaultBaseURL)
 	case "doctor":
 		return runDoctorCommand(args, stdout, stderr)
 	case "upgrade":
@@ -215,6 +218,8 @@ func PrintUsage(w io.Writer) {
 	fmt.Fprintln(w, "  kei skills add (installs the Haikei skills for the detected agents with npx skills add HaikeiLabs/skills -g)")
 	fmt.Fprintln(w, "  kei skills install [--harness KIND] [--dry-run] (installs the org skills the policy bundle permits, read through kei-proxy; also run by kei harness sync)")
 	fmt.Fprintln(w, "  kei harness sync --harness openwebui --url BASE_URL (read-only; admin token from OPENWEBUI_ADMIN_TOKEN; exit 1 on drift)")
+	fmt.Fprintln(w, "  kei docs [--base-url URL] (list docs pages)")
+	fmt.Fprintln(w, "  kei docs <slug> (print a docs page)")
 	fmt.Fprintln(w, "  kei doctor (checks the runtime service, heartbeat, harness hooks and policy bundle; exit 1 on any FAIL)")
 	fmt.Fprintln(w, "  kei runtime heartbeat")
 	fmt.Fprintln(w, "  kei runtime service install [--config PATH]")
