@@ -819,6 +819,9 @@ func syncHarnessBundle(ctx context.Context, config runtimeConfig, kindFilter str
 			}
 		}
 		printLines(stdout, result.Notes)
+		if !dryRun {
+			printLines(stdout, harnessSyncGuidance(h.Kind(), bundle.Audience.WorkspaceID, bundle.PolicySet, bundle.Connectors))
+		}
 	}
 	// HAI-431: after rendering, install the org skills the bundle permits
 	// into each harness's skill dir, read through kei-proxy. The permission
@@ -829,6 +832,80 @@ func syncHarnessBundle(ctx context.Context, config runtimeConfig, kindFilter str
 		fmt.Fprintf(stderr, "harness sync: skills not installed: %v (retry with kei skills install)\n", err)
 	}
 	return 0
+}
+
+// harnessSyncGuidance adds actionable setup steps to a successful sync. It
+// only reads bundle metadata for display; policy rendering and evaluation stay
+// in the harness renderer and runtime.
+func harnessSyncGuidance(kind, workspaceID string, policySet json.RawMessage, connectors []harness.BundleConnector) []string {
+	var decoded struct {
+		Policies []struct {
+			ID         string `json:"id"`
+			Name       string `json:"name"`
+			SrcPattern string `json:"src_pattern"`
+			DstPattern string `json:"dst_pattern"`
+			Enabled    bool   `json:"enabled"`
+		} `json:"policies"`
+	}
+	if len(policySet) > 0 && json.Unmarshal(policySet, &decoded) != nil {
+		return nil
+	}
+	type missingPolicy struct{ id, label string }
+	var missing []missingPolicy
+	for _, p := range decoded.Policies {
+		if !p.Enabled || !strings.HasPrefix(p.SrcPattern, "harness:") || p.SrcPattern == "harness:*" || p.SrcPattern == "harness:"+kind {
+			continue
+		}
+		label := p.Name
+		if label == "" {
+			label = p.DstPattern
+		}
+		missing = append(missing, missingPolicy{id: p.ID, label: fmt.Sprintf("%s (%s)", label, p.DstPattern)})
+	}
+	var mcp []string
+	for _, c := range connectors {
+		if c.Kind == "mcp" && c.Slug != "" {
+			mcp = append(mcp, c.Slug)
+		}
+	}
+	if len(missing) == 0 && kind != "codex" && len(mcp) == 0 {
+		return nil
+	}
+	var lines []string
+	n := 1
+	if len(missing) > 0 {
+		lines = append(lines, fmt.Sprintf("Next steps (%s):", harnessDisplayName(kind)))
+		for _, p := range missing {
+			lines = append(lines, fmt.Sprintf("  %d. Share %s with this harness: kei policies update %s --workspace %s --src-pattern harness:*", n, p.label, p.id, workspaceID))
+			n++
+		}
+	}
+	if kind == "codex" {
+		if len(lines) == 0 {
+			lines = append(lines, "Next steps (Codex):")
+		}
+		lines = append(lines, fmt.Sprintf("  %d. Open Codex and run /hooks to trust the Kei hooks.", n))
+		n++
+	}
+	for _, slug := range mcp {
+		if len(lines) == 0 {
+			lines = append(lines, "Next steps:")
+		}
+		lines = append(lines, fmt.Sprintf("  %d. If no manifest exists, ask %s: \"List tools from the %s MCP server\"; this first tools/list call creates a candidate manifest for admin review.", n, harnessDisplayName(kind), slug))
+		n++
+	}
+	return lines
+}
+
+func harnessDisplayName(kind string) string {
+	switch kind {
+	case "codex":
+		return "Codex"
+	case "opencode":
+		return "OpenCode"
+	default:
+		return kind
+	}
 }
 
 func printLines(out io.Writer, lines []string) {

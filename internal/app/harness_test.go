@@ -696,7 +696,7 @@ func TestHarnessSyncCodexWritesKeiRulesAndReportsUnenforceable(t *testing.T) {
 			_, _ = w.Write([]byte(`{"id":"runtime-id","org_id":"org-id","platform":"cli"}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v1","bundle_id":"b","bundle_version":1,"policy_revision":1,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harnesses":[],"policy_set":` + string(policySet) + `}`))
+		_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v1","bundle_id":"b","bundle_version":1,"policy_revision":1,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harnesses":[],"connectors":[{"slug":"linear","kind":"mcp","mcp_url":"https://mcp.example.com"}],"policy_set":` + string(policySet) + `}`))
 	}))
 	defer server.Close()
 	var stdout, stderr bytes.Buffer
@@ -721,16 +721,59 @@ func TestHarnessSyncCodexWritesKeiRulesAndReportsUnenforceable(t *testing.T) {
 		t.Fatalf("hooks.json = %q err=%v", hooks, err)
 	}
 	out := stdout.String()
+	var nextSteps []string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "Next steps") || strings.HasPrefix(line, "  1.") || strings.HasPrefix(line, "  2.") || strings.HasPrefix(line, "  3.") {
+			nextSteps = append(nextSteps, line)
+		}
+	}
+	wantNextSteps := []string{
+		"Next steps (Codex):",
+		"  1. Share claude-only curl (shell:curl) with this harness: kei policies update p-claude-only --workspace workspace-id --src-pattern harness:*",
+		"  2. Open Codex and run /hooks to trust the Kei hooks.",
+		"  3. If no manifest exists, ask Codex: \"List tools from the linear MCP server\"; this first tools/list call creates a candidate manifest for admin review.",
+	}
+	if strings.Join(nextSteps, "\n") != strings.Join(wantNextSteps, "\n") {
+		t.Errorf("next steps snapshot = %q, want %q", nextSteps, wantNextSteps)
+	}
 	for _, want := range []string{"not enforceable in Codex: deny web search", "not enforceable in Codex: allow kei-cli skill", "/hooks"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("stdout missing %q:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "claude-only curl") {
-		t.Errorf("stdout lists a policy scoped to another harness:\n%s", out)
+	if !strings.Contains(out, "claude-only curl (shell:curl)") {
+		t.Errorf("stdout does not identify the policy scoped to another harness:\n%s", out)
 	}
-	if want := "Codex: 1 policies scoped to another harness (e.g. harness:claude_code); widen src to harness:* to share them"; !strings.Contains(out, want) {
+	if want := "Codex: 1 policies scoped to another harness (e.g. harness:claude_code)"; !strings.Contains(out, want) {
 		t.Errorf("stdout missing %q:\n%s", want, out)
+	}
+	for _, want := range []string{
+		"kei policies update p-claude-only --workspace workspace-id --src-pattern harness:*",
+		"Open Codex and run /hooks to trust the Kei hooks",
+		"List tools from the linear MCP server",
+		"creates a candidate manifest",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout missing next step %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestHarnessSyncGuidanceNamesMissingPoliciesAndNextSteps(t *testing.T) {
+	policySet := `{"policies":[{"id":"p-linear","name":"Allow Linear search","src_pattern":"harness:claude_code","dst_pattern":"tool:linear.search","effect":"permit","enabled":true}]}`
+	guidance := harnessSyncGuidance("codex", "workspace-id", json.RawMessage(policySet), []harness.BundleConnector{{Slug: "linear", Kind: "mcp", MCPURL: "https://mcp.example.com"}})
+	got := strings.Join(guidance, "\n")
+	for _, want := range []string{
+		"Allow Linear search (tool:linear.search)",
+		"harness:*",
+		"kei policies update p-linear --workspace workspace-id --src-pattern harness:*",
+		"Open Codex and run /hooks",
+		"List tools from the linear MCP server",
+		"creates a candidate manifest",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("guidance missing %q:\n%s", want, got)
+		}
 	}
 }
 

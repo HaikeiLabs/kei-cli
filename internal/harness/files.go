@@ -189,7 +189,7 @@ func printRenderHints(out io.Writer, displayName string, r Rendered) {
 		fmt.Fprintf(out, "not enforceable in %s: %s\n", displayName, name)
 	}
 	if r.ScopedElsewhere > 0 {
-		fmt.Fprintf(out, "%s: %d policies scoped to another harness (e.g. %s); widen src to harness:* to share them\n", displayName, r.ScopedElsewhere, r.ScopedElsewhereExample)
+		fmt.Fprintf(out, "%s: %d policies scoped to another harness (e.g. %s)\n", displayName, r.ScopedElsewhere, r.ScopedElsewhereExample)
 	}
 	for _, name := range r.PermitsWithheld {
 		fmt.Fprintf(out, "not rendered in %s: %s (a higher-precedence user:/group: deny overlaps it; the harness will ask)\n", displayName, name)
