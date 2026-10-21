@@ -53,9 +53,11 @@ func runSetupCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, c
 
 	reader := bufio.NewReader(stdin)
 	if !provided["control-plane-url"] {
+		fmt.Fprint(stderr, "> Find your control-plane URL in the Kei console under Workspace settings.\n")
 		*controlPlaneURL = promptLine(reader, stdout, "Kei control-plane URL", *controlPlaneURL)
 	}
 	if *runtimeToken == "" {
+		fmt.Fprint(stderr, "> Generate a runtime installation token from the Kei console: Workspace > Runtime > Installation token.\n")
 		var promptErr error
 		*runtimeToken, promptErr = promptSecret(reader, stdin, stdout, "Runtime installation token: ")
 		if promptErr != nil {
@@ -64,9 +66,11 @@ func runSetupCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, c
 		}
 	}
 	if !provided["harness-url"] {
+		fmt.Fprint(stderr, "> The default harness URL is correct for a local setup.\n")
 		*harnessURL = promptLine(reader, stdout, "Local harness URL", *harnessURL)
 	}
 	if !provided["proxy-path"] && *proxyPath == "" {
+		fmt.Fprint(stderr, "> Specify the path to the kei-proxy binary, or leave blank to search PATH.\n")
 		*proxyPath = promptLine(reader, stdout, "kei-proxy path", "kei-proxy")
 	}
 

@@ -262,6 +262,10 @@ func runBotCommand(args []string, stdout, stderr io.Writer, client *http.Client,
 		fmt.Fprintln(stderr, "bot requires a subcommand")
 		return 2
 	}
+	if args[0] == "-h" || args[0] == "--help" {
+		fmt.Fprintln(stdout, "Usage: kei bot <command>\n\nCommands:\n  list        List runtime bots\n  init        Initialize a new bot\n  agents      Manage bot agents\n  status      Show bot status\n  delete      Delete a bot\n  credential  Manage bot credentials\n  bind        Bind a bot")
+		return 0
+	}
 	switch args[0] {
 	case "list":
 		return runBotListCommand(args[1:], stdout, stderr, client, store)

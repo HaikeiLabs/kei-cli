@@ -32,6 +32,10 @@ func runServiceCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 		fmt.Fprintln(stderr, "service requires a subcommand (install|uninstall|status)")
 		return 2
 	}
+	if args[0] == "-h" || args[0] == "--help" {
+		fmt.Fprintln(stdout, "Usage: kei service <command>\n\nCommands:\n  install   Install the runtime service\n  uninstall  Uninstall the runtime service\n  status    Show the runtime service status")
+		return 0
+	}
 	switch args[0] {
 	case "install":
 		return runServiceInstallCommand(args[1:], stdout, stderr, client, store)

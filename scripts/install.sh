@@ -76,6 +76,7 @@ USAGE
 # ---- Parse flags -----------------------------------------------------------
 VERSION="latest"
 INSTALL_DIR="/usr/local/bin"
+INSTALL_DIR_SPECIFIED=false
 TMP_DIR=""
 MODE="install"
 
@@ -95,6 +96,7 @@ while [ $# -gt 0 ]; do
         exit 2
       fi
       INSTALL_DIR="$2"
+      INSTALL_DIR_SPECIFIED=true
       shift 2
       ;;
     -t)
@@ -366,10 +368,19 @@ if [ "$MODE" = "install" ]; then
 
   mkdir -p "$INSTALL_DIR"
 
-  # Check that INSTALL_DIR is writable
+  # Check that INSTALL_DIR is writable; fall back to $HOME/.local/bin if
+  # the default directory is not writable and the user did not specify -d.
   if ! touch "$INSTALL_DIR/.kei-write-test" 2>/dev/null; then
-    echo "Permission denied writing to $INSTALL_DIR. Re-run with -d \"\$HOME/.local/bin\" or with sudo." >&2
-    exit 1
+    if [ "$INSTALL_DIR_SPECIFIED" = false ]; then
+      DEFAULT_INSTALL_DIR="$INSTALL_DIR"
+      INSTALL_DIR="$HOME/.local/bin"
+      mkdir -p "$INSTALL_DIR"
+      echo "Permission denied writing to $DEFAULT_INSTALL_DIR. Installing to $INSTALL_DIR instead." >&2
+      echo "Ensure $INSTALL_DIR is on your PATH." >&2
+    else
+      echo "Permission denied writing to $INSTALL_DIR. Re-run with sudo or choose a writable directory with -d." >&2
+      exit 1
+    fi
   fi
   rm -f "$INSTALL_DIR/.kei-write-test"
 
@@ -464,10 +475,19 @@ if [ "$MODE" = "proxy-only" ]; then
 
   mkdir -p "$INSTALL_DIR"
 
-  # Check that INSTALL_DIR is writable
+  # Check that INSTALL_DIR is writable; fall back to $HOME/.local/bin if
+  # the default directory is not writable and the user did not specify -d.
   if ! touch "$INSTALL_DIR/.kei-write-test" 2>/dev/null; then
-    echo "Permission denied writing to $INSTALL_DIR. Re-run with -d \"\$HOME/.local/bin\" or with sudo." >&2
-    exit 1
+    if [ "$INSTALL_DIR_SPECIFIED" = false ]; then
+      DEFAULT_INSTALL_DIR="$INSTALL_DIR"
+      INSTALL_DIR="$HOME/.local/bin"
+      mkdir -p "$INSTALL_DIR"
+      echo "Permission denied writing to $DEFAULT_INSTALL_DIR. Installing to $INSTALL_DIR instead." >&2
+      echo "Ensure $INSTALL_DIR is on your PATH." >&2
+    else
+      echo "Permission denied writing to $INSTALL_DIR. Re-run with sudo or choose a writable directory with -d." >&2
+      exit 1
+    fi
   fi
   rm -f "$INSTALL_DIR/.kei-write-test"
 

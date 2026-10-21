@@ -496,6 +496,34 @@ func TestHarnessExpiredBundleRemovesOnlyManagedAllows(t *testing.T) {
 	}
 }
 
+// HAI-810: after syncing a desktop harness (claude_code, codex, opencode),
+// print a note that it does not appear in 'kei harness list' and suggest
+// running kei doctor then restarting the agent session.
+func TestHarnessSyncDesktopPrintsHint(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	t.Setenv("OPENCODE_CONFIG", "")
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	server, _ := harnessSyncReportServer(t, testHarnessInstallationID, 0)
+	var stdout, stderr bytes.Buffer
+	code := syncHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "runtime-secret"}, "claude_code", false, false, &stdout, &stderr, server.Client(), harness.Default, harness.OSEnv(), time.Now)
+	if code != 0 {
+		t.Fatalf("sync exit=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Desktop harnesses are configured locally") {
+		t.Fatalf("stdout missing desktop hint: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "kei doctor") {
+		t.Fatalf("stdout missing kei doctor hint: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "restart your agent session") {
+		t.Fatalf("stdout missing restart hint: %q", stdout.String())
+	}
+}
+
 // When no OpenCode config exists, sync creates opencode.json in the resolved
 // XDG-aware config dir with the Kei-managed permission block.
 func TestHarnessSyncOpencodeCreatesConfigWhenMissing(t *testing.T) {
