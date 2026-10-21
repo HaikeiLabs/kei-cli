@@ -546,7 +546,8 @@ func login(ctx context.Context, apiURL, version string, stdout io.Writer, client
 		if orgID != "" {
 			orgName, err := getOrganizationName(ctx, client, baseURL, exch.AccessToken, orgID)
 			if err != nil {
-				// Fall back to today's line with the org ID.
+				// Fall back to the org ID and warn on stderr.
+				fmt.Fprintf(os.Stderr, "warning: could not fetch organization name: %v\n", err)
 				fmt.Fprintf(stdout, "Logged in to Kei for organization %s.\n", orgID)
 				return nil
 			}

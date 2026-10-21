@@ -49,8 +49,8 @@ func connectConsole(t *testing.T) (*httptest.Server, *memoryCredentialStore) {
 	t.Helper()
 	_, server, _ := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
 		switch r.Path {
-		case "/api/v1/organizations":
-			_, _ = w.Write([]byte(`[{"id":"org-1","name":"Acme Corp"}]`))
+		case "/api/v1/organizations/org-1":
+			_, _ = w.Write([]byte(`{"id":"org-1","name":"Acme Corp"}`))
 		case "/api/v1/organizations/org-1/workspaces":
 			_, _ = w.Write([]byte(`[{"id":"` + testWorkspaceID + `","name":"Main","is_default":true}]`))
 		default:
@@ -164,8 +164,8 @@ func TestConnectResolvesWorkspaceNameToID(t *testing.T) {
 	var initBody, credBody map[string]any
 	_, server, _ := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
 		switch {
-		case r.Path == "/api/v1/organizations":
-			_, _ = w.Write([]byte(`[{"id":"org-1","name":"Acme Corp"}]`))
+		case r.Path == "/api/v1/organizations/org-1":
+			_, _ = w.Write([]byte(`{"id":"org-1","name":"Acme Corp"}`))
 		case r.Path == "/api/v1/organizations/org-1/workspaces":
 			_, _ = w.Write([]byte(`[{"id":"` + testWorkspaceID + `","name":"Main","is_default":true}]`))
 		case r.Method == http.MethodPost && r.Path == "/api/v1/organizations/org-1/runtime-installations":
@@ -202,8 +202,8 @@ func TestConnectResolvesWorkspaceNameToID(t *testing.T) {
 func TestConnectUsesDefaultWorkspaceWithoutFlag(t *testing.T) {
 	_, server, _ := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
 		switch r.Path {
-		case "/api/v1/organizations":
-			_, _ = w.Write([]byte(`[{"id":"org-1","name":"Acme Corp"}]`))
+		case "/api/v1/organizations/org-1":
+			_, _ = w.Write([]byte(`{"id":"org-1","name":"Acme Corp"}`))
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.Path)
 			w.WriteHeader(http.StatusTeapot)
@@ -255,8 +255,8 @@ func TestConnectSetupRunsTheRealSetupPathAndVerifiesTheToken(t *testing.T) {
 	var whoamiAuth string
 	_, server, _ := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
 		switch {
-		case r.Path == "/api/v1/organizations":
-			_, _ = w.Write([]byte(`[{"id":"org-1","name":"Acme Corp"}]`))
+		case r.Path == "/api/v1/organizations/org-1":
+			_, _ = w.Write([]byte(`{"id":"org-1","name":"Acme Corp"}`))
 		case r.Path == "/api/v1/organizations/org-1/workspaces":
 			_, _ = w.Write([]byte(`[{"id":"` + testWorkspaceID + `","name":"Main","is_default":true}]`))
 		case r.Method == http.MethodPost && r.Path == "/api/v1/organizations/org-1/runtime-installations":
@@ -297,5 +297,79 @@ func TestConnectSetupRunsTheRealSetupPathAndVerifiesTheToken(t *testing.T) {
 	}
 	if config.RuntimeToken != "runtime-secret" {
 		t.Fatalf("config runtime token was not saved")
+	}
+}
+
+// TestConnectShowsOrgNameWhenListRoute401s verifies that even if the old list-all
+// orgs endpoint would 401, the single-org endpoint is used and the name is shown.
+func TestConnectShowsOrgNameWhenListRoute401s(t *testing.T) {
+	mux := http.NewServeMux()
+	// The old list-all endpoint is not on the console allowlist, so it 401s.
+	// The new code does not call this endpoint, but we register it to demonstrate
+	// it would not block the single-org lookup.
+	mux.HandleFunc("/api/v1/organizations", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	mux.HandleFunc("/api/v1/organizations/org-1", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"org-1","name":"Acme Corp"}`))
+	})
+	mux.HandleFunc("/api/v1/organizations/org-1/workspaces", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"id":"` + testWorkspaceID + `","name":"Main","is_default":true}]`))
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("KEI_WEB_URL", server.URL)
+	t.Setenv("KEI_WORKSPACE", "")
+	t.Setenv("KEI_WORKSPACE_ID", "")
+	store := &memoryCredentialStore{server: server.URL, token: testCLIToken}
+
+	var stdout, stderr bytes.Buffer
+	code := runConnectCommand([]string{"claude-code", "--workspace", "Main", "--yes"}, &stdout, &stderr, strings.NewReader(""), server.Client(), store, recordingConnectSteps(&[]string{}))
+	if code != 0 {
+		t.Fatalf("exit = %d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Acme Corp") {
+		t.Fatalf("stdout missing org name: %q", stdout.String())
+	}
+	// The old list endpoint is not called, so its 401 should never appear.
+	if strings.Contains(stderr.String(), "401") {
+		t.Fatalf("stderr should not mention the 401 from the list route (not called): %q", stderr.String())
+	}
+}
+
+// TestConnectFallsBackToOrgIDWhenOrgAPIFails verifies that when the single-org
+// endpoint fails, connect prints a warning to stderr and uses the org ID
+// instead of aborting.
+func TestConnectFallsBackToOrgIDWhenOrgAPIFails(t *testing.T) {
+	mux := http.NewServeMux()
+	// The single-org endpoint returns 401, simulating what happens when the
+	// endpoint is not reachable or returns an error.
+	mux.HandleFunc("/api/v1/organizations/org-1", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	mux.HandleFunc("/api/v1/organizations/org-1/workspaces", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"id":"` + testWorkspaceID + `","name":"Main","is_default":true}]`))
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("KEI_WEB_URL", server.URL)
+	t.Setenv("KEI_WORKSPACE", "")
+	t.Setenv("KEI_WORKSPACE_ID", "")
+	store := &memoryCredentialStore{server: server.URL, token: testCLIToken}
+
+	var stdout, stderr bytes.Buffer
+	code := runConnectCommand([]string{"claude-code", "--workspace", "Main", "--yes"}, &stdout, &stderr, strings.NewReader(""), server.Client(), store, recordingConnectSteps(&[]string{}))
+	if code != 0 {
+		t.Fatalf("exit = %d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "warning") {
+		t.Fatalf("expected a warning on stderr, got: %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "org-1") {
+		t.Fatalf("expected org ID fallback in stdout, got: %q", stdout.String())
 	}
 }

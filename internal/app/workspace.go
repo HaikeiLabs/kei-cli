@@ -232,34 +232,28 @@ func pickDefaultWorkspaceName(workspaces []workspaceInfo, err error) string {
 }
 
 func getOrganizationName(ctx context.Context, client *http.Client, baseURL, cliToken, orgID string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/v1/organizations", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/v1/organizations/"+orgID, nil)
 	if err != nil {
-		return "", fmt.Errorf("build organizations request: %w", err)
+		return "", fmt.Errorf("build organization request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+cliToken)
 	status, body, err := doRequest(client, req, 8<<10)
 	if err != nil {
-		return "", fmt.Errorf("list organizations: %w", err)
+		return "", fmt.Errorf("get organization: %w", err)
 	}
 	if status != http.StatusOK {
-		return "", fmt.Errorf("list organizations returned %d", status)
+		return "", fmt.Errorf("get organization returned %d", status)
 	}
-	var orgs []struct {
-		ID   string `json:"id"`
+	var org struct {
 		Name string `json:"name"`
 	}
-	if err := json.Unmarshal(body, &orgs); err != nil {
-		return "", fmt.Errorf("decode organizations response: %w", err)
+	if err := json.Unmarshal(body, &org); err != nil {
+		return "", fmt.Errorf("decode organization response: %w", err)
 	}
-	for _, o := range orgs {
-		if o.ID == orgID {
-			if o.Name == "" {
-				return "", fmt.Errorf("organization name is empty")
-			}
-			return o.Name, nil
-		}
+	if org.Name == "" {
+		return "", fmt.Errorf("organization name is empty")
 	}
-	return "", fmt.Errorf("organization %q not found in list", orgID)
+	return org.Name, nil
 }
 
 func listWorkspaces(ctx context.Context, client *http.Client, baseURL, cliToken string) ([]workspaceInfo, error) {

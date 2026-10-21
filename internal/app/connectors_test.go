@@ -60,9 +60,9 @@ func newFakeConsole(t *testing.T, respond func(w http.ResponseWriter, r consoleR
 			_, _ = w.Write([]byte(`[{"id":"` + testWorkspaceID + `","name":"Main"}]`))
 			return
 		}
-		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/organizations" {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/organizations/org-1" {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`[{"id":"org-1","name":"Acme Corp"}]`))
+			_, _ = w.Write([]byte(`{"id":"org-1","name":"Acme Corp"}`))
 			return
 		}
 		raw, _ := io.ReadAll(r.Body)

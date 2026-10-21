@@ -99,8 +99,8 @@ func runConnectCommand(args []string, stdout, stderr io.Writer, stdin io.Reader,
 	}
 	orgName, err := getOrganizationName(context.Background(), client, baseURL, cliToken, orgID)
 	if err != nil {
-		fmt.Fprintf(stderr, "connect: %v\n", err)
-		return 1
+		fmt.Fprintf(stderr, "connect: warning: could not fetch organization name: %v\n", err)
+		orgName = orgID
 	}
 	workspaces, err := listWorkspaces(context.Background(), client, baseURL, cliToken)
 	if err != nil {
