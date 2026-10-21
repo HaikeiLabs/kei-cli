@@ -143,7 +143,8 @@ func runConnectorsCreateFromTemplate(f templateCreateFlags, name string, ws work
 	}
 	orgName, err := getOrganizationName(context.Background(), client, session.baseURL, session.token, session.orgID)
 	if err != nil {
-		return fail(err)
+		fmt.Fprintf(stderr, "warning: could not fetch organization name: %v\n", err)
+		orgName = session.orgID
 	}
 	workspaceName := workspaceNameByID(context.Background(), client, session.baseURL, session.token, session.orgID, session.workspaceID)
 	_, err = resolveConnectorGroupIDs(session, allowGroups)

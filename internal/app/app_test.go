@@ -1363,11 +1363,11 @@ func TestLoginPrintsOrgNameAndWorkspaceName(t *testing.T) {
 		}
 		json.NewEncoder(w).Encode(deviceAuthorizationExchangeResponse{AccessToken: testCLIToken})
 	})
-	mux.HandleFunc("/api/v1/organizations", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/organizations/org-1", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			t.Fatalf("unexpected method %s on orgs endpoint", r.Method)
+			t.Fatalf("unexpected method %s on org endpoint", r.Method)
 		}
-		json.NewEncoder(w).Encode([]map[string]string{{"id": "org-1", "name": "Acme Corp"}})
+		json.NewEncoder(w).Encode(map[string]string{"id": "org-1", "name": "Acme Corp"})
 	})
 	mux.HandleFunc("/api/v1/organizations/org-1/workspaces", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -1423,11 +1423,11 @@ func TestLoginPrintsOrgNameOnlyWhenNoWorkspaces(t *testing.T) {
 		}
 		json.NewEncoder(w).Encode(deviceAuthorizationExchangeResponse{AccessToken: testCLIToken})
 	})
-	mux.HandleFunc("/api/v1/organizations", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/organizations/org-1", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			t.Fatalf("unexpected method %s on orgs endpoint", r.Method)
+			t.Fatalf("unexpected method %s on org endpoint", r.Method)
 		}
-		json.NewEncoder(w).Encode([]map[string]string{{"id": "org-1", "name": "Acme Corp"}})
+		json.NewEncoder(w).Encode(map[string]string{"id": "org-1", "name": "Acme Corp"})
 	})
 	mux.HandleFunc("/api/v1/organizations/org-1/workspaces", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode([]workspaceInfo{})
@@ -1472,11 +1472,11 @@ func TestLoginFallbackWhenOrgAPIFails(t *testing.T) {
 		}
 		json.NewEncoder(w).Encode(deviceAuthorizationExchangeResponse{AccessToken: testCLIToken})
 	})
-	// Org list returns empty — org not found, fallback to org ID.
-	mux.HandleFunc("/api/v1/organizations", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]map[string]string{})
+	// Org endpoint returns 401 (like the console proxy does when listing orgs),
+	// so getOrganizationName falls back to the org ID.
+	mux.HandleFunc("/api/v1/organizations/org-1", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
 	})
-	// No workspace handler, since we never get past org lookup.
 	server := httptest.NewServer(mux)
 	defer server.Close()
 

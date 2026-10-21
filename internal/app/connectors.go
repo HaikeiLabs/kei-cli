@@ -912,7 +912,8 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	}
 	orgName, err := getOrganizationName(context.Background(), client, baseURL, token, orgID)
 	if err != nil {
-		return fail(err)
+		fmt.Fprintf(stderr, "warning: could not fetch organization name: %v\n", err)
+		orgName = orgID
 	}
 	workspaceName := workspaceNameByID(context.Background(), client, baseURL, token, orgID, workspaceID)
 	fmt.Fprintf(stdout, "Organization: %s\nWorkspace: %s\n", orgName, workspaceName)
