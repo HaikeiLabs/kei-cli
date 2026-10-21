@@ -17,7 +17,6 @@ import (
 
 	"github.com/HaikeiLabs/kei-cli/internal/harness"
 	"github.com/google/uuid"
-	"golang.org/x/term"
 )
 
 type policy struct {
@@ -828,7 +827,7 @@ func runPoliciesImport(args []string, stdout, stderr io.Writer, stdin io.Reader,
 	importNames := registry.ImportNames()
 	from := flags.String("from", "", "harness to import from: "+harness.JoinOr(importNames))
 	file := flags.String("file", "", "override the source file or directory")
-	src := flags.String("src", "", "source pattern (default: harness:<kind>; harness:* shares the rules with every harness)")
+	src := flags.String("src", "", "source pattern: harness:<kind> (only that harness) or harness:* (every harness)")
 	out := flags.String("out", "", "write the proposed policy-set JSON to this file")
 	apply := flags.Bool("apply", false, "create the imported policies (default: dry run)")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
@@ -844,14 +843,15 @@ func runPoliciesImport(args []string, stdout, stderr io.Writer, stdin io.Reader,
 		fmt.Fprintf(stderr, "policies import: --from must be %s\n", harness.JoinOr(importNames))
 		return 2
 	}
+	if *src == "" {
+		fmt.Fprintln(stderr, "policies import requires --src harness:<kind> (only that harness) or harness:* (every harness)")
+		return 2
+	}
 	ws, ok := requirePoliciesWorkspace("import", *workspace, stderr)
 	if !ok {
 		return 2
 	}
 	srcPattern := *src
-	if srcPattern == "" {
-		srcPattern = "harness:" + source.Kind()
-	}
 	policies, err := importPolicies(source, *file, srcPattern, stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "policies import: %v\n", err)
@@ -862,16 +862,6 @@ func runPoliciesImport(args []string, stdout, stderr io.Writer, stdin io.Reader,
 		return 0
 	}
 	reader := bufio.NewReader(stdin)
-	if *src == "" && *apply && stdinIsInteractive(stdin) {
-		fmt.Fprintf(stdout, "Imported rules default to src %s (only that harness). Apply to all harnesses? [y/N] ", srcPattern)
-		line, _ := reader.ReadString('\n')
-		if answer := strings.TrimSpace(strings.ToLower(line)); answer == "y" || answer == "yes" {
-			srcPattern = "harness:*"
-			for i := range policies {
-				policies[i].SrcPattern = srcPattern
-			}
-		}
-	}
 	printImportScope(stdout, srcPattern)
 	if *out != "" {
 		encoded, err := json.MarshalIndent(policies, "", "  ")
@@ -924,12 +914,6 @@ func runPoliciesImport(args []string, stdout, stderr io.Writer, stdin io.Reader,
 	}
 	fmt.Fprintf(stdout, "Created %d policies.\n", created)
 	return 0
-}
-
-// stdinIsInteractive reports whether stdin is a terminal; tests replace it.
-var stdinIsInteractive = func(stdin io.Reader) bool {
-	file, ok := stdin.(*os.File)
-	return ok && term.IsTerminal(int(file.Fd()))
 }
 
 // printImportScope states which harnesses the imported policies will apply to.

@@ -3,7 +3,6 @@ package app
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -597,7 +596,7 @@ const testdataDir = "testdata"
 func TestPoliciesImportCodexRealFixture(t *testing.T) {
 	fake, server, store := newFakeConsole(t, failOnRequest(t))
 	code, stdout, stderr := runPolicies(t, server, store, "", "import", "--from", "codex",
-		"--file", filepath.Join(testdataDir, "codex-default.rules"), "--workspace", "Main")
+		"--file", filepath.Join(testdataDir, "codex-default.rules"), "--workspace", "Main", "--src", "harness:codex")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -624,7 +623,7 @@ func TestPoliciesImportCodexRealFixture(t *testing.T) {
 func TestPoliciesImportOpenCodeRealFixture(t *testing.T) {
 	fake, server, store := newFakeConsole(t, failOnRequest(t))
 	code, stdout, stderr := runPolicies(t, server, store, "", "import", "--from", "opencode",
-		"--file", filepath.Join(testdataDir, "opencode-permission.json"), "--workspace", "Main")
+		"--file", filepath.Join(testdataDir, "opencode-permission.json"), "--workspace", "Main", "--src", "harness:opencode")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -648,7 +647,7 @@ func TestPoliciesImportOpenCodeRealFixture(t *testing.T) {
 func TestPoliciesImportClaudeRealFixture(t *testing.T) {
 	fake, server, store := newFakeConsole(t, failOnRequest(t))
 	code, stdout, stderr := runPolicies(t, server, store, "", "import", "--from", "claude",
-		"--file", filepath.Join(testdataDir, "claude-automode.json"), "--workspace", "Main")
+		"--file", filepath.Join(testdataDir, "claude-automode.json"), "--workspace", "Main", "--src", "harness:claude_code")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -685,7 +684,7 @@ func TestPoliciesImportOutFlag(t *testing.T) {
 	outFile := filepath.Join(t.TempDir(), "policies.json")
 	fake, server, store := newFakeConsole(t, failOnRequest(t))
 	code, stdout, stderr := runPolicies(t, server, store, "", "import", "--from", "codex",
-		"--file", filepath.Join(testdataDir, "codex-default.rules"), "--workspace", "Main", "--out", outFile)
+		"--file", filepath.Join(testdataDir, "codex-default.rules"), "--workspace", "Main", "--out", outFile, "--src", "harness:codex")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -754,7 +753,7 @@ func TestPoliciesImportApplyCreatesPolicies(t *testing.T) {
 		w.WriteHeader(http.StatusTeapot)
 	})
 	code, stdout, stderr := runPolicies(t, server, store, "y\n", "import", "--from", "claude",
-		"--file", filepath.Join(testdataDir, "claude-automode.json"), "--workspace", "Main", "--apply")
+		"--file", filepath.Join(testdataDir, "claude-automode.json"), "--workspace", "Main", "--apply", "--src", "harness:claude_code")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -772,7 +771,7 @@ func TestPoliciesImportApplyDeclined(t *testing.T) {
 		w.WriteHeader(http.StatusTeapot)
 	})
 	code, stdout, stderr := runPolicies(t, server, store, "n\n", "import", "--from", "claude",
-		"--file", filepath.Join(testdataDir, "claude-automode.json"), "--workspace", "Main", "--apply")
+		"--file", filepath.Join(testdataDir, "claude-automode.json"), "--workspace", "Main", "--apply", "--src", "harness:claude_code")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -781,6 +780,14 @@ func TestPoliciesImportApplyDeclined(t *testing.T) {
 	}
 	if fake.count() != 0 {
 		t.Fatalf("requests = %d, want 0 (no API calls on decline)", fake.count())
+	}
+}
+
+func TestPoliciesImportRequiresSrc(t *testing.T) {
+	fake, server, store := newFakeConsole(t, failOnRequest(t))
+	code, _, stderr := runPolicies(t, server, store, "", "import", "--from", "codex", "--workspace", "Main")
+	if code != 2 || !strings.Contains(stderr, "--src") || fake.count() != 0 {
+		t.Fatalf("exit = %d stderr=%q requests=%d", code, stderr, fake.count())
 	}
 }
 
@@ -803,7 +810,7 @@ func TestPoliciesImportUnknownHarness(t *testing.T) {
 func TestPoliciesImportMissingFile(t *testing.T) {
 	fake, server, store := newFakeConsole(t, failOnRequest(t))
 	code, _, stderr := runPolicies(t, server, store, "", "import", "--from", "codex",
-		"--file", "/nonexistent/path.rules", "--workspace", "Main")
+		"--file", "/nonexistent/path.rules", "--workspace", "Main", "--src", "harness:codex")
 	if code != 1 || !strings.Contains(stderr, "not found") || fake.count() != 0 {
 		t.Fatalf("exit = %d stderr=%q requests=%d", code, stderr, fake.count())
 	}
@@ -898,7 +905,7 @@ func TestPoliciesSurfacesAPIError(t *testing.T) {
 func TestPoliciesImportPrintsDefaultScope(t *testing.T) {
 	fake, server, store := newFakeConsole(t, failOnRequest(t))
 	code, stdout, stderr := runPolicies(t, server, store, "", "import", "--from", "codex",
-		"--file", filepath.Join(testdataDir, "codex-default.rules"), "--workspace", "Main")
+		"--file", filepath.Join(testdataDir, "codex-default.rules"), "--workspace", "Main", "--src", "harness:codex")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -926,74 +933,5 @@ func TestPoliciesImportSrcHarnessStarSharesRules(t *testing.T) {
 	}
 	if fake.count() != 0 {
 		t.Fatal("dry run made API calls")
-	}
-}
-
-// importApplyCapturingSrc runs an interactive --apply import of the Claude
-// fixture with the given stdin and returns stdout and each created src.
-func importApplyCapturingSrc(t *testing.T, stdin string, interactive bool, extra ...string) (string, []string) {
-	t.Helper()
-	previous := stdinIsInteractive
-	stdinIsInteractive = func(io.Reader) bool { return interactive }
-	t.Cleanup(func() { stdinIsInteractive = previous })
-	var srcs []string
-	_, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		if r.Method == http.MethodPost && r.Path == "/api/v1/policies" {
-			src, _ := r.Body["src_pattern"].(string)
-			srcs = append(srcs, src)
-			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","name":"p","effect":"permit","src_pattern":"` + src + `","dst_pattern":"shell:git","approval_required":false}`))
-			return
-		}
-		t.Errorf("unexpected request %s %s", r.Method, r.Path)
-		w.WriteHeader(http.StatusTeapot)
-	})
-	args := append([]string{"import", "--from", "claude", "--file", filepath.Join(testdataDir, "claude-automode.json"), "--workspace", "Main", "--apply"}, extra...)
-	code, stdout, stderr := runPolicies(t, server, store, stdin, args...)
-	if code != 0 {
-		t.Fatalf("exit = %d stderr=%s", code, stderr)
-	}
-	return stdout, srcs
-}
-
-func TestPoliciesImportInteractiveApplyToAllHarnesses(t *testing.T) {
-	stdout, srcs := importApplyCapturingSrc(t, "y\ny\n", true)
-	if !strings.Contains(stdout, "Apply to all harnesses? [y/N]") {
-		t.Fatalf("missing scope prompt:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "Scope: src harness:* (shared with every harness)") {
-		t.Fatalf("missing shared scope line:\n%s", stdout)
-	}
-	if len(srcs) != 2 || srcs[0] != "harness:*" || srcs[1] != "harness:*" {
-		t.Fatalf("created srcs = %q, want harness:*", srcs)
-	}
-}
-
-func TestPoliciesImportInteractiveKeepsDefaultScope(t *testing.T) {
-	stdout, srcs := importApplyCapturingSrc(t, "n\ny\n", true)
-	if !strings.Contains(stdout, "Apply to all harnesses? [y/N]") {
-		t.Fatalf("missing scope prompt:\n%s", stdout)
-	}
-	if len(srcs) != 2 || srcs[0] != "harness:claude_code" || srcs[1] != "harness:claude_code" {
-		t.Fatalf("created srcs = %q, want harness:claude_code", srcs)
-	}
-}
-
-func TestPoliciesImportScopePromptSkipped(t *testing.T) {
-	// Non-interactive stdin keeps the default without asking.
-	stdout, srcs := importApplyCapturingSrc(t, "y\n", false)
-	if strings.Contains(stdout, "Apply to all harnesses") {
-		t.Fatalf("prompted on non-interactive stdin:\n%s", stdout)
-	}
-	if len(srcs) != 2 || srcs[0] != "harness:claude_code" {
-		t.Fatalf("created srcs = %q, want harness:claude_code", srcs)
-	}
-	// An explicit --src is the answer; no prompt.
-	stdout, srcs = importApplyCapturingSrc(t, "y\n", true, "--src", "harness:*")
-	if strings.Contains(stdout, "Apply to all harnesses") {
-		t.Fatalf("prompted despite explicit --src:\n%s", stdout)
-	}
-	if len(srcs) != 2 || srcs[0] != "harness:*" {
-		t.Fatalf("created srcs = %q, want harness:*", srcs)
 	}
 }

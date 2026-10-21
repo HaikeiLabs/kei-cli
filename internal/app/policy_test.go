@@ -411,7 +411,7 @@ func TestPoliciesImportPartialFailure(t *testing.T) {
 		w.WriteHeader(http.StatusTeapot)
 	})
 	code, stdout, stderr := runPolicies(t, server, store, "y\ny\n", "import", "--from", "claude",
-		"--file", filepath.Join(testdataDir, "claude-automode.json"), "--workspace", "Main", "--apply")
+		"--file", filepath.Join(testdataDir, "claude-automode.json"), "--workspace", "Main", "--apply", "--src", "harness:claude_code")
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1 (partial failure); stdout=%q stderr=%q", code, stdout, stderr)
 	}
