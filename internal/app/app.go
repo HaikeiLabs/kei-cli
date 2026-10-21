@@ -184,6 +184,8 @@ func Main(version, command string, args []string, stdout, stderr io.Writer, stdi
 		return runPoliciesCommand(args, stdout, stderr, stdin, newClient(30*time.Second), osKeychainStore{})
 	case "harness":
 		return runHarnessCommand(args, stdout, stderr, newClient(30*time.Second), osKeychainStore{})
+	case "access":
+		return runAccessCommand(args, stdout, stderr, stdin, newClient(30*time.Second), osKeychainStore{})
 	case "skills":
 		return runSkillsCommand(args, stdout, stderr, newClient(30*time.Second))
 	case "audit":
@@ -209,7 +211,7 @@ func Main(version, command string, args []string, stdout, stderr io.Writer, stdi
 
 func PrintUsage(w io.Writer) {
 	fmt.Fprintln(w, "Kei CLI")
-	fmt.Fprintln(w, "\nUsage:\n  kei setup [--config PATH] [--control-plane-url URL] [--runtime-token TOKEN]\n  kei connect HARNESS [--workspace NAME] [--yes] (one-command harness setup)\n  kei runtime bootstrap [--config PATH] [--proxy-path PATH]\n  kei login [--no-browser] [--install-skills]\n  kei logout\n  kei upgrade [--version VERSION]\n  kei bot list [--json] [--all]\n  kei bot init --platform cli|teams|discord|slack|whatsapp|openwebui --name NAME [--agent ID] [--workspace WORKSPACE]\n  kei bot credential --installation ID --workspace WORKSPACE [--rotate]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default]\n  kei bot status --installation ID\n  kei bot delete --installation ID --yes\n  kei workspaces list [--json] | create --name NAME [--json] [--yes]\n  kei users list [--json] | get USER [--json] | create --email EMAIL [--name NAME] [--yes] | update USER [--email EMAIL] [--name NAME] [--yes] | resolve --email EMAIL [--json]\n  kei users identities list USER [--json]\n  kei users remote-identities list USER [--json]\n  kei groups list --workspace WORKSPACE [--json] | create --name NAME --workspace WORKSPACE [--description TEXT] [--json] [--yes]\n  kei groups members list GROUP [--workspace WORKSPACE] [--json] | add GROUP USER [--workspace WORKSPACE] [--yes] | remove GROUP USER [--workspace WORKSPACE] [--yes]\n  kei connectors create --workspace WORKSPACE [--allow-group GROUP]... [--capabilities A,B] [--yes] | test NAME [--workspace WORKSPACE] | list|get|connect|reconnect|delete --workspace WORKSPACE\n  kei connectors manifests list|show CONNECTOR_ID [MANIFEST_ID] --workspace WORKSPACE [--json] | approve CONNECTOR_ID MANIFEST_ID --workspace WORKSPACE [--yes] (alias: tools)\n  kei policy list|get|create|delete|test --workspace WORKSPACE (get/delete accept ID or name; create: --group GROUP --allow|--deny TARGET; test: --as WHO TARGET)\n  kei policies list|get|create|update|delete|import --workspace WORKSPACE (deprecated alias: use kei policy)\n  kei model-profiles list [--workspace WORKSPACE] [--json]\n  kei model-profiles get|create|update|delete|set-default [--workspace WORKSPACE] (PROFILE is an ID or name; API keys are read from stdin)\n  kei model-profiles assign PROFILE --workspace WORKSPACE --agent AGENT_ID\n  kei model-profiles unassign|assignment --workspace WORKSPACE --agent AGENT_ID\n  kei model-profiles readiness PROFILE --workspace WORKSPACE\n  kei model-profiles test --endpoint URL | test PROFILE [--workspace WORKSPACE] (validates the endpoint like the console; no provider call)\n  kei credential-store get|put|update\n  kei directory-sync get [--json] | set [--tenant-id G] [--client-id G] [--app-id G|--group-id G] [--dry-run=true|false] [--create-users=true|false] [--revoke=true|false] [--yes] | enable|disable [--yes] | report [--limit N] [--json]\n  kei --version")
+	fmt.Fprintln(w, "\nUsage:\n  kei setup [--config PATH] [--control-plane-url URL] [--runtime-token TOKEN]\n  kei connect HARNESS [--workspace NAME] [--yes] (one-command harness setup)\n  kei runtime bootstrap [--config PATH] [--proxy-path PATH]\n  kei login [--no-browser] [--install-skills]\n  kei logout\n  kei upgrade [--version VERSION]\n  kei bot list [--json] [--all]\n  kei bot init --platform cli|teams|discord|slack|whatsapp|openwebui --name NAME [--agent ID] [--workspace WORKSPACE]\n  kei bot credential --installation ID --workspace WORKSPACE [--rotate]\n  kei bot agents list|add|remove --installation ID [--agent ID] [--default]\n  kei bot status --installation ID\n  kei bot delete --installation ID --yes\n  kei workspaces list [--json] | create --name NAME [--json] [--yes]\n  kei users list [--json] | get USER [--json] | create --email EMAIL [--name NAME] [--yes] | update USER [--email EMAIL] [--name NAME] [--yes] | resolve --email EMAIL [--json]\n  kei users identities list USER [--json]\n  kei users remote-identities list USER [--json]\n  kei groups list --workspace WORKSPACE [--json] | create --name NAME --workspace WORKSPACE [--description TEXT] [--json] [--yes]\n  kei groups members list GROUP [--workspace WORKSPACE] [--json] | add GROUP USER [--workspace WORKSPACE] [--yes] | remove GROUP USER [--workspace WORKSPACE] [--yes]\n  kei connectors create --workspace WORKSPACE [--allow-group GROUP]... [--capabilities A,B] [--yes] | test NAME [--workspace WORKSPACE] | list|get|connect|reconnect|delete --workspace WORKSPACE\n  kei connectors manifests list|show CONNECTOR_ID [MANIFEST_ID] --workspace WORKSPACE [--json] | approve CONNECTOR_ID MANIFEST_ID --workspace WORKSPACE [--yes] (alias: tools)\n  kei access grant create --principal PRINCIPAL --target TARGET --ttl DURATION [--reason TEXT] [--workspace WORKSPACE] [--json]\n  kei access grant list [--workspace WORKSPACE] [--json]\n  kei access grant get GRANT_ID [--workspace WORKSPACE] [--json]\n  kei access grant revoke GRANT_ID --workspace WORKSPACE --yes\n  kei policy list|get|create|delete|test --workspace WORKSPACE (get/delete accept ID or name; create: --group GROUP --allow|--deny TARGET; test: --as WHO TARGET)\n  kei policies list|get|create|update|delete|import --workspace WORKSPACE (deprecated alias: use kei policy)\n  kei model-profiles list [--workspace WORKSPACE] [--json]\n  kei model-profiles get|create|update|delete|set-default [--workspace WORKSPACE] (PROFILE is an ID or name; API keys are read from stdin)\n  kei model-profiles assign PROFILE --workspace WORKSPACE --agent AGENT_ID\n  kei model-profiles unassign|assignment --workspace WORKSPACE --agent AGENT_ID\n  kei model-profiles readiness PROFILE --workspace WORKSPACE\n  kei model-profiles test --endpoint URL | test PROFILE [--workspace WORKSPACE] (validates the endpoint like the console; no provider call)\n  kei credential-store get|put|update\n  kei directory-sync get [--json] | set [--tenant-id G] [--client-id G] [--app-id G|--group-id G] [--dry-run=true|false] [--create-users=true|false] [--revoke=true|false] [--yes] | enable|disable [--yes] | report [--limit N] [--json]\n  kei --version")
 	fmt.Fprintln(w, "  kei audit keys create [--identity-out PATH] [--name NAME] [--force]")
 	fmt.Fprintln(w, "  kei audit keys list")
 	fmt.Fprintln(w, "  kei audit keys disable KEY")
@@ -295,6 +297,26 @@ func runBotCommand(args []string, stdout, stderr io.Writer, client *http.Client,
 		return runBotBindCommand(rest, stdout, stderr, client, store)
 	default:
 		// dispatch already validated the subcommand, so this is unreachable.
+		panic("unexpected subcommand: " + sub)
+	}
+}
+
+var accessGroup = commandGroup{
+	name: "access",
+	commands: []groupCommand{
+		{name: "grant", summary: "Manage time-bound access grants"},
+	},
+}
+
+func runAccessCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
+	sub, rest, code, handled := accessGroup.dispatch(args, stdout, stderr)
+	if handled {
+		return code
+	}
+	switch sub {
+	case "grant":
+		return runAccessGrantCommand(rest, stdout, stderr, stdin, client, store)
+	default:
 		panic("unexpected subcommand: " + sub)
 	}
 }

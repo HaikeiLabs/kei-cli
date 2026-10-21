@@ -415,6 +415,18 @@ same workspace; otherwise the server returns 400 with the reason. This needs a
 catalog with HAI-513 deployed. Older catalogs reject `agent_id` with 400
 "invalid request body".
 
+## Grant time-bound access
+
+Standing access belongs on groups. For a just-in-time grant to one user or
+agent, use `kei access grant`; the server caps the lifetime (7 days by default).
+
+```sh
+kei access grant create --workspace Main --principal user:USER_ID --target connector:linear --ttl 4h --reason 'incident 123'
+kei access grant list --workspace Main
+kei access grant get GRANT_ID --workspace Main
+kei access grant revoke GRANT_ID --workspace Main --yes
+```
+
 ## Sync your Entra directory
 
 An organization admin can have Kei sync the organization's groups and members
