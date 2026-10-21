@@ -591,6 +591,7 @@ func runPolicyTest(args []string, stdout, stderr io.Writer, client *http.Client,
 	flags.SetOutput(stderr)
 	workspace := policiesWorkspaceFlag(flags)
 	as := flags.String("as", "", "subject to evaluate (e.g. group:Engineering)")
+	jsonOutput := flags.Bool("json", false, "output as JSON")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -620,18 +621,33 @@ func runPolicyTest(args []string, stdout, stderr io.Writer, client *http.Client,
 		return 1
 	}
 	var result struct {
-		Decision  string `json:"decision"`
-		DecidedBy string `json:"decided_by"`
+		Decision   string  `json:"decision"`
+		DecidedBy  string  `json:"decided_by"`
+		ReasonCode *string `json:"reason_code"`
+		Hint       *string `json:"hint"`
 	}
 	if err := json.Unmarshal(payload, &result); err != nil {
 		fmt.Fprintf(stderr, "policy test: decode response: %v\n", err)
 		return 1
+	}
+	if *jsonOutput {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(result)
+		return 0
 	}
 	fmt.Fprintf(stdout, "Decision: %s\n", result.Decision)
 	if result.DecidedBy == "" {
 		fmt.Fprintln(stdout, "Deciding rule: (none)")
 	} else {
 		fmt.Fprintf(stdout, "Deciding rule: %s\n", result.DecidedBy)
+	}
+	if result.ReasonCode != nil && *result.ReasonCode != "" {
+		fmt.Fprintf(stdout, "Reason code: %s\n", *result.ReasonCode)
+	}
+	if result.Hint != nil && *result.Hint != "" {
+		fmt.Fprintln(stdout, "Hint:")
+		fmt.Fprintln(stdout, *result.Hint)
 	}
 	return 0
 }

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/google/uuid"
@@ -39,6 +40,7 @@ var groupsGroup = commandGroup{
 	commands: []groupCommand{
 		{name: "list", summary: "List groups"},
 		{name: "create", summary: "Create a group"},
+		{name: "delete", summary: "Delete a group"},
 		{name: "members", summary: "Manage group members"},
 	},
 }
@@ -53,6 +55,8 @@ func runGroupsCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, 
 		return runGroupsList(rest, stdout, stderr, client, store)
 	case "create":
 		return runGroupsCreate(rest, stdout, stderr, stdin, client, store)
+	case "delete":
+		return runGroupsDelete(rest, stdout, stderr, stdin, client, store)
 	case "members":
 		return runGroupsMembersCommand(rest, stdout, stderr, stdin, client, store)
 	default:
@@ -160,6 +164,121 @@ func runGroupsCreate(args []string, stdout, stderr io.Writer, stdin io.Reader, c
 	}
 	fmt.Fprintf(stdout, "Created group %s.\nGroup ID: %s\n", created.Name, created.ID)
 	return 0
+}
+
+func runGroupsDelete(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
+	flags := flag.NewFlagSet("groups delete", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	workspace := flags.String("workspace", "", "workspace name or ID (required)")
+	yes := flags.Bool("yes", false, "confirm without prompting")
+	force := flags.Bool("force", false, "delete even if policies reference the group")
+	pos, err := parsePositionals(flags, args, 1)
+	if err != nil {
+		fmt.Fprintln(stderr, "groups delete requires a group name or ID and --workspace WORKSPACE")
+		return 2
+	}
+	group := pos[0]
+	if !*yes {
+		fmt.Fprintln(stderr, "groups delete deletes the group and all its memberships; pass --yes to confirm")
+		return 2
+	}
+	session, ok := openAPISession("groups delete", stderr, client, store)
+	if !ok {
+		return 1
+	}
+	workspaceID, ok := resolveGroupsWorkspace("delete", *workspace, session, stderr, true)
+	if !ok {
+		return 1
+	}
+	// Resolve the group name or ID to a group ID and group name.
+	groupID, groupName, err := resolveGroupByNameOrID(session, workspaceID, group)
+	if err != nil {
+		fmt.Fprintf(stderr, "groups delete: %v\n", err)
+		return 1
+	}
+	// Check for policies that reference this group, unless --force.
+	if !*force && groupName != "" {
+		refs, err := findPoliciesReferencingGroup(session, workspaceID, groupName)
+		if err != nil {
+			fmt.Fprintf(stderr, "groups delete: %v\n", err)
+			return 1
+		}
+		if len(refs) > 0 {
+			fmt.Fprintf(stderr, "groups delete: %d policy(s) reference group %q; use --force to delete anyway\n", len(refs), groupName)
+			for _, p := range refs {
+				fmt.Fprintf(stderr, "  %s (%s -> %s)\n", p.Name, p.SrcPattern, p.DstPattern)
+			}
+			return 1
+		}
+	}
+	_, _, err = session.do(http.MethodDelete, "/api/v1/groups/"+url.PathEscape(groupID), groupsQuery(session, workspaceID), nil)
+	if err != nil {
+		fmt.Fprintf(stderr, "groups delete: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "Group %s deleted.\n", groupID)
+	return 0
+}
+
+// resolveGroupByNameOrID resolves the given group argument to a group ID and
+// name. If the argument is a valid UUID it is used as-is and the group's name
+// is looked up; otherwise it is treated as a name and resolved to an ID.
+func resolveGroupByNameOrID(session *apiSession, workspaceID, group string) (id, name string, err error) {
+	if _, parseErr := uuid.Parse(group); parseErr == nil {
+		// The argument is a UUID; look up the group name.
+		id = group
+		_, payload, lookupErr := session.do(http.MethodGet, "/api/v1/groups", groupsQuery(session, workspaceID), nil)
+		if lookupErr != nil {
+			return "", "", lookupErr
+		}
+		var groups []catalogGroup
+		if decodeErr := json.Unmarshal(payload, &groups); decodeErr != nil {
+			return "", "", decodeErr
+		}
+		for _, g := range groups {
+			if g.ID == group {
+				return id, g.Name, nil
+			}
+		}
+		return id, "", nil // name empty means we couldn't find it
+	}
+	// Treat the argument as a name; resolve to an ID.
+	_, payload, lookupErr := session.do(http.MethodGet, "/api/v1/groups", groupsQuery(session, workspaceID), nil)
+	if lookupErr != nil {
+		return "", "", lookupErr
+	}
+	var groups []catalogGroup
+	if decodeErr := json.Unmarshal(payload, &groups); decodeErr != nil {
+		return "", "", decodeErr
+	}
+	for _, g := range groups {
+		if g.Name == group {
+			return g.ID, g.Name, nil
+		}
+	}
+	return "", "", fmt.Errorf("group %q not found", group)
+}
+
+// findPoliciesReferencingGroup lists policies in the workspace and returns
+// those whose src_pattern matches "group:<name>".
+func findPoliciesReferencingGroup(session *apiSession, workspaceID, groupName string) ([]policy, error) {
+	query := url.Values{"workspace_id": {workspaceID}, "page_size": {"100"}}
+	_, payload, err := session.do(http.MethodGet, "/api/v1/policies", query, nil)
+	if err != nil {
+		return nil, err
+	}
+	page, err := decodePoliciesPage(payload)
+	if err != nil {
+		return nil, err
+	}
+	want := "group:" + groupName
+	var refs []policy
+	for _, p := range page.Policies {
+		if strings.HasPrefix(p.SrcPattern, want) {
+			refs = append(refs, p)
+		}
+	}
+	return refs, nil
 }
 
 var groupsMembersGroup = commandGroup{
