@@ -307,3 +307,66 @@ func TestClaudeSyncWarnsOnOldOrUnknownVersion(t *testing.T) {
 		})
 	}
 }
+
+func TestClaudeCLAUDE_CONFIG_DIR(t *testing.T) {
+	// Create a directory structure to serve as CLAUDE_CONFIG_DIR.
+	claudeHome := t.TempDir()
+	if err := os.MkdirAll(claudeHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	// Set CLAUDE_CONFIG_DIR to override the default ~/.claude. The HOME
+	// variable is set to a DIFFERENT directory to prove the override works.
+	otherHome := t.TempDir()
+	env := claudeEnv(otherHome, "2.1.200 (Claude Code)")
+	env.Getenv = func(key string) string {
+		if key == "CLAUDE_CONFIG_DIR" {
+			return claudeHome
+		}
+		return ""
+	}
+
+	var c claudeCode
+
+	// Detect should find the CLAUDE_CONFIG_DIR directory, not ~/otherHome/.claude.
+	if !c.Detect(env) {
+		t.Fatal("Detect returned false with CLAUDE_CONFIG_DIR set to a valid directory")
+	}
+	// Without CLAUDE_CONFIG_DIR, Detect should fail (no .claude under otherHome).
+	envNoOverride := claudeEnv(otherHome, "2.1.200 (Claude Code)")
+	if c.Detect(envNoOverride) {
+		t.Fatal("Detect should be false without CLAUDE_CONFIG_DIR when ~/.claude does not exist")
+	}
+
+	// Targets should return paths under CLAUDE_CONFIG_DIR.
+	targets, err := c.Targets(env)
+	if err != nil {
+		t.Fatalf("Targets error: %v", err)
+	}
+	if len(targets) != 1 {
+		t.Fatalf("Targets: want 1 file, got %d", len(targets))
+	}
+	wantSettings := filepath.Join(claudeHome, "settings.json")
+	if targets[0].Path != wantSettings {
+		t.Errorf("Targets[0].Path = %q, want %q", targets[0].Path, wantSettings)
+	}
+
+	// SkillDirs should use CLAUDE_CONFIG_DIR.
+	skillDirs := c.SkillDirs(env)
+	if len(skillDirs) != 1 || skillDirs[0] != filepath.Join(claudeHome, "skills") {
+		t.Fatalf("SkillDirs = %v, want [%s]", skillDirs, filepath.Join(claudeHome, "skills"))
+	}
+
+	// HookSpec should use CLAUDE_CONFIG_DIR.
+	hs := c.HookSpec(env)
+	if hs == nil {
+		t.Fatal("HookSpec returned nil")
+	}
+	if _, ok := hs.Files[filepath.Join(claudeHome, "settings.json")]; !ok {
+		t.Fatal("HookSpec files missing settings.json under CLAUDE_CONFIG_DIR")
+	}
+	// HookSpec must NOT contain the default ~/.claude path.
+	if _, ok := hs.Files[filepath.Join(otherHome, ".claude", "settings.json")]; ok {
+		t.Fatal("HookSpec must not contain the default path under HOME/.claude")
+	}
+}

@@ -205,6 +205,89 @@ func TestCodexHookSpecProducesGroupedShape(t *testing.T) {
 	}
 }
 
+// HAI-825: CODEX_HOME overrides the default ~/.codex directory for all codex
+// harness methods (Detect, Targets, SkillDirs, HookSpec, ImportRules,
+// mcpConfigPath, and Apply).
+func TestCodexCODEX_HOME(t *testing.T) {
+	// Create a directory structure to serve as CODEX_HOME.
+	codexHome := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(codexHome, "rules"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rulesContent := "# comment\nprefix_rule(pattern=[\"git\", \"status\"], decision=\"allow\")\n"
+	rulesFile := filepath.Join(codexHome, "rules", "kei.rules")
+	if err := os.WriteFile(rulesFile, []byte(rulesContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Set CODEX_HOME to override the default ~/.codex. The HOME variable is
+	// set to a DIFFERENT directory to prove the override works.
+	otherHome := t.TempDir()
+	env := hermeticEnv(otherHome, map[string]string{"CODEX_HOME": codexHome})
+
+	var c codex
+
+	// Detect should find the CODEX_HOME directory, not ~/otherHome/.codex.
+	if !c.Detect(env) {
+		t.Fatal("Detect returned false with CODEX_HOME set to a valid directory")
+	}
+	// Without CODEX_HOME, Detect should fail (no .codex under otherHome).
+	envNoOverride := hermeticEnv(otherHome, nil)
+	if c.Detect(envNoOverride) {
+		t.Fatal("Detect should be false without CODEX_HOME when ~/.codex does not exist")
+	}
+
+	// Targets should return paths under CODEX_HOME.
+	targets, err := c.Targets(env)
+	if err != nil {
+		t.Fatalf("Targets error: %v", err)
+	}
+	if len(targets) != 2 {
+		t.Fatalf("Targets: want 2 files, got %d", len(targets))
+	}
+	wantRules := filepath.Join(codexHome, "rules", "kei.rules")
+	wantHooks := filepath.Join(codexHome, "hooks.json")
+	if targets[0].Path != wantRules {
+		t.Errorf("Targets[0].Path = %q, want %q", targets[0].Path, wantRules)
+	}
+	if targets[1].Path != wantHooks {
+		t.Errorf("Targets[1].Path = %q, want %q", targets[1].Path, wantHooks)
+	}
+
+	// SkillDirs should use CODEX_HOME.
+	skillDirs := c.SkillDirs(env)
+	if len(skillDirs) != 1 || skillDirs[0] != filepath.Join(codexHome, "skills") {
+		t.Fatalf("SkillDirs = %v, want [%s]", skillDirs, filepath.Join(codexHome, "skills"))
+	}
+
+	// HookSpec should use CODEX_HOME.
+	hs := c.HookSpec(env)
+	if hs == nil {
+		t.Fatal("HookSpec returned nil")
+	}
+	if _, ok := hs.Files[filepath.Join(codexHome, "hooks.json")]; !ok {
+		t.Fatal("HookSpec files missing hooks.json under CODEX_HOME")
+	}
+	// HookSpec must NOT contain the default ~/.codex path.
+	if _, ok := hs.Files[filepath.Join(otherHome, ".codex", "hooks.json")]; ok {
+		t.Fatal("HookSpec must not contain the default path under HOME/.codex")
+	}
+
+	// mcpConfigPath should use CODEX_HOME.
+	if got := c.mcpConfigPath(env); got != filepath.Join(codexHome, "config.toml") {
+		t.Fatalf("mcpConfigPath = %q, want %q", got, filepath.Join(codexHome, "config.toml"))
+	}
+
+	// ImportRules should read from CODEX_HOME rules directory when path is empty.
+	rules, err := c.ImportRules(env, "")
+	if err != nil {
+		t.Fatalf("ImportRules error: %v", err)
+	}
+	if len(rules) != 1 || rules[0].Name != "codex-git-status" {
+		t.Fatalf("ImportRules = %+v, want [%+v]", rules, Rule{Name: "codex-git-status"})
+	}
+}
+
 // HAI-467: re-sync over an existing flat-format Kei entry plus a third-party
 // SessionStart group replaces the flat entry with the grouped shape and
 // preserves the non-Kei group.

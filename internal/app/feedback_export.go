@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/HaikeiLabs/kei-cli/internal/harnesspaths"
 )
 
 // TranscriptDeps holds the injectable dependencies used by the transcript
@@ -23,6 +25,9 @@ type TranscriptDeps struct {
 	HomeDir  string
 	Cwd      string
 	CacheDir string
+	// Getenv resolves an environment variable for harness config directories
+	// (CODEX_HOME, CLAUDE_CONFIG_DIR). Nil returns empty.
+	Getenv func(string) string
 	// RunCmd executes a harness command and returns its stdout.
 	RunCmd func(ctx context.Context, name string, args ...string) ([]byte, error)
 	// ReadFile reads a transcript file. The export path is the only place a
@@ -69,7 +74,8 @@ func encodeClaudeProjectDir(dir string) string {
 }
 
 func (l claudeTranscriptLocator) Locate(ctx context.Context, sessionID string) (string, error) {
-	projectDir := filepath.Join(l.deps.HomeDir, ".claude", "projects", encodeClaudeProjectDir(l.deps.Cwd))
+	claudeHome := harnesspaths.ClaudeDir(l.deps.Getenv, l.deps.HomeDir)
+	projectDir := filepath.Join(claudeHome, "projects", encodeClaudeProjectDir(l.deps.Cwd))
 	if sessionID != "" {
 		path := filepath.Join(projectDir, sessionID+".jsonl")
 		if !fileExists(path) {
@@ -118,7 +124,8 @@ type codexTranscriptLocator struct {
 func (codexTranscriptLocator) Kind() string { return "codex" }
 
 func (l codexTranscriptLocator) Locate(ctx context.Context, sessionID string) (string, error) {
-	sessionsDir := filepath.Join(l.deps.HomeDir, ".codex", "sessions")
+	codexHome := harnesspaths.CodexDir(l.deps.Getenv, l.deps.HomeDir)
+	sessionsDir := filepath.Join(codexHome, "sessions")
 	var candidates []string
 	walkErr := filepath.WalkDir(sessionsDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -490,6 +497,7 @@ var feedbackTranscriptDeps = func() *TranscriptDeps {
 		HomeDir:  home,
 		Cwd:      cwd,
 		CacheDir: filepath.Join(cache, "kei", "feedback"),
+		Getenv:   os.Getenv,
 		RunCmd:   execFeedbackCommand,
 		ReadFile: os.ReadFile,
 	}
