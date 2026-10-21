@@ -269,7 +269,7 @@ func listWorkspaces(ctx context.Context, client *http.Client, baseURL, cliToken 
 		return nil, fmt.Errorf("list workspaces: %w", err)
 	}
 	if statusCode != http.StatusOK {
-		return nil, fmt.Errorf("list workspaces returned %d", statusCode)
+		return nil, withCLIUpgradeHint(client, fmt.Errorf("list workspaces returned %d", statusCode))
 	}
 	var list []workspaceInfo
 	if err := json.Unmarshal(body, &list); err != nil {
@@ -342,6 +342,38 @@ func resolveWorkspaceSelection(ctx context.Context, client *http.Client, baseURL
 		return "", err
 	}
 	return ws.ID, nil
+}
+
+func resolveScopedWorkspace(ctx context.Context, client *http.Client, baseURL, cliToken string, sel workspaceSelection) (string, error) {
+	workspaces, err := listWorkspaces(ctx, client, baseURL, cliToken)
+	if err != nil {
+		return "", err
+	}
+	choices := make([]string, 0, len(workspaces))
+	for _, ws := range workspaces {
+		choices = append(choices, fmt.Sprintf("%s (%s)", ws.Name, ws.ID))
+	}
+	if sel.pickDefault || sel.value == "" {
+		return "", fmt.Errorf("workspace is required; available workspaces: %s", strings.Join(choices, ", "))
+	}
+	for _, ws := range workspaces {
+		if ws.ID == sel.value {
+			return ws.ID, nil
+		}
+	}
+	var match *workspaceInfo
+	for i := range workspaces {
+		if workspaces[i].Name == sel.value {
+			if match != nil {
+				return "", fmt.Errorf("multiple workspaces match name %q; available workspaces: %s", sel.value, strings.Join(choices, ", "))
+			}
+			match = &workspaces[i]
+		}
+	}
+	if match != nil {
+		return match.ID, nil
+	}
+	return "", fmt.Errorf("workspace %q not found; available workspaces: %s", sel.value, strings.Join(choices, ", "))
 }
 
 func resolveWorkspaceID(ctx context.Context, client *http.Client, baseURL, cliToken, workspace string) (string, error) {
