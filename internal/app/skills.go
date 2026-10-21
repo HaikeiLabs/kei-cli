@@ -38,8 +38,25 @@ func installOrgSkills(ctx context.Context, config runtimeConfig, bundle harness.
 		}
 		return nil
 	}
+	// HAI-723 / ADR-039: render the skills source from the connector's
+	// repo_url so the harness reads skills directly from the repository.
+	if repo := skillsRepoURL(bundle); repo != "" {
+		fmt.Fprintf(stdout, "skills install: rendering skills source from %s (the harness reads skills directly from the repository)\n", repo)
+		return nil
+	}
 	fmt.Fprintln(stderr, "skills install: the bundle does not carry the skills_repo connector's repo_url; skills are not installed (HAI-723). The harness reads skills directly from the repository.")
 	return nil
+}
+
+// skillsRepoURL returns the repo_url of the bundle's skills_repo connector,
+// or "" when the catalog has not served one yet.
+func skillsRepoURL(bundle harness.Bundle) string {
+	for _, c := range bundle.Connectors {
+		if c.Kind == "skills_repo" && c.RepoURL != "" {
+			return c.RepoURL
+		}
+	}
+	return ""
 }
 
 // skillsUsage is the one dispatch line for the `kei skills` subcommands.
