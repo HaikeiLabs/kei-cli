@@ -159,12 +159,8 @@ func TestModelProfilesGetByIDAndName(t *testing.T) {
 	assertRequest(t, requests[1], http.MethodGet, wsProfilesPath+"/"+testProfileID)
 }
 
-func TestModelProfilesCreateNoAuth(t *testing.T) {
+func TestModelProfilesCreateNoAuthWithoutCredentialStore(t *testing.T) {
 	fake, store := newProfileConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		if r.Path == recipientsPath {
-			_, _ = w.Write([]byte(`{"credential_store_installation_id":"` + testStoreID + `","recipients":[]}`))
-			return
-		}
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(testProfileJSON))
 	})
@@ -174,16 +170,12 @@ func TestModelProfilesCreateNoAuth(t *testing.T) {
 		t.Fatalf("create exit = %d, stderr=%s", code, stderr.String())
 	}
 	requests := fake.all()
-	if len(requests) != 2 {
+	if len(requests) != 1 {
 		t.Fatalf("requests = %#v", requests)
 	}
-	assertRequest(t, requests[0], http.MethodGet, recipientsPath)
-	if requests[0].Query != "" {
-		t.Fatalf("org-level recipients query = %q, want none", requests[0].Query)
-	}
-	assertRequest(t, requests[1], http.MethodPost, orgProfilesPath)
-	body := requests[1].Body
-	if body["credential_store_installation_id"] != testStoreID || body["auth_type"] != "none" || body["default_model"] != "gpt-x" || body["display_name"] != "primary" {
+	assertRequest(t, requests[0], http.MethodPost, orgProfilesPath)
+	body := requests[0].Body
+	if _, hasStore := body["credential_store_installation_id"]; hasStore || body["auth_type"] != "none" || body["default_model"] != "gpt-x" || body["display_name"] != "primary" {
 		t.Fatalf("create body = %#v", body)
 	}
 	if _, ok := body["recipients"]; ok {
