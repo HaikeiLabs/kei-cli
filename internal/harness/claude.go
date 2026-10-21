@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/HaikeiLabs/kei-cli/internal/harnesspaths"
 )
 
 // claudeCode renders into ~/.claude/settings.json: permissions.allow/deny
@@ -34,15 +36,21 @@ func (claudeCode) Kind() string        { return claudeSyntax.kind }
 func (claudeCode) ImportName() string  { return "claude" }
 func (claudeCode) displayName() string { return "Claude Code" }
 
+// claudeDir returns the claude config directory: $CLAUDE_CONFIG_DIR when set,
+// otherwise ~/.claude. This lets users relocate the .claude directory (HAI-825).
+func claudeDir(env Env) string {
+	return harnesspaths.ClaudeDir(env.getenv, env.Home)
+}
+
 func (claudeCode) Detect(env Env) bool {
 	if _, err := env.home(); err != nil {
 		return false
 	}
-	return dirExists(filepath.Join(env.Home, ".claude"))
+	return dirExists(claudeDir(env))
 }
 
 func claudeSettingsPath(env Env) string {
-	return filepath.Join(env.Home, ".claude", "settings.json")
+	return filepath.Join(claudeDir(env), "settings.json")
 }
 
 func (claudeCode) Targets(env Env) ([]Target, error) {
@@ -186,7 +194,7 @@ func (claudeCode) SkillDirs(env Env) []string {
 	if _, err := env.home(); err != nil {
 		return nil
 	}
-	return []string{filepath.Join(env.Home, ".claude", "skills")}
+	return []string{filepath.Join(claudeDir(env), "skills")}
 }
 
 func (claudeCode) HookSpec(env Env) *HookSpec {
@@ -228,7 +236,7 @@ func (claudeCode) HookSpec(env Env) *HookSpec {
 }
 
 func (claudeCode) renderFile(path string, cfg []byte, r Rendered) ([]byte, []string, []string, error) {
-	if !strings.HasSuffix(path, filepath.Join(".claude", "settings.json")) {
+	if !strings.HasSuffix(path, filepath.Join("settings.json")) {
 		return cfg, nil, nil, nil
 	}
 	out, err := mergeClaudePermissions(cfg, r.Allows, r.Denies)
@@ -239,7 +247,7 @@ func (claudeCode) renderFile(path string, cfg []byte, r Rendered) ([]byte, []str
 }
 
 func (claudeCode) missingEntries(path string, cfg []byte, allows, denies []string) ([]string, []string) {
-	if !strings.HasSuffix(path, filepath.Join(".claude", "settings.json")) {
+	if !strings.HasSuffix(path, filepath.Join("settings.json")) {
 		return nil, nil
 	}
 	return filterAbsent(claudePresent(cfg, "allow"), allows), filterAbsent(claudePresent(cfg, "deny"), denies)

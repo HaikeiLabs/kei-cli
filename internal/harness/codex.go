@@ -10,11 +10,19 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/HaikeiLabs/kei-cli/internal/harnesspaths"
 )
 
 // codex renders into the Kei-owned ~/.codex/rules/kei.rules (argv prefix
 // rules; the user's default.rules is never touched) and ~/.codex/hooks.json.
 type codex struct{}
+
+// codexDir returns the codex config directory: $CODEX_HOME when set, otherwise
+// ~/.codex. This lets users relocate the .codex directory (HAI-825).
+func codexDir(env Env) string {
+	return harnesspaths.CodexDir(env.getenv, env.Home)
+}
 
 var codexSyntax = nativeSyntax{
 	kind:       "codex",
@@ -31,14 +39,15 @@ func (codex) Detect(env Env) bool {
 	if _, err := env.home(); err != nil {
 		return false
 	}
-	return dirExists(filepath.Join(env.Home, ".codex"))
+	return dirExists(codexDir(env))
 }
 
 func (codex) Targets(env Env) ([]Target, error) {
 	if _, err := env.home(); err != nil {
 		return nil, err
 	}
-	return fileTargets(filepath.Join(env.Home, ".codex", "rules", "kei.rules"), filepath.Join(env.Home, ".codex", "hooks.json")), nil
+	dir := codexDir(env)
+	return fileTargets(filepath.Join(dir, "rules", "kei.rules"), filepath.Join(dir, "hooks.json")), nil
 }
 
 func (codex) Render(b Bundle) (Rendered, error) { return render(codexSyntax, "", b) }
@@ -49,12 +58,13 @@ func (c codex) Apply(_ context.Context, r Rendered, opts ApplyOpts) (Result, err
 		return Result{}, err
 	}
 	if _, err := opts.Env.home(); err == nil {
-		config, _ := os.ReadFile(filepath.Join(opts.Env.Home, ".codex", "config.toml"))
+		codexHome := codexDir(opts.Env)
+		config, _ := os.ReadFile(filepath.Join(codexHome, "config.toml"))
 		if codexNonPrompting(config) {
 			result.Warnings = append(result.Warnings, nonPromptingWarning(c.Kind()))
 		}
 		if !opts.DryRun {
-			hooksPath := filepath.Join(opts.Env.Home, ".codex", "hooks.json")
+			hooksPath := filepath.Join(codexHome, "hooks.json")
 			hooks, _ := os.ReadFile(hooksPath)
 			if untrusted := codexUntrustedKeiHooks(hooksPath, hooks, config); len(untrusted) > 0 {
 				result.Warnings = append(result.Warnings, fmt.Sprintf("Codex skips untrusted hooks, and the Kei hooks for %s are not trusted yet.", strings.Join(untrusted, ", ")))
@@ -82,7 +92,7 @@ func (codex) SkillDirs(env Env) []string {
 	if _, err := env.home(); err != nil {
 		return nil
 	}
-	return []string{filepath.Join(env.Home, ".codex", "skills")}
+	return []string{filepath.Join(codexDir(env), "skills")}
 }
 
 func (codex) HookSpec(env Env) *HookSpec {
@@ -103,7 +113,7 @@ func (codex) HookSpec(env Env) *HookSpec {
 		events[event.name] = []any{group}
 	}
 	spec := mustJSON(map[string]any{"hooks": events})
-	return &HookSpec{Files: map[string][]byte{filepath.Join(env.Home, ".codex", "hooks.json"): spec}}
+	return &HookSpec{Files: map[string][]byte{filepath.Join(codexDir(env), "hooks.json"): spec}}
 }
 
 // codexHookEvents are the Codex hook events Kei reports, each with the label
@@ -217,7 +227,7 @@ func tomlKey(s string) (string, string, bool) {
 }
 
 func (codex) renderFile(path string, cfg []byte, r Rendered) ([]byte, []string, []string, error) {
-	if !strings.HasSuffix(path, filepath.Join(".codex", "rules", "kei.rules")) {
+	if !strings.HasSuffix(path, filepath.Join("rules", "kei.rules")) {
 		return cfg, nil, nil, nil
 	}
 	// kei.rules is Kei-owned and always rendered whole, even with no rules,
@@ -234,7 +244,7 @@ func (codex) renderFile(path string, cfg []byte, r Rendered) ([]byte, []string, 
 }
 
 func (codex) missingEntries(path string, cfg []byte, allows, denies []string) ([]string, []string) {
-	if !strings.HasSuffix(path, filepath.Join(".codex", "rules", "kei.rules")) {
+	if !strings.HasSuffix(path, filepath.Join("rules", "kei.rules")) {
 		return nil, nil
 	}
 	lines := strings.Split(string(cfg), "\n")
@@ -290,7 +300,7 @@ func (c codex) mergeHook(cfg, spec []byte) ([]byte, error) {
 }
 
 func (codex) ownsFile(path string) bool {
-	return strings.HasSuffix(path, filepath.Join(".codex", "rules", "kei.rules"))
+	return strings.HasSuffix(path, filepath.Join("rules", "kei.rules"))
 }
 
 // codexArgv returns the argv prefix a Codex prefix_rule can express for dst.
@@ -381,7 +391,7 @@ func (codex) ImportRules(env Env, path string) ([]Rule, error) {
 		return nil, fmt.Errorf("resolve home directory: %w", err)
 	}
 	if path == "" {
-		path = filepath.Join(env.Home, ".codex", "rules")
+		path = filepath.Join(codexDir(env), "rules")
 	}
 	var files []string
 	info, err := os.Stat(path)
@@ -476,7 +486,7 @@ func parseCodexLine(line string) (Rule, bool) {
 // mcpConfigPath is Codex's config.toml, whose [mcp_servers.<name>] tables are
 // its MCP servers.
 func (codex) mcpConfigPath(env Env) string {
-	return filepath.Join(env.Home, ".codex", "config.toml")
+	return filepath.Join(codexDir(env), "config.toml")
 }
 
 // codexMCPMarker marks a server table Kei renders.

@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -251,6 +252,78 @@ func TestPolicyTestDeny(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "(none)") {
 		t.Errorf("stdout missing the no-matching-rule marker:\n%s", stdout)
+	}
+	_ = fake
+}
+
+func TestPolicyTestWithReasonAndHint(t *testing.T) {
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		_, _ = w.Write([]byte(`{"decision":"deny","decided_by":"` + testPolicyID + `","reason_code":"restricted_tool","hint":"This tool is restricted to the Engineering group."}`))
+	})
+	code, stdout, stderr := runPolicy(t, server, store, "", "test", "--workspace", "Main",
+		"--as", "user:bob", "shell:git")
+	if code != 0 {
+		t.Fatalf("exit = %d stderr=%s", code, stderr)
+	}
+	if !strings.Contains(stdout, "deny") {
+		t.Errorf("stdout missing decision 'deny':\n%s", stdout)
+	}
+	if !strings.Contains(stdout, testPolicyID) {
+		t.Errorf("stdout missing decided_by:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "restricted_tool") {
+		t.Errorf("stdout missing reason_code:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "restricted to the Engineering") {
+		t.Errorf("stdout missing hint:\n%s", stdout)
+	}
+	_ = fake
+}
+
+func TestPolicyTestJSONWithReasonAndHint(t *testing.T) {
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		_, _ = w.Write([]byte(`{"decision":"deny","decided_by":"` + testPolicyID + `","reason_code":"restricted_tool","hint":"This tool is restricted to the Engineering group."}`))
+	})
+	code, stdout, stderr := runPolicy(t, server, store, "", "test", "--workspace", "Main",
+		"--as", "user:bob", "--json", "shell:git")
+	if code != 0 {
+		t.Fatalf("exit = %d stderr=%s", code, stderr)
+	}
+	var result struct {
+		Decision   string  `json:"decision"`
+		DecidedBy  string  `json:"decided_by"`
+		ReasonCode *string `json:"reason_code"`
+		Hint       *string `json:"hint"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if result.Decision != "deny" || result.DecidedBy != testPolicyID {
+		t.Errorf("decision fields: %+v", result)
+	}
+	if result.ReasonCode == nil || *result.ReasonCode != "restricted_tool" {
+		t.Errorf("reason_code: %v", result.ReasonCode)
+	}
+	if result.Hint == nil || *result.Hint != "This tool is restricted to the Engineering group." {
+		t.Errorf("hint: %v", result.Hint)
+	}
+	_ = fake
+}
+
+func TestPolicyTestNoReasonOrHint(t *testing.T) {
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		_, _ = w.Write([]byte(`{"decision":"permit","decided_by":"` + testPolicyID + `"}`))
+	})
+	code, stdout, stderr := runPolicy(t, server, store, "", "test", "--workspace", "Main",
+		"--as", "user:alice", "shell:git")
+	if code != 0 {
+		t.Fatalf("exit = %d stderr=%s", code, stderr)
+	}
+	if strings.Contains(stdout, "Reason code:") {
+		t.Errorf("stdout should not contain Reason code when absent:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "Hint:") {
+		t.Errorf("stdout should not contain Hint when absent:\n%s", stdout)
 	}
 	_ = fake
 }

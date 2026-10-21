@@ -176,6 +176,125 @@ func TestGroupsList(t *testing.T) {
 	}
 }
 
+func TestGroupsDeleteRequiresYes(t *testing.T) {
+	hit := false
+	_, store := newUsersGroupsServer(t, func(w http.ResponseWriter, r *http.Request) { hit = true })
+	var stdout, stderr bytes.Buffer
+	if code := runGroupsCommand([]string{"delete", testGroupID, "--workspace", "Main"}, &stdout, &stderr, strings.NewReader(""), http.DefaultClient, store); code != 2 {
+		t.Fatalf("delete exit = %d, want 2, stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "--yes") {
+		t.Fatalf("stderr = %s, should mention --yes", stderr.String())
+	}
+	if hit {
+		t.Fatal("request was made despite missing --yes")
+	}
+}
+
+func TestGroupsDeleteByIDNoPolicies(t *testing.T) {
+	server, store := newUsersGroupsServer(t, func(w http.ResponseWriter, r *http.Request) {
+		requireBearer(t, r)
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/groups":
+			_, _ = w.Write([]byte(testGroupsJSON()))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/policies":
+			_, _ = w.Write([]byte(`{"policies":[],"next_page_token":""}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/groups/"+testGroupID:
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	})
+	var stdout, stderr bytes.Buffer
+	if code := runGroupsCommand([]string{"delete", testGroupID, "--workspace", "Main", "--yes"}, &stdout, &stderr, strings.NewReader(""), server.Client(), store); code != 0 {
+		t.Fatalf("delete exit = %d, stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "deleted") {
+		t.Fatalf("delete output = %s", stdout.String())
+	}
+}
+
+func TestGroupsDeleteByNameNoPolicies(t *testing.T) {
+	server, store := newUsersGroupsServer(t, func(w http.ResponseWriter, r *http.Request) {
+		requireBearer(t, r)
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/groups":
+			_, _ = w.Write([]byte(testGroupsJSON()))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/policies":
+			_, _ = w.Write([]byte(`{"policies":[],"next_page_token":""}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/groups/"+testGroupID:
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	})
+	var stdout, stderr bytes.Buffer
+	if code := runGroupsCommand([]string{"delete", "engineers", "--workspace", "Main", "--yes"}, &stdout, &stderr, strings.NewReader(""), server.Client(), store); code != 0 {
+		t.Fatalf("delete exit = %d, stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "deleted") {
+		t.Fatalf("delete output = %s", stdout.String())
+	}
+}
+
+func TestGroupsDeleteRefusesWithPolicyReferences(t *testing.T) {
+	server, store := newUsersGroupsServer(t, func(w http.ResponseWriter, r *http.Request) {
+		requireBearer(t, r)
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/groups":
+			_, _ = w.Write([]byte(testGroupsJSON()))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/policies":
+			_, _ = w.Write([]byte(`{"policies":[{"id":"` + testPolicyID + `","name":"allow-policy","src_pattern":"group:engineers","dst_pattern":"shell:git","effect":"permit","priority":100,"enabled":true,"approval_required":false}],"next_page_token":""}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	})
+	var stdout, stderr bytes.Buffer
+	if code := runGroupsCommand([]string{"delete", "engineers", "--workspace", "Main", "--yes"}, &stdout, &stderr, strings.NewReader(""), server.Client(), store); code != 1 {
+		t.Fatalf("delete exit = %d, want 1, stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "policy(s) reference") {
+		t.Fatalf("stderr should mention policy reference: %s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "--force") {
+		t.Fatalf("stderr should mention --force: %s", stderr.String())
+	}
+}
+
+func TestGroupsDeleteForceOverridesPolicyReferences(t *testing.T) {
+	server, store := newUsersGroupsServer(t, func(w http.ResponseWriter, r *http.Request) {
+		requireBearer(t, r)
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/groups":
+			_, _ = w.Write([]byte(testGroupsJSON()))
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/groups/"+testGroupID:
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	})
+	var stdout, stderr bytes.Buffer
+	if code := runGroupsCommand([]string{"delete", testGroupID, "--workspace", "Main", "--yes", "--force"}, &stdout, &stderr, strings.NewReader(""), server.Client(), store); code != 0 {
+		t.Fatalf("delete exit = %d, stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "deleted") {
+		t.Fatalf("delete output = %s", stdout.String())
+	}
+}
+
+func TestGroupsDeleteByNameNotFound(t *testing.T) {
+	_, store := newUsersGroupsServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(testGroupsJSON()))
+	})
+	var stdout, stderr bytes.Buffer
+	if code := runGroupsCommand([]string{"delete", "nonexistent", "--workspace", "Main", "--yes"}, &stdout, &stderr, strings.NewReader(""), http.DefaultClient, store); code != 1 {
+		t.Fatalf("delete exit = %d, want 1, stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "not found") {
+		t.Fatalf("stderr should mention not found: %s", stderr.String())
+	}
+}
+
 func TestGroupsListRequiresWorkspace(t *testing.T) {
 	hit := false
 	_, store := newUsersGroupsServer(t, func(w http.ResponseWriter, r *http.Request) { hit = true })
