@@ -730,3 +730,132 @@ func TestRuntimeTokenLeakWarning(t *testing.T) {
 		}
 	}
 }
+
+func TestCodexTranscriptLocatorCODEX_HOME(t *testing.T) {
+	// Create a codex sessions dir under a custom CODEX_HOME.
+	codexHome := t.TempDir()
+	sessionsDir := filepath.Join(codexHome, "sessions")
+	if err := os.MkdirAll(sessionsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sessionContent := `{"cwd":"/home/test/project","id":"sess-001"}` + "\n"
+	if err := os.WriteFile(filepath.Join(sessionsDir, "rollout-001.jsonl"), []byte(sessionContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// HOME is set to a DIFFERENT directory to prove the override works.
+	otherHome := t.TempDir()
+
+	deps := &TranscriptDeps{
+		HomeDir: otherHome,
+		Cwd:     "/home/test/project",
+		Getenv: func(key string) string {
+			if key == "CODEX_HOME" {
+				return codexHome
+			}
+			return ""
+		},
+	}
+	loc := mustLocator(t, "codex", deps)
+	path, err := loc.Locate(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Locate error: %v", err)
+	}
+	want := filepath.Join(codexHome, "sessions", "rollout-001.jsonl")
+	if path != want {
+		t.Fatalf("Locate = %q, want %q", path, want)
+	}
+}
+
+func TestClaudeTranscriptLocatorCLAUDE_CONFIG_DIR(t *testing.T) {
+	// Create a claude session under a custom CLAUDE_CONFIG_DIR.
+	claudeHome := t.TempDir()
+	cwd := "/home/test/project"
+	projectDir := filepath.Join(claudeHome, "projects", encodeClaudeProjectDir(cwd))
+	if err := os.MkdirAll(projectDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "sess.jsonl"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// HOME is set to a DIFFERENT directory to prove the override works.
+	otherHome := t.TempDir()
+
+	deps := &TranscriptDeps{
+		HomeDir: otherHome,
+		Cwd:     cwd,
+		Getenv: func(key string) string {
+			if key == "CLAUDE_CONFIG_DIR" {
+				return claudeHome
+			}
+			return ""
+		},
+	}
+	loc := mustLocator(t, "claude", deps)
+	path, err := loc.Locate(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Locate error: %v", err)
+	}
+	want := filepath.Join(claudeHome, "projects", encodeClaudeProjectDir(cwd), "sess.jsonl")
+	if path != want {
+		t.Fatalf("Locate = %q, want %q", path, want)
+	}
+}
+
+func TestClaudeTranscriptLocatorNoConfigDirUsesDefault(t *testing.T) {
+	// Without CLAUDE_CONFIG_DIR, the locator should look under
+	// deps.HomeDir/.claude.
+	home := t.TempDir()
+	cwd := "/home/test/project"
+	projectDir := filepath.Join(home, ".claude", "projects", encodeClaudeProjectDir(cwd))
+	if err := os.MkdirAll(projectDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "sess.jsonl"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := &TranscriptDeps{
+		HomeDir: home,
+		Cwd:     cwd,
+		Getenv:  nil, // No env override; should default to ~/.claude
+	}
+	loc := mustLocator(t, "claude", deps)
+	path, err := loc.Locate(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Locate error: %v", err)
+	}
+	want := filepath.Join(home, ".claude", "projects", encodeClaudeProjectDir(cwd), "sess.jsonl")
+	if path != want {
+		t.Fatalf("Locate = %q, want %q", path, want)
+	}
+}
+
+func TestCodexTranscriptLocatorNoCodexHomeUsesDefault(t *testing.T) {
+	// Without CODEX_HOME, the locator should look under deps.HomeDir/.codex.
+	home := t.TempDir()
+	sessionsDir := filepath.Join(home, ".codex", "sessions")
+	if err := os.MkdirAll(sessionsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sessionContent := `{"cwd":"/home/test/project","id":"sess-001"}` + "\n"
+	if err := os.WriteFile(filepath.Join(sessionsDir, "rollout-001.jsonl"), []byte(sessionContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := &TranscriptDeps{
+		HomeDir: home,
+		Cwd:     "/home/test/project",
+		Getenv:  nil, // No env override; should default to ~/.codex
+	}
+	loc := mustLocator(t, "codex", deps)
+	path, err := loc.Locate(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Locate error: %v", err)
+	}
+	want := filepath.Join(home, ".codex", "sessions", "rollout-001.jsonl")
+	if path != want {
+		t.Fatalf("Locate = %q, want %q", path, want)
+	}
+}
