@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -16,6 +17,10 @@ func runRuntimeCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "runtime requires a subcommand (bootstrap|heartbeat|service)")
 		return 2
+	}
+	if args[0] == "-h" || args[0] == "--help" {
+		fmt.Fprintln(stdout, "Usage: kei runtime <command>\n\nCommands:\n  bootstrap  Bootstrap the runtime\n  heartbeat  Send a runtime heartbeat\n  service    Manage the runtime service")
+		return 0
 	}
 	switch args[0] {
 	case "bootstrap":
@@ -50,7 +55,11 @@ func runRuntimeBootstrapCommand(args []string, stdout, stderr io.Writer) int {
 
 	config, err := loadRuntimeConfig(*configPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "runtime bootstrap failed: read config: %v\n", err)
+		if errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(stderr, "runtime bootstrap failed: config file not found at %s\nRun 'kei setup' to create it.\n", *configPath)
+		} else {
+			fmt.Fprintf(stderr, "runtime bootstrap failed: read config %s: %v\n", *configPath, err)
+		}
 		return 1
 	}
 	if err := config.validate(); err != nil {
@@ -100,7 +109,11 @@ func runRuntimeHeartbeatCommand(args []string, stdout, stderr io.Writer) int {
 	}
 	config, err := loadRuntimeConfig(*configPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "runtime heartbeat: read config: %v\n", err)
+		if errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(stderr, "runtime heartbeat failed: config file not found at %s\nRun 'kei setup' to create it.\n", *configPath)
+		} else {
+			fmt.Fprintf(stderr, "runtime heartbeat failed: read config %s: %v\n", *configPath, err)
+		}
 		return 1
 	}
 	if err := config.validate(); err != nil {

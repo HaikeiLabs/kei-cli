@@ -22,6 +22,9 @@ const (
 // Open WebUI, one whose status read fails, and a Teams one to filter out.
 func openWebUIListConsole(t *testing.T) (*fakeConsole, *httptest.Server, *memoryCredentialStore) {
 	t.Helper()
+	// HAI-810: isolate from the user's real kei.yaml so defaultInstallationID
+	// falls through to the Open WebUI-only path in tests.
+	t.Setenv("HOME", t.TempDir())
 	heartbeat := time.Now().Add(-2 * time.Minute).UTC().Format(time.RFC3339)
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
 		switch r.Path {
@@ -67,11 +70,19 @@ func TestHarnessListJSONIncludesOpenWebUIInstallations(t *testing.T) {
 	if code := runHarnessCommand([]string{"list", "--json"}, &stdout, &stderr, server.Client(), store); code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
 	}
+	// HAI-810: harnesses must be [] not null when no --installation is given.
+	if strings.Contains(stdout.String(), `"harnesses":null`) {
+		t.Fatalf("JSON must have [] for harnesses, got null: %s", stdout.String())
+	}
 	var out struct {
+		Harnesses []harnessResource               `json:"harnesses"`
 		OpenWebUI []harness.OpenWebUIInstallation `json:"openwebui_installations"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil || len(out.OpenWebUI) != 2 {
 		t.Fatalf("json=%s err=%v", stdout.String(), err)
+	}
+	if out.Harnesses == nil {
+		t.Fatalf("harnesses must be [] not nil: %s", stdout.String())
 	}
 	if got := out.OpenWebUI[0]; got.KeiProxyVersion == nil || *got.KeiProxyVersion != "kei-proxy 0.4.2" || got.BundleRevision == nil || *got.BundleRevision != 17 {
 		t.Fatalf("installation = %+v", got)

@@ -36,6 +36,10 @@ func runHarnessCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 		fmt.Fprintln(stderr, "harness requires a subcommand: add, list, remove, or sync")
 		return 2
 	}
+	if args[0] == "-h" || args[0] == "--help" {
+		fmt.Fprintln(stdout, "Usage: kei harness <command>\n\nCommands:\n  add     Add a custom (SDK) harness\n  list    List harnesses for a runtime installation\n  remove  Remove a harness\n  sync    Sync desktop harnesses to the runtime")
+		return 0
+	}
 	switch args[0] {
 	case "add":
 		return runHarnessAdd(args[1:], stdout, stderr, client, store, harness.Default)
@@ -223,7 +227,7 @@ func defaultAgentID(client *http.Client, baseURL, token, installationID string) 
 func runHarnessList(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	flags := flag.NewFlagSet("harness list", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	installation := flags.String("installation", "", "runtime installation ID (omit to list only Open WebUI installations)")
+	installation := flags.String("installation", "", "runtime installation ID (omit to resolve current installation; falls back to Open WebUI only)")
 	jsonOutput := flags.Bool("json", false, "output JSON")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		return 2
@@ -236,9 +240,22 @@ func runHarnessList(args []string, stdout, stderr io.Writer, client *http.Client
 	if !ok {
 		return 1
 	}
+	// HAI-810: resolve the current installation when --installation is omitted.
+	if *installation == "" {
+		id, err := defaultInstallationID(client, stderr)
+		if err == nil {
+			*installation = id
+		}
+		// If defaultInstallationID fails (no runtime config yet), fall
+		// through to the original behaviour (Open WebUI only).
+	}
 	harnesses, ok := listInstallationHarnesses(client, baseURL, token, *installation, stderr)
 	if !ok {
 		return 1
+	}
+	// HAI-810: ensure JSON output shows [] not null when no harnesses exist.
+	if harnesses == nil {
+		harnesses = []harnessResource{}
 	}
 	// Open WebUI installations are listed from the existing
 	// runtime-installations calls; with --installation they are best effort.
@@ -788,6 +805,7 @@ func syncHarnessBundle(ctx context.Context, config runtimeConfig, kindFilter str
 		fmt.Fprintln(stdout, "No harness kinds detected locally; use --harness KIND to sync a specific one.")
 		return 0
 	}
+	var desktopApplied bool
 	for _, h := range harnesses {
 		rendered, err := h.Render(bundle)
 		if err != nil {
@@ -802,6 +820,12 @@ func syncHarnessBundle(ctx context.Context, config runtimeConfig, kindFilter str
 		if result.Skipped {
 			printLines(stdout, result.Notes)
 			continue
+		}
+		if !desktopApplied {
+			switch h.Kind() {
+			case "claude_code", "codex", "opencode":
+				desktopApplied = true
+			}
 		}
 		printLines(stderr, result.Warnings)
 		if !dryRun {
@@ -823,6 +847,9 @@ func syncHarnessBundle(ctx context.Context, config runtimeConfig, kindFilter str
 		if !dryRun {
 			printLines(stdout, harnessSyncGuidance(h.Kind(), bundle.Audience.WorkspaceID, bundle.PolicySet, bundle.Connectors))
 		}
+	}
+	if desktopApplied {
+		fmt.Fprintln(stdout, "Desktop harnesses are configured locally and do not appear in kei harness list; run kei doctor to confirm the hooks, then restart your agent session.")
 	}
 	// HAI-431: after rendering, install the org skills the bundle permits
 	// into each harness's skill dir, read through kei-proxy. The permission

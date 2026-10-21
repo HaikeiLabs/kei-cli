@@ -33,8 +33,12 @@ func TestRuntimeHeartbeatConfigNotFound(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("expected exit 1, got %d", code)
 	}
-	if !strings.Contains(stderr.String(), "read config") {
-		t.Fatalf("expected config read error, got: %s", stderr.String())
+	msg := stderr.String()
+	if !strings.Contains(msg, "config file not found") {
+		t.Fatalf("expected config-not-found error, got: %s", msg)
+	}
+	if !strings.Contains(msg, "setup") {
+		t.Fatalf("error should suggest running 'kei setup', got: %s", msg)
 	}
 }
 
@@ -176,6 +180,35 @@ func TestRuntimeCommandRejectsUnknownSubcommand(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "unknown runtime command") {
 		t.Fatalf("expected unknown command error, got: %s", stderr.String())
+	}
+}
+
+func TestRuntimeCommandHelp(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{"long flag", []string{"--help"}},
+		{"short flag", []string{"-h"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := runRuntimeCommand(tt.args, &stdout, &stderr, nil, nil)
+			if code != 0 {
+				t.Fatalf("exit code = %d, want 0; stderr=%s", code, stderr.String())
+			}
+			output := stdout.String() + stderr.String()
+			if !strings.Contains(output, "bootstrap") {
+				t.Errorf("help output should mention 'bootstrap', got: %s", output)
+			}
+			if !strings.Contains(output, "heartbeat") {
+				t.Errorf("help output should mention 'heartbeat', got: %s", output)
+			}
+			if !strings.Contains(output, "service") {
+				t.Errorf("help output should mention 'service', got: %s", output)
+			}
+		})
 	}
 }
 

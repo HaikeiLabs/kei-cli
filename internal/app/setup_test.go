@@ -90,6 +90,54 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 	return f(r)
 }
 
+func TestSetupPromptHints(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "kei.yaml")
+	var stdout, stderr strings.Builder
+	// Do NOT provide --runtime-token (so the hint is shown) — pass it via stdin
+	// as a secret prompt response. Also leave proxy-path unset.
+	stdin := strings.NewReader("\n" + // control-plane URL prompt (accept default)
+		"test-token\n" + // runtime installation token
+		"\n" + // harness URL (accept default)
+		"\n") // proxy path (accept default)
+	if code := runSetupCommand([]string{
+		"--config", path,
+		"--skip-verify",
+	}, &stdout, &stderr, stdin, &http.Client{}); code != 0 {
+		t.Fatalf("setup exit = %d, stderr = %s", code, stderr.String())
+	}
+	// Hints about where to find each value should be printed to stderr.
+	hintOutput := stderr.String()
+	hints := []string{
+		"control-plane",
+		"console",
+		"token",
+	}
+	for _, h := range hints {
+		if !strings.Contains(hintOutput, h) {
+			t.Errorf("stderr should contain a hint mentioning %q, got:\n%s", h, hintOutput)
+		}
+	}
+}
+
+func TestRuntimeBootstrapConfigNotFoundHint(t *testing.T) {
+	var stdout, stderr strings.Builder
+	// Use a non-existent config file.
+	nonexistent := filepath.Join(t.TempDir(), "no-such-file.yaml")
+	code := runRuntimeBootstrapCommand([]string{
+		"--config", nonexistent,
+	}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d", code)
+	}
+	msg := stderr.String()
+	if !strings.Contains(msg, nonexistent) {
+		t.Errorf("error should mention the config file path %q, got:\n%s", nonexistent, msg)
+	}
+	if !strings.Contains(msg, "setup") {
+		t.Errorf("error should suggest running 'kei setup', got:\n%s", msg)
+	}
+}
+
 func TestLoadRuntimeConfigRejectsUnknownKeys(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "kei.yaml")
 	if err := os.WriteFile(path, []byte("unknown: value\n"), 0o600); err != nil {
