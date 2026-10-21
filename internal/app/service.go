@@ -27,25 +27,29 @@ var sysCommand = func(name string, args ...string) *exec.Cmd {
 // userHomeDirFn is injectable for tests. Its default is os.UserHomeDir.
 var userHomeDirFn = os.UserHomeDir
 
+var serviceGroup = commandGroup{
+	name: "service",
+	commands: []groupCommand{
+		{name: "install", summary: "Install the runtime service"},
+		{name: "uninstall", summary: "Uninstall the runtime service"},
+		{name: "status", summary: "Show the runtime service status"},
+	},
+}
+
 func runServiceCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, "service requires a subcommand (install|uninstall|status)")
-		return 2
+	sub, rest, code, handled := serviceGroup.dispatch(args, stdout, stderr)
+	if handled {
+		return code
 	}
-	if args[0] == "-h" || args[0] == "--help" {
-		fmt.Fprintln(stdout, "Usage: kei service <command>\n\nCommands:\n  install   Install the runtime service\n  uninstall  Uninstall the runtime service\n  status    Show the runtime service status")
-		return 0
-	}
-	switch args[0] {
+	switch sub {
 	case "install":
-		return runServiceInstallCommand(args[1:], stdout, stderr, client, store)
+		return runServiceInstallCommand(rest, stdout, stderr, client, store)
 	case "uninstall":
-		return runServiceUninstallCommand(args[1:], stdout, stderr)
+		return runServiceUninstallCommand(rest, stdout, stderr)
 	case "status":
-		return runServiceStatusCommand(args[1:], stdout, stderr)
+		return runServiceStatusCommand(rest, stdout, stderr)
 	default:
-		fmt.Fprintf(stderr, "unknown service command %q\n", args[0])
-		return 2
+		panic("unexpected subcommand: " + sub)
 	}
 }
 

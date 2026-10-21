@@ -115,37 +115,53 @@ func validateModelProfileEndpoint(raw string) error {
 	return nil
 }
 
+var modelProfilesGroup = commandGroup{
+	name: "model-profiles",
+	commands: []groupCommand{
+		{name: "list", summary: "List model profiles"},
+		{name: "get", summary: "Get a model profile by ID"},
+		{name: "create", summary: "Create a model profile"},
+		{name: "update", summary: "Update a model profile"},
+		{name: "delete", summary: "Delete a model profile"},
+		{name: "set-default", summary: "Set the default model profile"},
+		{name: "assign", summary: "Assign a model profile to an agent"},
+		{name: "unassign", summary: "Unassign a model profile from an agent"},
+		{name: "assignment", summary: "Show model profile assignment"},
+		{name: "readiness", summary: "Check model profile readiness"},
+		{name: "test", summary: "Test a model profile"},
+	},
+}
+
 func runModelProfilesCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, "model-profiles requires a subcommand: list, get, create, update, delete, set-default, assign, unassign, assignment, readiness, or test")
-		return 2
+	sub, rest, code, handled := modelProfilesGroup.dispatch(args, stdout, stderr)
+	if handled {
+		return code
 	}
-	switch args[0] {
+	switch sub {
 	case "list":
-		return runModelProfilesList(args[1:], stdout, stderr, client, store)
+		return runModelProfilesList(rest, stdout, stderr, client, store)
 	case "get":
-		return runModelProfilesGet(args[1:], stdout, stderr, client, store)
+		return runModelProfilesGet(rest, stdout, stderr, client, store)
 	case "create":
-		return runModelProfilesCreate(args[1:], stdout, stderr, stdin, client, store)
+		return runModelProfilesCreate(rest, stdout, stderr, stdin, client, store)
 	case "update":
-		return runModelProfilesUpdate(args[1:], stdout, stderr, stdin, client, store)
+		return runModelProfilesUpdate(rest, stdout, stderr, stdin, client, store)
 	case "delete":
-		return runModelProfilesDelete(args[1:], stdout, stderr, client, store)
+		return runModelProfilesDelete(rest, stdout, stderr, client, store)
 	case "set-default":
-		return runModelProfilesSetDefault(args[1:], stdout, stderr, client, store)
+		return runModelProfilesSetDefault(rest, stdout, stderr, client, store)
 	case "assign":
-		return runModelProfilesAssign(args[1:], stdout, stderr, client, store)
+		return runModelProfilesAssign(rest, stdout, stderr, client, store)
 	case "unassign":
-		return runModelProfilesUnassign(args[1:], stdout, stderr, client, store)
+		return runModelProfilesUnassign(rest, stdout, stderr, client, store)
 	case "assignment":
-		return runModelProfilesAssignment(args[1:], stdout, stderr, client, store)
+		return runModelProfilesAssignment(rest, stdout, stderr, client, store)
 	case "readiness":
-		return runModelProfilesReadiness(args[1:], stdout, stderr, client, store)
+		return runModelProfilesReadiness(rest, stdout, stderr, client, store)
 	case "test":
-		return runModelProfilesTest(args[1:], stdout, stderr, client, store)
+		return runModelProfilesTest(rest, stdout, stderr, client, store)
 	default:
-		fmt.Fprintf(stderr, "unknown model-profiles command %q\n", args[0])
-		return 2
+		panic("unexpected subcommand: " + sub)
 	}
 }
 

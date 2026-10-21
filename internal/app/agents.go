@@ -19,21 +19,29 @@ type runtimeInstallationAgent struct {
 	IsDefault      bool   `json:"is_default"`
 }
 
+var botAgentsGroup = commandGroup{
+	name: "bot agents",
+	commands: []groupCommand{
+		{name: "list", summary: "List bot agents"},
+		{name: "add", summary: "Add an agent to a bot"},
+		{name: "remove", summary: "Remove an agent from a bot"},
+	},
+}
+
 func runBotAgentsCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, "bot agents requires list, add, or remove")
-		return 2
+	sub, rest, code, handled := botAgentsGroup.dispatch(args, stdout, stderr)
+	if handled {
+		return code
 	}
-	switch args[0] {
+	switch sub {
 	case "list":
-		return runBotAgentsList(args[1:], stdout, stderr, client, store)
+		return runBotAgentsList(rest, stdout, stderr, client, store)
 	case "add":
-		return runBotAgentsAdd(args[1:], stdout, stderr, client, store)
+		return runBotAgentsAdd(rest, stdout, stderr, client, store)
 	case "remove":
-		return runBotAgentsRemove(args[1:], stdout, stderr, client, store)
+		return runBotAgentsRemove(rest, stdout, stderr, client, store)
 	default:
-		fmt.Fprintf(stderr, "unknown bot agents command %q\n", args[0])
-		return 2
+		panic("unexpected subcommand: " + sub)
 	}
 }
 

@@ -121,9 +121,14 @@ func TestSkillsInstallRendersSourceFromRepoURL(t *testing.T) {
 
 func TestSkillsInstallRejectsBadUsage(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := runSkillsCommand(nil, &stdout, &stderr, http.DefaultClient); code != 2 {
-		t.Fatalf("no subcommand exit=%d", code)
+	if code := runSkillsCommand(nil, &stdout, &stderr, http.DefaultClient); code != 0 {
+		t.Fatalf("no subcommand exit=%d (want 0, help to stdout); stderr=%s", code, stderr.String())
 	}
+	if !strings.Contains(stdout.String(), "Usage:") {
+		t.Fatalf("expected help in stdout for no args, got: %s", stdout.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
 	if code := runSkillsCommand([]string{"install", "--harness", "nope"}, &stdout, &stderr, http.DefaultClient); code != 2 {
 		t.Fatalf("bad --harness exit=%d", code)
 	}

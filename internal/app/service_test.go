@@ -57,11 +57,11 @@ func TestServiceName(t *testing.T) {
 
 func TestServiceCommandRequiresSubcommand(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := runServiceCommand([]string{}, &stdout, &stderr, http.DefaultClient, nil); code != 2 {
-		t.Fatalf("expected exit 2, got %d", code)
+	if code := runServiceCommand([]string{}, &stdout, &stderr, http.DefaultClient, nil); code != 0 {
+		t.Fatalf("expected exit 0 (help to stdout), got %d; stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "subcommand") {
-		t.Fatalf("expected subcommand error, got: %s", stderr.String())
+	if !strings.Contains(stdout.String(), "Usage:") {
+		t.Fatalf("expected help in stdout, got: %s", stdout.String())
 	}
 }
 

@@ -41,23 +41,31 @@ const (
 	manifestStatusCandidate = "candidate"
 )
 
+var connectorsManifestsGroup = commandGroup{
+	name: "connectors manifests",
+	commands: []groupCommand{
+		{name: "list", summary: "List connector tool manifests"},
+		{name: "show", summary: "Show a connector tool manifest"},
+		{name: "approve", summary: "Approve a connector tool manifest"},
+	},
+}
+
 // runConnectorsManifests serves kei connectors manifests (alias tools):
 // list and show a connector's tool manifests, and approve one.
 func runConnectorsManifests(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, "connectors manifests requires a subcommand: list, show, or approve")
-		return 2
+	sub, rest, code, handled := connectorsManifestsGroup.dispatch(args, stdout, stderr)
+	if handled {
+		return code
 	}
-	switch args[0] {
+	switch sub {
 	case "list":
-		return runConnectorsManifestsList(args[1:], stdout, stderr, client, store)
+		return runConnectorsManifestsList(rest, stdout, stderr, client, store)
 	case "show":
-		return runConnectorsManifestsShow(args[1:], stdout, stderr, client, store)
+		return runConnectorsManifestsShow(rest, stdout, stderr, client, store)
 	case "approve":
-		return runConnectorsManifestsApprove(args[1:], stdout, stderr, stdin, client, store)
+		return runConnectorsManifestsApprove(rest, stdout, stderr, stdin, client, store)
 	default:
-		fmt.Fprintf(stderr, "unknown connectors manifests command %q\n", args[0])
-		return 2
+		panic("unexpected subcommand: " + sub)
 	}
 }
 
