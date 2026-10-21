@@ -69,29 +69,41 @@ type identityRemoteIdentity struct {
 	UpdateTime  string `json:"update_time"`
 }
 
+var usersGroup = commandGroup{
+	name: "users",
+	commands: []groupCommand{
+		{name: "list", summary: "List users"},
+		{name: "get", summary: "Get a user by ID"},
+		{name: "create", summary: "Create a user"},
+		{name: "update", summary: "Update a user"},
+		{name: "resolve", summary: "Resolve a user identity"},
+		{name: "identities", summary: "List user identities"},
+		{name: "remote-identities", summary: "List remote identities"},
+	},
+}
+
 func runUsersCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, "users requires a subcommand: list, get, create, update, resolve, identities, or remote-identities")
-		return 2
+	sub, rest, code, handled := usersGroup.dispatch(args, stdout, stderr)
+	if handled {
+		return code
 	}
-	switch args[0] {
+	switch sub {
 	case "list":
-		return runUsersList(args[1:], stdout, stderr, client, store)
+		return runUsersList(rest, stdout, stderr, client, store)
 	case "get":
-		return runUsersGet(args[1:], stdout, stderr, client, store)
+		return runUsersGet(rest, stdout, stderr, client, store)
 	case "create":
-		return runUsersCreate(args[1:], stdout, stderr, stdin, client, store)
+		return runUsersCreate(rest, stdout, stderr, stdin, client, store)
 	case "update":
-		return runUsersUpdate(args[1:], stdout, stderr, stdin, client, store)
+		return runUsersUpdate(rest, stdout, stderr, stdin, client, store)
 	case "resolve":
-		return runUsersResolve(args[1:], stdout, stderr, client, store)
+		return runUsersResolve(rest, stdout, stderr, client, store)
 	case "identities":
-		return runUsersIdentities(args[1:], stdout, stderr, client, store)
+		return runUsersIdentities(rest, stdout, stderr, client, store)
 	case "remote-identities":
-		return runUsersRemoteIdentities(args[1:], stdout, stderr, client, store)
+		return runUsersRemoteIdentities(rest, stdout, stderr, client, store)
 	default:
-		fmt.Fprintf(stderr, "unknown users command %q\n", args[0])
-		return 2
+		panic("unexpected subcommand: " + sub)
 	}
 }
 

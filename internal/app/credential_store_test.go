@@ -163,7 +163,7 @@ func TestCredentialStoreCommandDispatch(t *testing.T) {
 		args []string
 		code int
 	}{
-		{[]string{}, 2},
+		{[]string{}, 0}, // help to stdout
 		{[]string{"unknown"}, 2},
 		{[]string{"get"}, 1},    // no token → auth fail
 		{[]string{"put"}, 2},    // no --secret-backend

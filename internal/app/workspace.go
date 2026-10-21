@@ -22,23 +22,32 @@ type workspaceInfo struct {
 	IsDefault bool   `json:"is_default"`
 }
 
+var workspaceGroup = commandGroup{
+	name: "workspaces",
+	commands: []groupCommand{
+		{name: "list", summary: "List workspaces"},
+		{name: "use", summary: "Set the current workspace"},
+		{name: "current", summary: "Show the current workspace"},
+		{name: "create", summary: "Create a new workspace"},
+	},
+}
+
 func runWorkspaceCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, "workspaces requires a subcommand: list, use, current or create")
-		return 2
+	sub, rest, code, handled := workspaceGroup.dispatch(args, stdout, stderr)
+	if handled {
+		return code
 	}
-	switch args[0] {
+	switch sub {
 	case "list":
-		return runWorkspaceListCommand(args[1:], stdout, stderr, client, store)
+		return runWorkspaceListCommand(rest, stdout, stderr, client, store)
 	case "use":
-		return runWorkspaceUseCommand(args[1:], stdout, stderr, client, store)
+		return runWorkspaceUseCommand(rest, stdout, stderr, client, store)
 	case "current":
-		return runWorkspaceCurrentCommand(args[1:], stdout, stderr)
+		return runWorkspaceCurrentCommand(rest, stdout, stderr)
 	case "create":
-		return runWorkspaceCreateCommand(args[1:], stdout, stderr, stdin, client, store)
+		return runWorkspaceCreateCommand(rest, stdout, stderr, stdin, client, store)
 	default:
-		fmt.Fprintf(stderr, "unknown workspaces command %q\n", args[0])
-		return 2
+		panic("unexpected subcommand: " + sub)
 	}
 }
 

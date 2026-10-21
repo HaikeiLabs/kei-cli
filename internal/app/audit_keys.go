@@ -104,40 +104,55 @@ func hasActiveKeys(client *http.Client, baseURL, token, orgID string) (bool, err
 // runAuditCommand dispatches audit subcommands.
 // Behavior is specified in ADR-030:
 // https://github.com/HaikeiLabs/kei/blob/main/docs/adr/030-audit-args-encryption.md
+var auditGroup = commandGroup{
+	name: "audit",
+	commands: []groupCommand{
+		{name: "keys", summary: "Manage audit encryption keys"},
+		{name: "decrypt", summary: "Decrypt an audit record"},
+	},
+}
+
 func runAuditCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, "audit requires a subcommand")
-		return 2
+	sub, rest, code, handled := auditGroup.dispatch(args, stdout, stderr)
+	if handled {
+		return code
 	}
-	switch args[0] {
+	switch sub {
 	case "keys":
-		return runAuditKeysCommand(args[1:], stdout, stderr, stdin, client, store)
+		return runAuditKeysCommand(rest, stdout, stderr, stdin, client, store)
 	case "decrypt":
-		return runAuditDecryptCommand(args[1:], stdout, stderr, client, store)
+		return runAuditDecryptCommand(rest, stdout, stderr, client, store)
 	default:
-		fmt.Fprintf(stderr, "unknown audit command %q\n", args[0])
-		return 2
+		panic("unexpected subcommand: " + sub)
 	}
 }
 
 // runAuditKeysCommand dispatches audit keys subcommands.
 // Behavior is specified in ADR-030:
 // https://github.com/HaikeiLabs/kei/blob/main/docs/adr/030-audit-args-encryption.md
+var auditKeysGroup = commandGroup{
+	name: "audit keys",
+	commands: []groupCommand{
+		{name: "create", summary: "Create an audit encryption key"},
+		{name: "list", summary: "List audit encryption keys"},
+		{name: "disable", summary: "Disable an audit encryption key"},
+	},
+}
+
 func runAuditKeysCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, "audit keys requires a subcommand (create|list|disable)")
-		return 2
+	sub, rest, code, handled := auditKeysGroup.dispatch(args, stdout, stderr)
+	if handled {
+		return code
 	}
-	switch args[0] {
+	switch sub {
 	case "create":
-		return runAuditKeysCreateCommand(args[1:], stdout, stderr, stdin, client, store)
+		return runAuditKeysCreateCommand(rest, stdout, stderr, stdin, client, store)
 	case "list":
-		return runAuditKeysListCommand(args[1:], stdout, stderr, client, store)
+		return runAuditKeysListCommand(rest, stdout, stderr, client, store)
 	case "disable":
-		return runAuditKeysDisableCommand(args[1:], stdout, stderr, stdin, client, store)
+		return runAuditKeysDisableCommand(rest, stdout, stderr, stdin, client, store)
 	default:
-		fmt.Fprintf(stderr, "unknown audit keys command %q\n", args[0])
-		return 2
+		panic("unexpected subcommand: " + sub)
 	}
 }
 

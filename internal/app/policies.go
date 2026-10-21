@@ -145,50 +145,71 @@ func policyErrorMessage(payload []byte) string {
 	return apiErrorMessage(payload)
 }
 
+var policyGroup = commandGroup{
+	name: "policy",
+	commands: []groupCommand{
+		{name: "list", summary: "List policies"},
+		{name: "get", summary: "Get a policy by ID"},
+		{name: "create", summary: "Create a policy"},
+		{name: "delete", summary: "Delete a policy"},
+		{name: "test", summary: "Test a policy"},
+	},
+}
+
 func runPolicyCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, "policy requires a subcommand: list, get, create, delete, or test")
-		return 2
+	sub, rest, code, handled := policyGroup.dispatch(args, stdout, stderr)
+	if handled {
+		return code
 	}
-	switch args[0] {
+	switch sub {
 	case "list":
-		return runPoliciesList(args[1:], stdout, stderr, client, store)
+		return runPoliciesList(rest, stdout, stderr, client, store)
 	case "get":
-		return runPoliciesGet(args[1:], stdout, stderr, client, store)
+		return runPoliciesGet(rest, stdout, stderr, client, store)
 	case "create":
-		return runPolicyCreate(args[1:], stdout, stderr, client, store)
+		return runPolicyCreate(rest, stdout, stderr, client, store)
 	case "delete":
-		return runPoliciesDelete(args[1:], stdout, stderr, client, store)
+		return runPoliciesDelete(rest, stdout, stderr, client, store)
 	case "test":
-		return runPolicyTest(args[1:], stdout, stderr, client, store)
+		return runPolicyTest(rest, stdout, stderr, client, store)
 	default:
-		fmt.Fprintf(stderr, "unknown policy command %q\n", args[0])
-		return 2
+		panic("unexpected subcommand: " + sub)
 	}
+}
+
+var policiesGroup = commandGroup{
+	name: "policies",
+	commands: []groupCommand{
+		{name: "list", summary: "List policies"},
+		{name: "get", summary: "Get a policy by ID"},
+		{name: "create", summary: "Create a policy"},
+		{name: "update", summary: "Update a policy"},
+		{name: "delete", summary: "Delete a policy"},
+		{name: "import", summary: "Import policies from a file"},
+	},
 }
 
 func runPoliciesCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
 	fmt.Fprintln(stderr, "Deprecated: use `kei policy` instead of `kei policies`.")
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, "policies requires a subcommand: list, get, create, update, delete, or import")
-		return 2
+	sub, rest, code, handled := policiesGroup.dispatch(args, stdout, stderr)
+	if handled {
+		return code
 	}
-	switch args[0] {
+	switch sub {
 	case "list":
-		return runPoliciesList(args[1:], stdout, stderr, client, store)
+		return runPoliciesList(rest, stdout, stderr, client, store)
 	case "get":
-		return runPoliciesGet(args[1:], stdout, stderr, client, store)
+		return runPoliciesGet(rest, stdout, stderr, client, store)
 	case "create":
-		return runPoliciesCreate(args[1:], stdout, stderr, client, store)
+		return runPoliciesCreate(rest, stdout, stderr, client, store)
 	case "update":
-		return runPoliciesUpdate(args[1:], stdout, stderr, client, store)
+		return runPoliciesUpdate(rest, stdout, stderr, client, store)
 	case "delete":
-		return runPoliciesDelete(args[1:], stdout, stderr, client, store)
+		return runPoliciesDelete(rest, stdout, stderr, client, store)
 	case "import":
-		return runPoliciesImport(args[1:], stdout, stderr, stdin, client, store, harness.Default)
+		return runPoliciesImport(rest, stdout, stderr, stdin, client, store, harness.Default)
 	default:
-		fmt.Fprintf(stderr, "unknown policies command %q\n", args[0])
-		return 2
+		panic("unexpected subcommand: " + sub)
 	}
 }
 

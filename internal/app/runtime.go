@@ -13,25 +13,29 @@ import (
 
 var runCommand = exec.CommandContext
 
+var runtimeGroup = commandGroup{
+	name: "runtime",
+	commands: []groupCommand{
+		{name: "bootstrap", summary: "Bootstrap the runtime"},
+		{name: "heartbeat", summary: "Send a runtime heartbeat"},
+		{name: "service", summary: "Manage the runtime service"},
+	},
+}
+
 func runRuntimeCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, "runtime requires a subcommand (bootstrap|heartbeat|service)")
-		return 2
+	sub, rest, code, handled := runtimeGroup.dispatch(args, stdout, stderr)
+	if handled {
+		return code
 	}
-	if args[0] == "-h" || args[0] == "--help" {
-		fmt.Fprintln(stdout, "Usage: kei runtime <command>\n\nCommands:\n  bootstrap  Bootstrap the runtime\n  heartbeat  Send a runtime heartbeat\n  service    Manage the runtime service")
-		return 0
-	}
-	switch args[0] {
+	switch sub {
 	case "bootstrap":
-		return runRuntimeBootstrapCommand(args[1:], stdout, stderr)
+		return runRuntimeBootstrapCommand(rest, stdout, stderr)
 	case "heartbeat":
-		return runRuntimeHeartbeatCommand(args[1:], stdout, stderr)
+		return runRuntimeHeartbeatCommand(rest, stdout, stderr)
 	case "service":
-		return runServiceCommand(args[1:], stdout, stderr, client, store)
+		return runServiceCommand(rest, stdout, stderr, client, store)
 	default:
-		fmt.Fprintf(stderr, "unknown runtime command %q\n", args[0])
-		return 2
+		panic("unexpected subcommand: " + sub)
 	}
 }
 

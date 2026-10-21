@@ -114,31 +114,45 @@ type connector struct {
 	} `json:"capabilities"`
 }
 
+var connectorsGroup = commandGroup{
+	name: "connectors",
+	commands: []groupCommand{
+		{name: "create", summary: "Create a data connector"},
+		{name: "test", summary: "Test a connector"},
+		{name: "list", summary: "List connectors"},
+		{name: "get", summary: "Get a connector by ID"},
+		{name: "connect", summary: "Connect a connector (OAuth)"},
+		{name: "reconnect", summary: "Reconnect a connector"},
+		{name: "delete", summary: "Delete a connector"},
+		{name: "manifests", summary: "Manage connector tool manifests"},
+	},
+	aliases: map[string]string{"tools": "manifests"},
+}
+
 func runConnectorsCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, "connectors requires a subcommand: create, list, get, connect, reconnect, delete, or manifests")
-		return 2
+	sub, rest, code, handled := connectorsGroup.dispatch(args, stdout, stderr)
+	if handled {
+		return code
 	}
-	switch args[0] {
+	switch sub {
 	case "create":
-		return runConnectorsCreate(args[1:], stdout, stderr, stdin, client, store)
+		return runConnectorsCreate(rest, stdout, stderr, stdin, client, store)
 	case "test":
-		return runConnectorsTest(args[1:], stdout, stderr, client, store)
+		return runConnectorsTest(rest, stdout, stderr, client, store)
 	case "list":
-		return runConnectorsList(args[1:], stdout, stderr, client, store)
+		return runConnectorsList(rest, stdout, stderr, client, store)
 	case "get":
-		return runConnectorsGet(args[1:], stdout, stderr, client, store)
+		return runConnectorsGet(rest, stdout, stderr, client, store)
 	case "connect":
-		return runConnectorsConnect(args[1:], stdout, stderr, client, store)
+		return runConnectorsConnect(rest, stdout, stderr, client, store)
 	case "reconnect":
-		return runConnectorsReconnect(args[1:], stdout, stderr, stdin, client, store)
+		return runConnectorsReconnect(rest, stdout, stderr, stdin, client, store)
 	case "delete":
-		return runConnectorsDelete(args[1:], stdout, stderr, client, store)
+		return runConnectorsDelete(rest, stdout, stderr, client, store)
 	case "manifests", "tools":
-		return runConnectorsManifests(args[1:], stdout, stderr, stdin, client, store)
+		return runConnectorsManifests(rest, stdout, stderr, stdin, client, store)
 	default:
-		fmt.Fprintf(stderr, "unknown connectors command %q\n", args[0])
-		return 2
+		panic("unexpected subcommand: " + sub)
 	}
 }
 

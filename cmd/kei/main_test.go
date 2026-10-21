@@ -187,6 +187,32 @@ func TestReleaseWorkflowPinsAndValidatesProxy(t *testing.T) {
 	}
 }
 
+func TestBareKeiExitsZeroWithUsage(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "kei")
+	cmd := exec.Command("go", "build",
+		"-o", binary,
+		"-ldflags", "-X main.version=test-bare",
+		"./cmd/kei/",
+	)
+	cmd.Dir = findRepoRoot(t)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go build failed: %v\n%s", err, out)
+	}
+
+	// Run with no arguments
+	out, err := exec.Command(binary).CombinedOutput()
+	if err != nil {
+		t.Fatalf("bare kei should exit 0, got: %v\n%s", err, out)
+	}
+	if len(out) == 0 {
+		t.Fatal("bare kei should print usage to stdout")
+	}
+	if !strings.Contains(string(out), "Usage:") {
+		t.Fatalf("bare kei output should contain 'Usage:', got:\n%s", out)
+	}
+}
+
 func TestBuildWithVersionLDFlag(t *testing.T) {
 	dir := t.TempDir()
 	cmd := exec.Command("go", "build",

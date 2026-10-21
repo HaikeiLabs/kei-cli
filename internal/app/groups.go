@@ -34,21 +34,29 @@ type catalogUser struct {
 	Name  string `json:"name"`
 }
 
+var groupsGroup = commandGroup{
+	name: "groups",
+	commands: []groupCommand{
+		{name: "list", summary: "List groups"},
+		{name: "create", summary: "Create a group"},
+		{name: "members", summary: "Manage group members"},
+	},
+}
+
 func runGroupsCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, "groups requires a subcommand: list, create or members")
-		return 2
+	sub, rest, code, handled := groupsGroup.dispatch(args, stdout, stderr)
+	if handled {
+		return code
 	}
-	switch args[0] {
+	switch sub {
 	case "list":
-		return runGroupsList(args[1:], stdout, stderr, client, store)
+		return runGroupsList(rest, stdout, stderr, client, store)
 	case "create":
-		return runGroupsCreate(args[1:], stdout, stderr, stdin, client, store)
+		return runGroupsCreate(rest, stdout, stderr, stdin, client, store)
 	case "members":
-		return runGroupsMembersCommand(args[1:], stdout, stderr, stdin, client, store)
+		return runGroupsMembersCommand(rest, stdout, stderr, stdin, client, store)
 	default:
-		fmt.Fprintf(stderr, "unknown groups command %q\n", args[0])
-		return 2
+		panic("unexpected subcommand: " + sub)
 	}
 }
 
@@ -154,21 +162,29 @@ func runGroupsCreate(args []string, stdout, stderr io.Writer, stdin io.Reader, c
 	return 0
 }
 
+var groupsMembersGroup = commandGroup{
+	name: "groups members",
+	commands: []groupCommand{
+		{name: "list", summary: "List group members"},
+		{name: "add", summary: "Add a member to a group"},
+		{name: "remove", summary: "Remove a member from a group"},
+	},
+}
+
 func runGroupsMembersCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, "groups members requires a subcommand: list, add, or remove")
-		return 2
+	sub, rest, code, handled := groupsMembersGroup.dispatch(args, stdout, stderr)
+	if handled {
+		return code
 	}
-	switch args[0] {
+	switch sub {
 	case "list":
-		return runGroupsMembersList(args[1:], stdout, stderr, client, store)
+		return runGroupsMembersList(rest, stdout, stderr, client, store)
 	case "add":
-		return runGroupsMembersAdd(args[1:], stdout, stderr, stdin, client, store)
+		return runGroupsMembersAdd(rest, stdout, stderr, stdin, client, store)
 	case "remove":
-		return runGroupsMembersRemove(args[1:], stdout, stderr, stdin, client, store)
+		return runGroupsMembersRemove(rest, stdout, stderr, stdin, client, store)
 	default:
-		fmt.Fprintf(stderr, "unknown groups members command %q\n", args[0])
-		return 2
+		panic("unexpected subcommand: " + sub)
 	}
 }
 

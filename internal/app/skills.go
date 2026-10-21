@@ -62,35 +62,44 @@ func skillsRepoURL(bundle harness.Bundle) string {
 // skillsUsage is the one dispatch line for the `kei skills` subcommands.
 const skillsUsage = "usage: kei skills status | kei skills update | kei skills add | kei skills install [--harness KIND] [--dry-run] [--config PATH]"
 
+var skillsGroup = commandGroup{
+	name: "skills",
+	commands: []groupCommand{
+		{name: "status", summary: "Show skill installation status"},
+		{name: "update", summary: "Update installed skills"},
+		{name: "add", summary: "Add a skill"},
+		{name: "install", summary: "Install a skill"},
+	},
+}
+
 func runSkillsCommand(args []string, stdout, stderr io.Writer, client *http.Client) int {
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, skillsUsage)
-		return 2
+	sub, rest, code, handled := skillsGroup.dispatch(args, stdout, stderr)
+	if handled {
+		return code
 	}
-	switch args[0] {
+	switch sub {
 	case "status":
-		if len(args) != 1 {
+		if len(rest) != 0 {
 			fmt.Fprintln(stderr, "usage: kei skills status")
 			return 2
 		}
 		return runSkillsStatus(stdout, stderr, client)
 	case "update":
-		if len(args) != 1 {
+		if len(rest) != 0 {
 			fmt.Fprintln(stderr, "usage: kei skills update")
 			return 2
 		}
 		return runSkillsUpdate(stdout, stderr, client)
 	case "add":
-		if len(args) != 1 {
+		if len(rest) != 0 {
 			fmt.Fprintln(stderr, "usage: kei skills add")
 			return 2
 		}
 		return runSkillsAdd(stdout, stderr)
 	case "install":
-		return runSkillsInstall(args[1:], stdout, stderr, client, harness.Default, harness.OSEnv())
+		return runSkillsInstall(rest, stdout, stderr, client, harness.Default, harness.OSEnv())
 	default:
-		fmt.Fprintln(stderr, skillsUsage)
-		return 2
+		panic("unexpected subcommand: " + sub)
 	}
 }
 

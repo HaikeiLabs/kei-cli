@@ -567,7 +567,7 @@ func TestPoliciesCommandDispatch(t *testing.T) {
 		args []string
 		code int
 	}{
-		{[]string{}, 2},
+		{[]string{}, 0}, // help to stdout
 		{[]string{"unknown"}, 2},
 		{[]string{"list"}, 1}, // no token — workspace auto-picked, fails at credential
 		{[]string{"get", "x"}, 1},

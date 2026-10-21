@@ -144,6 +144,9 @@ func Main(version, command string, args []string, stdout, stderr io.Writer, stdi
 		return newHTTPClient(version, commandPath, timeout)
 	}
 	switch command {
+	case "":
+		PrintUsage(stdout)
+		return 0
 	case "setup":
 		return runSetupCommand(args, stdout, stderr, stdin, newClient(15*time.Second))
 	case "connect":
@@ -257,33 +260,42 @@ func runLoginCommand(version string, args []string, stdout, stderr io.Writer, cl
 	return 0
 }
 
+var botGroup = commandGroup{
+	name: "bot",
+	commands: []groupCommand{
+		{name: "list", summary: "List runtime bots"},
+		{name: "init", summary: "Initialize a new bot"},
+		{name: "agents", summary: "Manage bot agents"},
+		{name: "status", summary: "Show bot status"},
+		{name: "delete", summary: "Delete a bot"},
+		{name: "credential", summary: "Manage bot credentials"},
+		{name: "bind", summary: "Bind a bot"},
+	},
+}
+
 func runBotCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, "bot requires a subcommand")
-		return 2
+	sub, rest, code, handled := botGroup.dispatch(args, stdout, stderr)
+	if handled {
+		return code
 	}
-	if args[0] == "-h" || args[0] == "--help" {
-		fmt.Fprintln(stdout, "Usage: kei bot <command>\n\nCommands:\n  list        List runtime bots\n  init        Initialize a new bot\n  agents      Manage bot agents\n  status      Show bot status\n  delete      Delete a bot\n  credential  Manage bot credentials\n  bind        Bind a bot")
-		return 0
-	}
-	switch args[0] {
+	switch sub {
 	case "list":
-		return runBotListCommand(args[1:], stdout, stderr, client, store)
+		return runBotListCommand(rest, stdout, stderr, client, store)
 	case "init":
-		return runBotInitCommand(args[1:], stdout, stderr, client, store)
+		return runBotInitCommand(rest, stdout, stderr, client, store)
 	case "agents":
-		return runBotAgentsCommand(args[1:], stdout, stderr, client, store)
+		return runBotAgentsCommand(rest, stdout, stderr, client, store)
 	case "status":
-		return runBotStatusCommand(args[1:], stdout, stderr, client, store)
+		return runBotStatusCommand(rest, stdout, stderr, client, store)
 	case "delete":
-		return runBotDeleteCommand(args[1:], stdout, stderr, client, store)
+		return runBotDeleteCommand(rest, stdout, stderr, client, store)
 	case "credential":
-		return runBotCredentialCommand(args[1:], stdout, stderr, client, store)
+		return runBotCredentialCommand(rest, stdout, stderr, client, store)
 	case "bind":
-		return runBotBindCommand(args[1:], stdout, stderr, client, store)
+		return runBotBindCommand(rest, stdout, stderr, client, store)
 	default:
-		fmt.Fprintf(stderr, "unknown bot command %q\n", args[0])
-		return 2
+		// dispatch already validated the subcommand, so this is unreachable.
+		panic("unexpected subcommand: " + sub)
 	}
 }
 

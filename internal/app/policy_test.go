@@ -262,7 +262,7 @@ func TestPolicyCommandDispatch(t *testing.T) {
 		args []string
 		code int
 	}{
-		{[]string{}, 2},
+		{[]string{}, 0}, // help to stdout
 		{[]string{"unknown"}, 2},
 		{[]string{"list"}, 1}, // no token — workspace auto-picked, fails at credential
 		{[]string{"get", "x"}, 1},
@@ -290,8 +290,11 @@ func TestPolicyUsageListedInHelp(t *testing.T) {
 func TestPolicyWiredIntoMain(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Main("test", "policy", nil, &stdout, &stderr, strings.NewReader(""))
-	if code != 2 || !strings.Contains(stderr.String(), "policy requires a subcommand") {
-		t.Fatalf("exit = %d stderr=%q, want the wired policy command", code, stderr.String())
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 (help to stdout); stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Usage:") {
+		t.Fatalf("expected help in stdout, got: %s", stdout.String())
 	}
 }
 

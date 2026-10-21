@@ -31,27 +31,32 @@ type harnessResource struct {
 	LastSyncedAt   string `json:"last_synced_at,omitempty"`
 }
 
+var harnessGroup = commandGroup{
+	name: "harness",
+	commands: []groupCommand{
+		{name: "add", summary: "Add a custom (SDK) harness"},
+		{name: "list", summary: "List harnesses for a runtime installation"},
+		{name: "remove", summary: "Remove a harness"},
+		{name: "sync", summary: "Sync desktop harnesses to the runtime"},
+	},
+}
+
 func runHarnessCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, "harness requires a subcommand: add, list, remove, or sync")
-		return 2
+	sub, rest, code, handled := harnessGroup.dispatch(args, stdout, stderr)
+	if handled {
+		return code
 	}
-	if args[0] == "-h" || args[0] == "--help" {
-		fmt.Fprintln(stdout, "Usage: kei harness <command>\n\nCommands:\n  add     Add a custom (SDK) harness\n  list    List harnesses for a runtime installation\n  remove  Remove a harness\n  sync    Sync desktop harnesses to the runtime")
-		return 0
-	}
-	switch args[0] {
+	switch sub {
 	case "add":
-		return runHarnessAdd(args[1:], stdout, stderr, client, store, harness.Default)
+		return runHarnessAdd(rest, stdout, stderr, client, store, harness.Default)
 	case "list":
-		return runHarnessList(args[1:], stdout, stderr, client, store)
+		return runHarnessList(rest, stdout, stderr, client, store)
 	case "remove":
-		return runHarnessRemove(args[1:], stdout, stderr, client, store, harness.Default)
+		return runHarnessRemove(rest, stdout, stderr, client, store, harness.Default)
 	case "sync":
-		return runHarnessSync(args[1:], stdout, stderr, client, store, harness.Default)
+		return runHarnessSync(rest, stdout, stderr, client, store, harness.Default)
 	default:
-		fmt.Fprintf(stderr, "unknown harness command %q\n", args[0])
-		return 2
+		panic("unexpected subcommand: " + sub)
 	}
 }
 

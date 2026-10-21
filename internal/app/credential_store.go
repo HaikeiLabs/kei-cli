@@ -71,21 +71,29 @@ type patchCredentialStoreRequest struct {
 // proxy with the CLI bearer. The organization comes from the CLI token. With
 // --workspace, get and put address the workspace's override instead.
 
+var credentialStoreGroup = commandGroup{
+	name: "credential-store",
+	commands: []groupCommand{
+		{name: "get", summary: "Get the credential store configuration"},
+		{name: "put", summary: "Create or replace the credential store"},
+		{name: "update", summary: "Update the credential store configuration"},
+	},
+}
+
 func runCredentialStoreCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, "credential-store requires a subcommand: get, put, or update")
-		return 2
+	sub, rest, code, handled := credentialStoreGroup.dispatch(args, stdout, stderr)
+	if handled {
+		return code
 	}
-	switch args[0] {
+	switch sub {
 	case "get":
-		return runCredentialStoreGet(args[1:], stdout, stderr, client, store)
+		return runCredentialStoreGet(rest, stdout, stderr, client, store)
 	case "put":
-		return runCredentialStorePut(args[1:], stdout, stderr, client, store)
+		return runCredentialStorePut(rest, stdout, stderr, client, store)
 	case "update":
-		return runCredentialStoreUpdate(args[1:], stdout, stderr, client, store)
+		return runCredentialStoreUpdate(rest, stdout, stderr, client, store)
 	default:
-		fmt.Fprintf(stderr, "unknown credential-store command %q\n", args[0])
-		return 2
+		panic("unexpected subcommand: " + sub)
 	}
 }
 

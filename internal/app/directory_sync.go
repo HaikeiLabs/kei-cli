@@ -74,25 +74,35 @@ type patchDirectorySyncRequest struct {
 // report shows every stat.
 var directorySyncKeyStats = []string{"assignments", "groups_created", "members_added", "memberships_revoked", "users_created", "would_create", "member_errors"}
 
+var directorySyncGroup = commandGroup{
+	name: "directory-sync",
+	commands: []groupCommand{
+		{name: "get", summary: "Get the directory sync configuration"},
+		{name: "set", summary: "Configure directory sync"},
+		{name: "enable", summary: "Enable directory sync"},
+		{name: "disable", summary: "Disable directory sync"},
+		{name: "report", summary: "Get the latest sync report"},
+	},
+}
+
 func runDirectorySyncCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, "directory-sync requires a subcommand: get, set, enable, disable, or report")
-		return 2
+	sub, rest, code, handled := directorySyncGroup.dispatch(args, stdout, stderr)
+	if handled {
+		return code
 	}
-	switch args[0] {
+	switch sub {
 	case "get":
-		return runDirectorySyncGet(args[1:], stdout, stderr, client, store)
+		return runDirectorySyncGet(rest, stdout, stderr, client, store)
 	case "set":
-		return runDirectorySyncSet(args[1:], stdout, stderr, stdin, client, store)
+		return runDirectorySyncSet(rest, stdout, stderr, stdin, client, store)
 	case "enable":
-		return runDirectorySyncSetEnabled(true, args[1:], stdout, stderr, stdin, client, store)
+		return runDirectorySyncSetEnabled(true, rest, stdout, stderr, stdin, client, store)
 	case "disable":
-		return runDirectorySyncSetEnabled(false, args[1:], stdout, stderr, stdin, client, store)
+		return runDirectorySyncSetEnabled(false, rest, stdout, stderr, stdin, client, store)
 	case "report":
-		return runDirectorySyncReport(args[1:], stdout, stderr, client, store)
+		return runDirectorySyncReport(rest, stdout, stderr, client, store)
 	default:
-		fmt.Fprintf(stderr, "unknown directory-sync command %q\n", args[0])
-		return 2
+		panic("unexpected subcommand: " + sub)
 	}
 }
 
