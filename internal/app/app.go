@@ -150,44 +150,44 @@ func Main(version, command string, args []string, stdout, stderr io.Writer, stdi
 	case "setup":
 		return runSetupCommand(args, stdout, stderr, stdin, newClient(15*time.Second))
 	case "connect":
-		return runConnectCommand(args, stdout, stderr, stdin, newClient(30*time.Second), osKeychainStore{}, defaultConnectSteps())
+		return runConnectCommand(args, stdout, stderr, stdin, newClient(30*time.Second), &tokenStore{stderr: stderr}, defaultConnectSteps())
 	case "login":
-		return runLoginCommand(version, args, stdout, stderr, newClient(15*time.Second), osKeychainStore{})
+		return runLoginCommand(version, args, stdout, stderr, newClient(15*time.Second), &tokenStore{stderr: stderr})
 	case "logout":
-		return runLogoutCommand(args, stdout, stderr, osKeychainStore{})
+		return runLogoutCommand(args, stdout, stderr, &tokenStore{stderr: stderr})
 	case "feedback":
-		return runFeedbackCommand(args, stdout, stderr, stdin, newClient(30*time.Second), osKeychainStore{}, version)
+		return runFeedbackCommand(args, stdout, stderr, stdin, newClient(30*time.Second), &tokenStore{stderr: stderr}, version)
 	case "bot":
-		return runBotCommand(args, stdout, stderr, newClient(15*time.Second), osKeychainStore{})
+		return runBotCommand(args, stdout, stderr, newClient(15*time.Second), &tokenStore{stderr: stderr})
 	case "runtime":
-		return runRuntimeCommand(args, stdout, stderr, newClient(15*time.Second), osKeychainStore{})
+		return runRuntimeCommand(args, stdout, stderr, newClient(15*time.Second), &tokenStore{stderr: stderr})
 	case "service":
 		// "kei service" is a hidden alias for "kei runtime service"
-		return runRuntimeCommand(append([]string{"service"}, args...), stdout, stderr, newClient(30*time.Second), osKeychainStore{})
+		return runRuntimeCommand(append([]string{"service"}, args...), stdout, stderr, newClient(30*time.Second), &tokenStore{stderr: stderr})
 	case "model-profiles":
-		return runModelProfilesCommand(args, stdout, stderr, stdin, newClient(30*time.Second), osKeychainStore{})
+		return runModelProfilesCommand(args, stdout, stderr, stdin, newClient(30*time.Second), &tokenStore{stderr: stderr})
 	case "credential-store":
-		return runCredentialStoreCommand(args, stdout, stderr, newClient(30*time.Second), osKeychainStore{})
+		return runCredentialStoreCommand(args, stdout, stderr, newClient(30*time.Second), &tokenStore{stderr: stderr})
 	case "directory-sync":
-		return runDirectorySyncCommand(args, stdout, stderr, stdin, newClient(30*time.Second), osKeychainStore{})
+		return runDirectorySyncCommand(args, stdout, stderr, stdin, newClient(30*time.Second), &tokenStore{stderr: stderr})
 	case "workspaces":
-		return runWorkspaceCommand(args, stdout, stderr, stdin, newClient(30*time.Second), osKeychainStore{})
+		return runWorkspaceCommand(args, stdout, stderr, stdin, newClient(30*time.Second), &tokenStore{stderr: stderr})
 	case "users":
-		return runUsersCommand(args, stdout, stderr, stdin, newClient(30*time.Second), osKeychainStore{})
+		return runUsersCommand(args, stdout, stderr, stdin, newClient(30*time.Second), &tokenStore{stderr: stderr})
 	case "groups":
-		return runGroupsCommand(args, stdout, stderr, stdin, newClient(30*time.Second), osKeychainStore{})
+		return runGroupsCommand(args, stdout, stderr, stdin, newClient(30*time.Second), &tokenStore{stderr: stderr})
 	case "connectors":
-		return runConnectorsCommand(args, stdout, stderr, stdin, newClient(30*time.Second), osKeychainStore{})
+		return runConnectorsCommand(args, stdout, stderr, stdin, newClient(30*time.Second), &tokenStore{stderr: stderr})
 	case "policy":
-		return runPolicyCommand(args, stdout, stderr, stdin, newClient(30*time.Second), osKeychainStore{})
+		return runPolicyCommand(args, stdout, stderr, stdin, newClient(30*time.Second), &tokenStore{stderr: stderr})
 	case "policies":
-		return runPoliciesCommand(args, stdout, stderr, stdin, newClient(30*time.Second), osKeychainStore{})
+		return runPoliciesCommand(args, stdout, stderr, stdin, newClient(30*time.Second), &tokenStore{stderr: stderr})
 	case "harness":
-		return runHarnessCommand(args, stdout, stderr, newClient(30*time.Second), osKeychainStore{})
+		return runHarnessCommand(args, stdout, stderr, newClient(30*time.Second), &tokenStore{stderr: stderr})
 	case "skills":
 		return runSkillsCommand(args, stdout, stderr, newClient(30*time.Second))
 	case "audit":
-		return runAuditCommand(args, stdout, stderr, stdin, newClient(15*time.Second), osKeychainStore{})
+		return runAuditCommand(args, stdout, stderr, stdin, newClient(15*time.Second), &tokenStore{stderr: stderr})
 	case "docs":
 		return runDocsCommand(args, stdout, stderr, docs.DefaultBaseURL)
 	case "doctor":
