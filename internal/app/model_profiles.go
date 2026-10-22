@@ -60,7 +60,7 @@ type createModelProfileRequest struct {
 	AuthType                      string            `json:"auth_type"`
 	AgentID                       string            `json:"agent_id,omitempty"`
 	IsWorkspaceDefault            bool              `json:"is_workspace_default,omitempty"`
-	CredentialStoreInstallationID string            `json:"credential_store_installation_id"`
+	CredentialStoreInstallationID string            `json:"credential_store_installation_id,omitempty"`
 	Recipients                    []sealedRecipient `json:"recipients,omitempty"`
 }
 
@@ -546,10 +546,15 @@ func runModelProfilesCreate(args []string, stdout, stderr io.Writer, stdin io.Re
 	if !ok {
 		return 1
 	}
-	storeID, recipients, err := session.sealForProfile(*agentID, apiKey)
-	if err != nil {
-		fmt.Fprintf(stderr, "model-profiles create: %v\n", err)
-		return 1
+	var storeID string
+	var recipients []sealedRecipient
+	if *authType == "api_key" {
+		var err error
+		storeID, recipients, err = session.sealForProfile(*agentID, apiKey)
+		if err != nil {
+			fmt.Fprintf(stderr, "model-profiles create: %v\n", err)
+			return 1
+		}
 	}
 	_, payload, err := session.do(http.MethodPost, session.profilesPath(), nil, createModelProfileRequest{
 		DisplayName:                   *displayName,

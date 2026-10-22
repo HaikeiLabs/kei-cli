@@ -495,7 +495,7 @@ kei credential-store put --workspace e2e --secret-backend aws-secrets-manager \
   --backend-config '{"region":"us-east-1","account_id":"123456789012"}' --secret-name-prefix kei/e2e/store
 kei credential-store get --workspace e2e
 
-# A profile with no credential.
+# A keyless profile does not require a credential store or runtime.
 kei model-profiles create --workspace Main --display-name local --endpoint https://llm.internal/v1 \
   --default-model llama-3 --auth-type none --workspace-default
 
