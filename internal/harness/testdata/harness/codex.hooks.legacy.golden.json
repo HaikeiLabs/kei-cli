@@ -19,7 +19,8 @@
             "timeout": 5,
             "type": "command"
           }
-        ]
+        ],
+        "matcher": "*"
       }
     ],
     "PostToolUse": [
@@ -30,7 +31,8 @@
             "timeout": 5,
             "type": "command"
           }
-        ]
+        ],
+        "matcher": "*"
       }
     ],
     "SessionStart": [

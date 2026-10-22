@@ -110,6 +110,9 @@ func (codex) HookSpec(env Env) *HookSpec {
 		}
 		hook := map[string]any{"type": "command", "command": command, "timeout": timeout}
 		group := map[string]any{"hooks": []any{hook}}
+		if event.name == "PreToolUse" || event.name == "PostToolUse" {
+			group["matcher"] = "*"
+		}
 		events[event.name] = []any{group}
 	}
 	spec := mustJSON(map[string]any{"hooks": events})
