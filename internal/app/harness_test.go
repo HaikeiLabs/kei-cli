@@ -935,6 +935,26 @@ func TestHarnessSyncCheckDetectsAndSyncHealsStaleWriter(t *testing.T) {
 			_, _ = w.Write([]byte(`{"id":"runtime-id","org_id":"org-id","platform":"cli"}`))
 		case "/api/v1/runtime/policy-bundles/current":
 			_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v1","bundle_id":"b","bundle_version":2,"policy_revision":1,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + notAfter + `","harness_match_semantics":"kei.harness-match/v1","harnesses":[],"policy_set":{"policies":[{"id":"p1","src_pattern":"*","dst_pattern":"shell:git","effect":"permit","enabled":true},{"id":"p2","src_pattern":"*","dst_pattern":"shell:rm","effect":"deny","enabled":true}]}}`))
+		case "/api/v1/runtime/harnesses:reportSync":
+			if r.Method != http.MethodPost {
+				t.Errorf("desktop sync report method = %s, want POST", r.Method)
+			}
+			if got := r.Header.Get("Authorization"); got != "Bearer "+token {
+				t.Errorf("desktop sync report authorization = %q", got)
+			}
+			var report struct {
+				Kind                    string `json:"kind"`
+				LastSyncedAt            string `json:"last_synced_at"`
+				LastSyncedBundleVersion int64  `json:"last_synced_bundle_version"`
+				LastSyncedDigest        string `json:"last_synced_digest"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&report); err != nil {
+				t.Errorf("decode desktop sync report: %v", err)
+			}
+			if report.Kind != "claude_code" || report.LastSyncedBundleVersion != 2 || report.LastSyncedAt == "" || !strings.HasPrefix(report.LastSyncedDigest, "sha256:") || len(report.LastSyncedDigest) != 71 {
+				t.Errorf("desktop sync report = %+v", report)
+			}
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
