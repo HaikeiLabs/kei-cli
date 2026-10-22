@@ -79,8 +79,9 @@ func fakeDoctorProbes(t *testing.T, files map[string][]byte) doctorProbes {
 		heartbeatProcessStart: func() (time.Time, bool) {
 			return time.Time{}, false
 		},
-		configPath: "/home/test/.config/kei/config.yaml",
-		registry:   harness.NewRegistry(),
+		configPath:          "/home/test/.config/kei/config.yaml",
+		registry:            harness.NewRegistry(),
+		heartbeatFromServer: func(config runtimeConfig) (*time.Time, error) { return nil, errHeartbeatNotAvailable },
 	}
 }
 
@@ -154,6 +155,67 @@ func TestCheckHeartbeat(t *testing.T) {
 				t.Fatalf("got %+v, want WARN containing %q", got, tt.detail)
 			}
 		})
+	}
+}
+
+func TestCheckHeartbeatServer(t *testing.T) {
+	now := doctorNow
+	fresh := now.Add(-40 * time.Second)
+	stale := now.Add(-30 * time.Minute)
+	tests := []struct {
+		name       string
+		lastHB     *time.Time
+		err        error
+		configOK   bool
+		wantStatus string
+		wantDetail string
+		wantFix    string
+	}{
+		{name: "fresh heartbeat", lastHB: &fresh, configOK: true, wantStatus: doctorPass, wantDetail: "last heartbeat 40s ago", wantFix: ""},
+		{name: "stale heartbeat", lastHB: &stale, configOK: true, wantStatus: doctorWarn, wantDetail: "last heartbeat 30m", wantFix: "kei runtime service status"},
+		{name: "null heartbeat (never)", lastHB: nil, configOK: true, wantStatus: doctorFail, wantDetail: "no heartbeat received yet", wantFix: "kei runtime service status"},
+		{name: "not logged in", lastHB: nil, err: errHeartbeatNotAvailable, configOK: true, wantStatus: doctorWarn, wantDetail: "/home/test/Library/Logs/kei-runtime.log", wantFix: "kei runtime service status"},
+		{name: "no config file", lastHB: nil, configOK: false, wantStatus: doctorWarn, wantDetail: "/home/test/Library/Logs/kei-runtime.log", wantFix: "kei runtime service status"},
+		{name: "request error", lastHB: nil, err: errors.New("network error"), configOK: true, wantStatus: doctorWarn, wantDetail: "/home/test/Library/Logs/kei-runtime.log", wantFix: "kei runtime service status"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := fakeDoctorProbes(t, nil)
+			p.now = func() time.Time { return now }
+			if !tt.configOK {
+				p.loadConfig = func(string) (runtimeConfig, error) {
+					return runtimeConfig{}, os.ErrNotExist
+				}
+			}
+			p.heartbeatFromServer = func(config runtimeConfig) (*time.Time, error) {
+				return tt.lastHB, tt.err
+			}
+			got := checkHeartbeat(p, doctorResult{Status: doctorPass})
+			if got.Status != tt.wantStatus || !strings.Contains(got.Detail, tt.wantDetail) || got.Fix != tt.wantFix {
+				t.Fatalf("checkHeartbeat = {%s %q fix=%q}, want {%s %q fix=%q}",
+					got.Status, got.Detail, got.Fix, tt.wantStatus, tt.wantDetail, tt.wantFix)
+			}
+		})
+	}
+}
+
+func TestFriendlyDuration(t *testing.T) {
+	tests := []struct {
+		d    time.Duration
+		want string
+	}{
+		{40 * time.Second, "40s"},
+		{90 * time.Second, "1m 30s"},
+		{5 * time.Minute, "5m"},
+		{62 * time.Minute, "1h 2m"},
+		{2 * time.Hour, "2h"},
+		{25*time.Hour + 30*time.Minute, "25h 30m"},
+	}
+	for _, tt := range tests {
+		got := friendlyDuration(tt.d)
+		if got != tt.want {
+			t.Errorf("friendlyDuration(%v) = %q, want %q", tt.d, got, tt.want)
+		}
 	}
 }
 
