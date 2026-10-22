@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -54,16 +53,16 @@ func runWorkspaceCommand(args []string, stdout, stderr io.Writer, stdin io.Reade
 // runWorkspaceUseCommand saves the named workspace as the current one for the
 // login on this host, so later commands can omit --workspace.
 func runWorkspaceUseCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("workspaces use", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	if err := flags.Parse(args); err != nil {
-		return 2
+	lc := newCommandFlags("workspaces", "use", "Set the current workspace", stdout, stderr)
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
-	if flags.NArg() != 1 {
+	if lc.fs.NArg() != 1 {
 		fmt.Fprintln(stderr, "workspaces use requires one workspace NAME")
 		return 2
 	}
-	name := flags.Arg(0)
+	name := lc.fs.Arg(0)
 
 	baseURL, err := normalizedKeiWebURL(keiWebURL())
 	if err != nil {
@@ -90,7 +89,12 @@ func runWorkspaceUseCommand(args []string, stdout, stderr io.Writer, client *htt
 
 // runWorkspaceCurrentCommand prints the current workspace saved for this host.
 func runWorkspaceCurrentCommand(args []string, stdout, stderr io.Writer) int {
-	if len(args) != 0 {
+	lc := newCommandFlags("workspaces", "current", "Show the current workspace", stdout, stderr)
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
+	}
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "workspaces current accepts no positional arguments")
 		return 2
 	}
@@ -113,13 +117,13 @@ func runWorkspaceCurrentCommand(args []string, stdout, stderr io.Writer) int {
 }
 
 func runWorkspaceListCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("workspaces list", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	if err := flags.Parse(args); err != nil {
-		return 2
+	lc := newCommandFlags("workspaces", "list", "List workspaces", stdout, stderr)
+	jsonOutput := jsonFlag(lc.fs)
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
-	if flags.NArg() != 0 {
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "workspaces list accepts no positional arguments")
 		return 2
 	}
@@ -172,13 +176,23 @@ func runWorkspaceListCommand(args []string, stdout, stderr io.Writer, client *ht
 // organization. The body carries only the name: the server records the
 // authenticated caller as the creator and grants them initial membership.
 func runWorkspaceCreateCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("workspaces create", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	name := flags.String("name", "", "workspace name (required)")
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	yes := flags.Bool("yes", false, "confirm without prompting")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || strings.TrimSpace(*name) == "" {
-		fmt.Fprintln(stderr, "workspaces create requires --name NAME")
+	lc := newCommandFlags("workspaces", "create", "Create a new workspace", stdout, stderr)
+	name := lc.fs.String("name", "", "workspace name (required)")
+	jsonOutput := jsonFlag(lc.fs)
+	yes := yesFlag(lc.fs)
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
+	}
+	if lc.fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "workspaces create accepts no positional arguments")
+		return 2
+	}
+	if !requireFlags(lc.fs, stderr, "name") {
+		return 2
+	}
+	if strings.TrimSpace(*name) == "" {
+		fmt.Fprintln(stderr, "--name must not be empty")
 		return 2
 	}
 	if !confirmWrite(stdin, stderr, *yes, "Create workspace "+*name+"?") {
