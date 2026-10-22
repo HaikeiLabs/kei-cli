@@ -8,7 +8,8 @@
             "timeout": 5,
             "type": "command"
           }
-        ]
+        ],
+        "matcher": "*"
       }
     ],
     "PreToolUse": [
@@ -19,7 +20,8 @@
             "timeout": 5,
             "type": "command"
           }
-        ]
+        ],
+        "matcher": "*"
       }
     ],
     "SessionEnd": [

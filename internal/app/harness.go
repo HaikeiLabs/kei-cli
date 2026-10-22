@@ -834,8 +834,9 @@ func syncHarnessBundle(ctx context.Context, config runtimeConfig, kindFilter str
 		}
 		printLines(stderr, result.Warnings)
 		if !dryRun {
-			// Report only when the bundle still carries a registered harness for
-			// this kind; sync itself does not depend on one.
+			// Registered SDK integrations retain their per-harness sync report.
+			// Desktop harnesses are intentionally not registered; report their
+			// successful local sync against the installation instead.
 			if registered := findRegisteredHarness(bundle, h.Kind()); registered != nil {
 				if err := reportHarnessSync(ctx, client, config, *registered, bundle, payload, now()); err != nil {
 					fmt.Fprintf(stderr, "harness sync: report sync for %s: %v\n", registered.AgentID, err)
@@ -846,6 +847,9 @@ func syncHarnessBundle(ctx context.Context, config runtimeConfig, kindFilter str
 				if err := reportInstalledSkills(ctx, client, config, registered.AgentID); err != nil {
 					fmt.Fprintf(stderr, "harness sync: report installed skills for %s: %v\n", registered.AgentID, err)
 				}
+			} else if err := reportDesktopHarnessSync(ctx, client, config, h.Kind(), bundle, payload, now()); err != nil {
+				fmt.Fprintf(stderr, "harness sync: report desktop sync for %s: %v\n", h.Kind(), err)
+				return 1
 			}
 		}
 		printLines(stdout, result.Notes)
@@ -1017,6 +1021,24 @@ func skillVersion(hash string) string {
 		return hash[:12]
 	}
 	return hash
+}
+
+func reportDesktopHarnessSync(ctx context.Context, client *http.Client, config runtimeConfig, kind string, bundle harness.Bundle, payload []byte, now time.Time) error {
+	digest := sha256.Sum256(payload)
+	body := map[string]any{
+		"kind":                       kind,
+		"last_synced_at":             now.UTC().Format(time.RFC3339Nano),
+		"last_synced_bundle_version": bundle.BundleVersion,
+		"last_synced_digest":         "sha256:" + hex.EncodeToString(digest[:]),
+	}
+	_, status, err := harnessRequest(ctx, client, strings.TrimRight(config.ControlPlaneURL, "/"), config.RuntimeToken, http.MethodPost, "/api/v1/runtime/harnesses:reportSync", body)
+	if err != nil {
+		return err
+	}
+	if status < 200 || status > 299 {
+		return fmt.Errorf("runtime desktop sync report returned HTTP %d", status)
+	}
+	return nil
 }
 
 func fileExists(path string) bool {

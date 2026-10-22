@@ -180,7 +180,8 @@ func TestCodexHookSpecProducesGroupedShape(t *testing.T) {
 	}
 	var doc struct {
 		Hooks map[string][]struct {
-			Hooks []struct {
+			Matcher string `json:"matcher"`
+			Hooks   []struct {
 				Command string `json:"command"`
 			} `json:"hooks"`
 		} `json:"hooks"`
@@ -195,6 +196,9 @@ func TestCodexHookSpecProducesGroupedShape(t *testing.T) {
 		}
 		if len(groups) != 1 {
 			t.Fatalf("hooks.%s: want 1 group, got %d", event, len(groups))
+		}
+		if groups[0].Matcher != "*" {
+			t.Fatalf("hooks.%s[0].matcher = %q, want wildcard matcher", event, groups[0].Matcher)
 		}
 		if len(groups[0].Hooks) != 1 {
 			t.Fatalf("hooks.%s[0].hooks: want 1 hook, got %d", event, len(groups[0].Hooks))
