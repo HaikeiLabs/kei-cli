@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"regexp"
@@ -64,9 +65,15 @@ type doctorProbes struct {
 	executable            func() (string, error)
 	fileModTime           func(path string) (time.Time, bool)
 	heartbeatProcessStart func() (time.Time, bool)
-	configPath            string
-	harnessEnv            harness.Env
-	registry              *harness.Registry
+	// heartbeatFromServer reports the last heartbeat time from the Kei API.
+	// Returns errHeartbeatNotAvailable when the installation cannot be
+	// resolved or the user is not logged in (silent skip, keeps WARN).
+	// Returns a non-nil error when a server request was attempted but failed
+	// (caller keeps WARN on error).
+	heartbeatFromServer func(config runtimeConfig) (*time.Time, error)
+	configPath          string
+	harnessEnv          harness.Env
+	registry            *harness.Registry
 }
 
 func defaultDoctorProbes() (doctorProbes, error) {
@@ -92,6 +99,7 @@ func defaultDoctorProbes() (doctorProbes, error) {
 		configPath: configPath,
 		harnessEnv: harness.OSEnv(),
 		registry:   harness.Default,
+		heartbeatFromServer: defaultHeartbeatFromServer,
 	}, nil
 }
 
@@ -254,15 +262,108 @@ func checkRuntimeService(p doctorProbes) doctorResult {
 	return r
 }
 
+// errHeartbeatNotAvailable is returned by heartbeatFromServer when the
+// installation cannot be resolved or the user is not logged in. The caller
+// treats it as a silent skip and keeps the WARN fallback.
+var errHeartbeatNotAvailable = errors.New("heartbeat data not available")
+
+// defaultHeartbeatFromServer tries to fetch the last heartbeat from the Kei
+// API. It loads the CLI bearer token from the keychain, resolves the runtime
+// installation via the runtime whoami endpoint, and reads last_heartbeat_at
+// from the runtime installation status endpoint. Returns errHeartbeatNotAvailable
+// when not logged in or the installation cannot be resolved (silent skip).
+func defaultHeartbeatFromServer(config runtimeConfig) (*time.Time, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	baseURL, err := normalizedKeiWebURL(keiWebURL())
+	if err != nil {
+		return nil, errHeartbeatNotAvailable
+	}
+
+	store := osKeychainStore{}
+	cliToken, err := store.Load(baseURL)
+	if err != nil {
+		return nil, errHeartbeatNotAvailable // not logged in
+	}
+
+	identity, err := verifyRuntimeToken(ctx, client, config.ControlPlaneURL, config.RuntimeToken)
+	if err != nil {
+		return nil, errHeartbeatNotAvailable // installation not resolvable
+	}
+
+	status, err := getRuntimeInstallationStatus(ctx, client, baseURL, cliToken, identity.OrgID, identity.ID)
+	if err != nil {
+		return nil, err // request error, caller keeps WARN
+	}
+
+	return status.LastHeartbeatAt, nil
+}
+
+// friendlyDuration formats a positive duration in a concise human-readable
+// form: "40s", "1m 30s", "5m", "1h 2m", "2h".
+func friendlyDuration(d time.Duration) string {
+	d = d.Round(time.Second)
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		m := int(d.Minutes())
+		s := int(d.Seconds()) % 60
+		if s == 0 {
+			return fmt.Sprintf("%dm", m)
+		}
+		return fmt.Sprintf("%dm %ds", m, s)
+	}
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	if m == 0 {
+		return fmt.Sprintf("%dh", h)
+	}
+	return fmt.Sprintf("%dh %dm", h, m)
+}
+
 // checkHeartbeat reports on the runtime's heartbeat. The service runs
 // kei-proxy runtime heartbeat in text mode, which records no per-beat
-// timestamp locally, so the check points at the log rather than guess.
+// timestamp locally. When the user is logged in and the installation can be
+// resolved, the check reads last_heartbeat_at from the Kei API.
 func checkHeartbeat(p doctorProbes, service doctorResult) doctorResult {
 	r := doctorResult{Name: "heartbeat", Status: doctorWarn, Fix: "kei runtime service status"}
 	if service.Status == doctorFail {
 		r.Detail = "runtime service is not running, so no heartbeats are being sent"
 		return r
 	}
+
+	// Attempt server-side heartbeat check when local config is available.
+	if config, err := p.loadConfig(p.configPath); err == nil && config.RuntimeToken != "" && config.ControlPlaneURL != "" {
+		lastHB, reqErr := p.heartbeatFromServer(config)
+		if reqErr == nil {
+			// Server responded with a heartbeat timestamp.
+			if lastHB != nil {
+				age := p.now().Sub(*lastHB)
+				if age < 5*time.Minute {
+					r.Status = doctorPass
+					r.Detail = "last heartbeat " + friendlyDuration(age) + " ago"
+					r.Fix = ""
+					return r
+				}
+				r.Detail = "last heartbeat " + friendlyDuration(age) + " ago; restart the service if this seems wrong"
+				return r
+			}
+			// Server returned null last_heartbeat_at — never heartbeated.
+			r.Status = doctorFail
+			r.Detail = "no heartbeat received yet; run 'kei runtime service install' and check the service is running"
+			return r
+		}
+		if errors.Is(reqErr, errHeartbeatNotAvailable) {
+			// Not logged in or installation not resolved — silently fall
+			// through to the WARN fallback below.
+		} else {
+			// Network or server error — also fall through to WARN.
+		}
+	}
+
 	logHint := "journalctl --user -u " + serviceNameFor(p.goos)
 	if p.goos == "darwin" {
 		logHint = "~/Library/Logs/kei-runtime.log"
