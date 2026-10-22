@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -67,12 +66,18 @@ func runGroupsCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, 
 // runGroupsList lists the groups of one workspace, so a script can find a
 // group's ID by name. --workspace is required, like groups create.
 func runGroupsList(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("groups list", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := flags.String("workspace", "", "workspace name or ID (required)")
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+	lc := newCommandFlags("groups", "list", "List groups", stdout, stderr)
+	workspace := workspaceFlag(lc.fs)
+	jsonOutput := jsonFlag(lc.fs)
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
+	}
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "groups list accepts no positional arguments")
+		return 2
+	}
+	if !requireFlags(lc.fs, stderr, "workspace") {
 		return 2
 	}
 	session, ok := openAPISession("groups list", stderr, client, store)
@@ -126,15 +131,25 @@ func runGroupsList(args []string, stdout, stderr io.Writer, client *http.Client,
 // commands, --workspace is required: a create never lands in the
 // organization's default workspace by omission.
 func runGroupsCreate(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("groups create", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	name := flags.String("name", "", "group name (required)")
-	description := flags.String("description", "", "group description")
-	workspace := flags.String("workspace", "", "workspace name or ID (required)")
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	yes := flags.Bool("yes", false, "confirm without prompting")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || *name == "" {
-		fmt.Fprintln(stderr, "groups create requires --name NAME and --workspace WORKSPACE")
+	lc := newCommandFlags("groups", "create", "Create a group", stdout, stderr)
+	name := lc.fs.String("name", "", "group name (required)")
+	description := lc.fs.String("description", "", "group description")
+	workspace := workspaceFlag(lc.fs)
+	jsonOutput := jsonFlag(lc.fs)
+	yes := yesFlag(lc.fs)
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
+	}
+	if lc.fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "groups create accepts no positional arguments")
+		return 2
+	}
+	if !requireFlags(lc.fs, stderr, "name", "workspace") {
+		return 2
+	}
+	if *name == "" {
+		fmt.Fprintln(stderr, "--name must not be empty")
 		return 2
 	}
 	if !confirmWrite(stdin, stderr, *yes, "Create group "+*name+"?") {
@@ -167,14 +182,23 @@ func runGroupsCreate(args []string, stdout, stderr io.Writer, stdin io.Reader, c
 }
 
 func runGroupsDelete(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("groups delete", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := flags.String("workspace", "", "workspace name or ID (required)")
-	yes := flags.Bool("yes", false, "confirm without prompting")
-	force := flags.Bool("force", false, "delete even if policies reference the group")
-	pos, err := parsePositionals(flags, args, 1)
+	lc := newCommandFlags("groups", "delete", "Delete a group", stdout, stderr)
+	workspace := workspaceFlag(lc.fs)
+	yes := yesFlag(lc.fs)
+	force := lc.fs.Bool("force", false, "delete even if policies reference the group")
+	// Intercept -h/--help before parsePositionals.
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			lc.printUsage(lc.stdout)
+			return 0
+		}
+	}
+	pos, err := parsePositionals(lc.fs, args, 1)
 	if err != nil {
 		fmt.Fprintln(stderr, "groups delete requires a group name or ID and --workspace WORKSPACE")
+		return 2
+	}
+	if !requireFlags(lc.fs, stderr, "workspace") {
 		return 2
 	}
 	group := pos[0]
@@ -333,11 +357,17 @@ func groupsQuery(session *apiSession, workspaceID string) url.Values {
 }
 
 func runGroupsMembersList(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("groups members list", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	workspace := flags.String("workspace", "", "workspace name or ID (default: the organization's default workspace)")
-	pos, err := parsePositionals(flags, args, 1)
+	lc := newCommandFlags("groups", "members list", "List group members", stdout, stderr)
+	jsonOutput := jsonFlag(lc.fs)
+	workspace := workspaceFlagHelp(lc.fs, "workspace name or ID (default: the organization's default workspace)")
+	// Intercept -h/--help before parsePositionals.
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			lc.printUsage(lc.stdout)
+			return 0
+		}
+	}
+	pos, err := parsePositionals(lc.fs, args, 1)
 	if err != nil {
 		fmt.Fprintln(stderr, "groups members list requires a group ID")
 		return 2
@@ -396,11 +426,17 @@ func runGroupsMembersList(args []string, stdout, stderr io.Writer, client *http.
 }
 
 func runGroupsMembersAdd(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("groups members add", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := flags.String("workspace", "", "workspace name or ID (default: the organization's default workspace)")
-	yes := flags.Bool("yes", false, "confirm without prompting")
-	pos, err := parsePositionals(flags, args, 2)
+	lc := newCommandFlags("groups", "members add", "Add a member to a group", stdout, stderr)
+	workspace := workspaceFlagHelp(lc.fs, "workspace name or ID (default: the organization's default workspace)")
+	yes := yesFlag(lc.fs)
+	// Intercept -h/--help before parsePositionals.
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			lc.printUsage(lc.stdout)
+			return 0
+		}
+	}
+	pos, err := parsePositionals(lc.fs, args, 2)
 	if err != nil {
 		fmt.Fprintln(stderr, "groups members add requires a group ID and a user ID")
 		return 2
@@ -432,11 +468,17 @@ func runGroupsMembersAdd(args []string, stdout, stderr io.Writer, stdin io.Reade
 }
 
 func runGroupsMembersRemove(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("groups members remove", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := flags.String("workspace", "", "workspace name or ID (default: the organization's default workspace)")
-	yes := flags.Bool("yes", false, "confirm without prompting")
-	pos, err := parsePositionals(flags, args, 2)
+	lc := newCommandFlags("groups", "members remove", "Remove a member from a group", stdout, stderr)
+	workspace := workspaceFlagHelp(lc.fs, "workspace name or ID (default: the organization's default workspace)")
+	yes := yesFlag(lc.fs)
+	// Intercept -h/--help before parsePositionals.
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			lc.printUsage(lc.stdout)
+			return 0
+		}
+	}
+	pos, err := parsePositionals(lc.fs, args, 2)
 	if err != nil {
 		fmt.Fprintln(stderr, "groups members remove requires a group ID and a user ID")
 		return 2
