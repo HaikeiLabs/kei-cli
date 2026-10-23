@@ -360,7 +360,7 @@ func runAuditKeysListCommand(args []string, stdout, stderr io.Writer, client *ht
 // https://github.com/HaikeiLabs/kei/blob/main/docs/adr/030-audit-args-encryption.md
 // See also HAI-348.
 func runAuditKeysDisableCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("audit keys", "disable", "Disable an audit encryption key", stdout, stderr)
+	lc := newCommandFlags("audit keys", "disable", "Disable an audit encryption key", stdout, stderr).WithArgs("KEY_ID")
 	yes := yesFlag(lc.fs)
 	rc, ok := parseLeaf(lc, args)
 	if !ok {

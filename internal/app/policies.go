@@ -595,7 +595,7 @@ func runPolicyCreate(args []string, stdout, stderr io.Writer, client *http.Clien
 }
 
 func runPolicyTest(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("policy", "test", "Test a policy", stdout, stderr)
+	lc := newCommandFlags("policy", "test", "Test a policy", stdout, stderr).WithArgs("TARGET")
 	workspace := workspaceFlag(lc.fs)
 	as := lc.fs.String("as", "", "subject to evaluate (e.g. group:Engineering)")
 	jsonOutput := jsonFlag(lc.fs)

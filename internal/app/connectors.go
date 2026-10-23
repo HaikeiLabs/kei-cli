@@ -379,7 +379,7 @@ func runConnectorsList(args []string, stdout, stderr io.Writer, client *http.Cli
 }
 
 func runConnectorsGet(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("connectors", "get", "Get a connector by ID", stdout, stderr)
+	lc := newCommandFlags("connectors", "get", "Get a connector by ID", stdout, stderr).WithArgs("NAME")
 	workspace := workspaceFlag(lc.fs)
 	jsonOutput := lc.fs.Bool("json", false, "output as JSON")
 	id, rc, ok := parseConnectorLeaf(lc, args)
@@ -476,7 +476,7 @@ func runConnectorsGet(args []string, stdout, stderr io.Writer, client *http.Clie
 }
 
 func runConnectorsConnect(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("connectors", "connect", "Connect a connector (OAuth)", stdout, stderr)
+	lc := newCommandFlags("connectors", "connect", "Connect a connector (OAuth)", stdout, stderr).WithArgs("NAME")
 	workspace := workspaceFlag(lc.fs)
 	noBrowser := lc.fs.Bool("no-browser", false, "print the auth URL without opening a browser")
 	id, rc, ok := parseConnectorLeaf(lc, args)
@@ -585,7 +585,7 @@ func runConnectorsConnect(args []string, stdout, stderr io.Writer, client *http.
 }
 
 func runConnectorsReconnect(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("connectors", "reconnect", "Reconnect a connector", stdout, stderr)
+	lc := newCommandFlags("connectors", "reconnect", "Reconnect a connector", stdout, stderr).WithArgs("NAME")
 	workspace := workspaceFlag(lc.fs)
 	noBrowser := lc.fs.Bool("no-browser", false, "print the consent URL without opening a browser")
 	keepSecret := lc.fs.Bool("keep-secret", false, "reactivate a shared-secret connector without replacing its secret")
@@ -663,7 +663,7 @@ func runConnectorsReconnect(args []string, stdout, stderr io.Writer, stdin io.Re
 }
 
 func runConnectorsDelete(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("connectors", "delete", "Delete a connector", stdout, stderr)
+	lc := newCommandFlags("connectors", "delete", "Delete a connector", stdout, stderr).WithArgs("NAME")
 	workspace := workspaceFlag(lc.fs)
 	yes := lc.fs.Bool("yes", false, "confirm deletion")
 	id, rc, ok := parseConnectorLeaf(lc, args)
@@ -691,7 +691,7 @@ func runConnectorsDelete(args []string, stdout, stderr io.Writer, client *http.C
 }
 
 func runConnectorsTest(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("connectors", "test", "Test a connector", stdout, stderr)
+	lc := newCommandFlags("connectors", "test", "Test a connector", stdout, stderr).WithArgs("NAME")
 	workspace := workspaceFlag(lc.fs)
 	id, rc, ok := parseConnectorLeaf(lc, args)
 	if !ok {

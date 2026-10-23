@@ -1,8 +1,6 @@
 package app
 
 import (
-	"bytes"
-	"strings"
 	"testing"
 )
 
@@ -33,7 +31,7 @@ func TestLeafHelpModelProfiles(t *testing.T) {
 			command:  "model-profiles",
 			args:     []string{"get", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei model-profiles get [flags]",
+			wantOut:  "Usage: kei model-profiles get PROFILE [flags]",
 			wantErr:  "",
 		},
 		{
@@ -41,7 +39,7 @@ func TestLeafHelpModelProfiles(t *testing.T) {
 			args:     []string{"get", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei model-profiles get [flags]",
+			wantErr:  "Usage: kei model-profiles get PROFILE [flags]",
 		},
 		// model-profiles get requires a positional PROFILE; skip (c) (not a flag).
 
@@ -76,7 +74,7 @@ func TestLeafHelpModelProfiles(t *testing.T) {
 			command:  "model-profiles",
 			args:     []string{"update", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei model-profiles update [flags]",
+			wantOut:  "Usage: kei model-profiles update PROFILE [flags]",
 			wantErr:  "",
 		},
 		{
@@ -84,7 +82,7 @@ func TestLeafHelpModelProfiles(t *testing.T) {
 			args:     []string{"update", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei model-profiles update [flags]",
+			wantErr:  "Usage: kei model-profiles update PROFILE [flags]",
 		},
 		// model-profiles update requires a positional PROFILE; skip (c) (not a flag).
 
@@ -93,7 +91,7 @@ func TestLeafHelpModelProfiles(t *testing.T) {
 			command:  "model-profiles",
 			args:     []string{"delete", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei model-profiles delete [flags]",
+			wantOut:  "Usage: kei model-profiles delete PROFILE [flags]",
 			wantErr:  "",
 		},
 		{
@@ -101,7 +99,7 @@ func TestLeafHelpModelProfiles(t *testing.T) {
 			args:     []string{"delete", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei model-profiles delete [flags]",
+			wantErr:  "Usage: kei model-profiles delete PROFILE [flags]",
 		},
 		// model-profiles delete --yes is required (flag); skip (c) because
 		// parsePolicyFlags first checks for the positional PROFILE arg and
@@ -113,7 +111,7 @@ func TestLeafHelpModelProfiles(t *testing.T) {
 			command:  "model-profiles",
 			args:     []string{"set-default", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei model-profiles set-default [flags]",
+			wantOut:  "Usage: kei model-profiles set-default PROFILE [flags]",
 			wantErr:  "",
 		},
 		{
@@ -121,7 +119,7 @@ func TestLeafHelpModelProfiles(t *testing.T) {
 			args:     []string{"set-default", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei model-profiles set-default [flags]",
+			wantErr:  "Usage: kei model-profiles set-default PROFILE [flags]",
 		},
 		// model-profiles set-default requires a positional PROFILE; skip (c) (not a flag).
 
@@ -130,7 +128,7 @@ func TestLeafHelpModelProfiles(t *testing.T) {
 			command:  "model-profiles",
 			args:     []string{"assign", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei model-profiles assign [flags]",
+			wantOut:  "Usage: kei model-profiles assign PROFILE [flags]",
 			wantErr:  "",
 		},
 		{
@@ -138,7 +136,7 @@ func TestLeafHelpModelProfiles(t *testing.T) {
 			args:     []string{"assign", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei model-profiles assign [flags]",
+			wantErr:  "Usage: kei model-profiles assign PROFILE [flags]",
 		},
 		// assign requires --agent and --workspace; exit 2 before network.
 		// Positional PROFILE checked before flags.
@@ -206,7 +204,7 @@ func TestLeafHelpModelProfiles(t *testing.T) {
 			command:  "model-profiles",
 			args:     []string{"readiness", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei model-profiles readiness [flags]",
+			wantOut:  "Usage: kei model-profiles readiness PROFILE [flags]",
 			wantErr:  "",
 		},
 		{
@@ -214,7 +212,7 @@ func TestLeafHelpModelProfiles(t *testing.T) {
 			args:     []string{"readiness", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei model-profiles readiness [flags]",
+			wantErr:  "Usage: kei model-profiles readiness PROFILE [flags]",
 		},
 		// readiness requires --workspace; exit 2 before network.
 		{
@@ -231,7 +229,7 @@ func TestLeafHelpModelProfiles(t *testing.T) {
 			command:  "model-profiles",
 			args:     []string{"test", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei model-profiles test [flags]",
+			wantOut:  "Usage: kei model-profiles test PROFILE [flags]",
 			wantErr:  "",
 		},
 		{
@@ -239,36 +237,13 @@ func TestLeafHelpModelProfiles(t *testing.T) {
 			args:     []string{"test", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei model-profiles test [flags]",
+			wantErr:  "Usage: kei model-profiles test PROFILE [flags]",
 		},
 		// test requires either --endpoint or PROFILE arg; skip (c) because
 		// the check is custom and exits 2 before network.
 	}
 
-	for _, tt := range tests {
-		name := strings.ReplaceAll(tt.command+" "+strings.Join(tt.args, " "), " ", "_")
-		t.Run(name, func(t *testing.T) {
-			stdout := new(bytes.Buffer)
-			stderr := new(bytes.Buffer)
-			gotCode := Main("test", tt.command, tt.args, stdout, stderr, strings.NewReader(""))
-
-			if gotCode != tt.wantCode {
-				t.Errorf("Main(%q, %q) exit code = %d, want %d", tt.command, tt.args, gotCode, tt.wantCode)
-			}
-			if tt.wantOut != "" && !strings.Contains(stdout.String(), tt.wantOut) {
-				t.Errorf("stdout missing %q:\n%s", tt.wantOut, stdout.String())
-			}
-			if tt.wantOut == "" && stdout.Len() > 0 {
-				t.Errorf("unexpected stdout:\n%s", stdout.String())
-			}
-			if tt.wantErr != "" && !strings.Contains(stderr.String(), tt.wantErr) {
-				t.Errorf("stderr missing %q:\n%s", tt.wantErr, stderr.String())
-			}
-			if tt.wantErr == "" && stderr.Len() > 0 {
-				t.Errorf("unexpected stderr:\n%s", stderr.String())
-			}
-		})
-	}
+	runLeafCases(t, tests)
 }
 
 // TestLeafHelpCredentialStore drives Main for every credential-store leaf
@@ -336,30 +311,7 @@ func TestLeafHelpCredentialStore(t *testing.T) {
 		// because the check is custom (not requireFlags) and exits 2 before network.
 	}
 
-	for _, tt := range tests {
-		name := strings.ReplaceAll(tt.command+" "+strings.Join(tt.args, " "), " ", "_")
-		t.Run(name, func(t *testing.T) {
-			stdout := new(bytes.Buffer)
-			stderr := new(bytes.Buffer)
-			gotCode := Main("test", tt.command, tt.args, stdout, stderr, strings.NewReader(""))
-
-			if gotCode != tt.wantCode {
-				t.Errorf("Main(%q, %q) exit code = %d, want %d", tt.command, tt.args, gotCode, tt.wantCode)
-			}
-			if tt.wantOut != "" && !strings.Contains(stdout.String(), tt.wantOut) {
-				t.Errorf("stdout missing %q:\n%s", tt.wantOut, stdout.String())
-			}
-			if tt.wantOut == "" && stdout.Len() > 0 {
-				t.Errorf("unexpected stdout:\n%s", stdout.String())
-			}
-			if tt.wantErr != "" && !strings.Contains(stderr.String(), tt.wantErr) {
-				t.Errorf("stderr missing %q:\n%s", tt.wantErr, stderr.String())
-			}
-			if tt.wantErr == "" && stderr.Len() > 0 {
-				t.Errorf("unexpected stderr:\n%s", stderr.String())
-			}
-		})
-	}
+	runLeafCases(t, tests)
 }
 
 // TestLeafHelpDirectorySync drives Main for every directory-sync leaf command.
@@ -452,30 +404,7 @@ func TestLeafHelpDirectorySync(t *testing.T) {
 		// directory-sync report has no required flags; skip (c).
 	}
 
-	for _, tt := range tests {
-		name := strings.ReplaceAll(tt.command+" "+strings.Join(tt.args, " "), " ", "_")
-		t.Run(name, func(t *testing.T) {
-			stdout := new(bytes.Buffer)
-			stderr := new(bytes.Buffer)
-			gotCode := Main("test", tt.command, tt.args, stdout, stderr, strings.NewReader(""))
-
-			if gotCode != tt.wantCode {
-				t.Errorf("Main(%q, %q) exit code = %d, want %d", tt.command, tt.args, gotCode, tt.wantCode)
-			}
-			if tt.wantOut != "" && !strings.Contains(stdout.String(), tt.wantOut) {
-				t.Errorf("stdout missing %q:\n%s", tt.wantOut, stdout.String())
-			}
-			if tt.wantOut == "" && stdout.Len() > 0 {
-				t.Errorf("unexpected stdout:\n%s", stdout.String())
-			}
-			if tt.wantErr != "" && !strings.Contains(stderr.String(), tt.wantErr) {
-				t.Errorf("stderr missing %q:\n%s", tt.wantErr, stderr.String())
-			}
-			if tt.wantErr == "" && stderr.Len() > 0 {
-				t.Errorf("unexpected stderr:\n%s", stderr.String())
-			}
-		})
-	}
+	runLeafCases(t, tests)
 }
 
 // TestLeafHelpUsers drives Main for every users leaf command.
@@ -503,7 +432,7 @@ func TestLeafHelpUsers(t *testing.T) {
 			command:  "users",
 			args:     []string{"get", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei users get [flags]",
+			wantOut:  "Usage: kei users get USER_ID [flags]",
 			wantErr:  "",
 		},
 		{
@@ -511,7 +440,7 @@ func TestLeafHelpUsers(t *testing.T) {
 			args:     []string{"get", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei users get [flags]",
+			wantErr:  "Usage: kei users get USER_ID [flags]",
 		},
 		// users get requires a positional USER ID; skip (c) (not a flag).
 
@@ -545,7 +474,7 @@ func TestLeafHelpUsers(t *testing.T) {
 			command:  "users",
 			args:     []string{"update", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei users update [flags]",
+			wantOut:  "Usage: kei users update USER_ID [flags]",
 			wantErr:  "",
 		},
 		{
@@ -553,7 +482,7 @@ func TestLeafHelpUsers(t *testing.T) {
 			args:     []string{"update", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei users update [flags]",
+			wantErr:  "Usage: kei users update USER_ID [flags]",
 		},
 		// users update requires a positional USER ID; skip (c) (not a flag).
 
@@ -587,7 +516,7 @@ func TestLeafHelpUsers(t *testing.T) {
 			command:  "users",
 			args:     []string{"identities", "list", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei users identities list [flags]",
+			wantOut:  "Usage: kei users identities list USER_ID [flags]",
 			wantErr:  "",
 		},
 		{
@@ -595,7 +524,7 @@ func TestLeafHelpUsers(t *testing.T) {
 			args:     []string{"identities", "list", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei users identities list [flags]",
+			wantErr:  "Usage: kei users identities list USER_ID [flags]",
 		},
 		// users identities list requires a positional USER ID; skip (c) (not a flag).
 
@@ -604,7 +533,7 @@ func TestLeafHelpUsers(t *testing.T) {
 			command:  "users",
 			args:     []string{"remote-identities", "list", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei users remote-identities list [flags]",
+			wantOut:  "Usage: kei users remote-identities list USER_ID [flags]",
 			wantErr:  "",
 		},
 		{
@@ -612,33 +541,10 @@ func TestLeafHelpUsers(t *testing.T) {
 			args:     []string{"remote-identities", "list", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei users remote-identities list [flags]",
+			wantErr:  "Usage: kei users remote-identities list USER_ID [flags]",
 		},
 		// users remote-identities list requires a positional USER ID; skip (c) (not a flag).
 	}
 
-	for _, tt := range tests {
-		name := strings.ReplaceAll(tt.command+" "+strings.Join(tt.args, " "), " ", "_")
-		t.Run(name, func(t *testing.T) {
-			stdout := new(bytes.Buffer)
-			stderr := new(bytes.Buffer)
-			gotCode := Main("test", tt.command, tt.args, stdout, stderr, strings.NewReader(""))
-
-			if gotCode != tt.wantCode {
-				t.Errorf("Main(%q, %q) exit code = %d, want %d", tt.command, tt.args, gotCode, tt.wantCode)
-			}
-			if tt.wantOut != "" && !strings.Contains(stdout.String(), tt.wantOut) {
-				t.Errorf("stdout missing %q:\n%s", tt.wantOut, stdout.String())
-			}
-			if tt.wantOut == "" && stdout.Len() > 0 {
-				t.Errorf("unexpected stdout:\n%s", stdout.String())
-			}
-			if tt.wantErr != "" && !strings.Contains(stderr.String(), tt.wantErr) {
-				t.Errorf("stderr missing %q:\n%s", tt.wantErr, stderr.String())
-			}
-			if tt.wantErr == "" && stderr.Len() > 0 {
-				t.Errorf("unexpected stderr:\n%s", stderr.String())
-			}
-		})
-	}
+	runLeafCases(t, tests)
 }

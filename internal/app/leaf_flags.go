@@ -12,9 +12,6 @@ import (
 // leafCommand wraps a flag.FlagSet for a single leaf CLI command.
 // It provides a consistent usage-format and parse flow that every leaf
 // command in kei should use.
-// leafCommand wraps a flag.FlagSet for a single leaf CLI command.
-// It provides a consistent usage-format and parse flow that every leaf
-// command in kei should use.
 type leafCommand struct {
 	fs        *flag.FlagSet
 	stdout    io.Writer

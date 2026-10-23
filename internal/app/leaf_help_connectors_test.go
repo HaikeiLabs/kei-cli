@@ -1,8 +1,6 @@
 package app
 
 import (
-	"bytes"
-	"strings"
 	"testing"
 )
 
@@ -36,7 +34,7 @@ func TestLeafHelpConnectors(t *testing.T) {
 			command:  "connectors",
 			args:     []string{"get", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei connectors get [flags]",
+			wantOut:  "Usage: kei connectors get NAME [flags]",
 			wantErr:  "",
 		},
 		{
@@ -44,7 +42,7 @@ func TestLeafHelpConnectors(t *testing.T) {
 			args:     []string{"get", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei connectors get [flags]",
+			wantErr:  "Usage: kei connectors get NAME [flags]",
 		},
 
 		// ---- connectors connect ----
@@ -52,7 +50,7 @@ func TestLeafHelpConnectors(t *testing.T) {
 			command:  "connectors",
 			args:     []string{"connect", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei connectors connect [flags]",
+			wantOut:  "Usage: kei connectors connect NAME [flags]",
 			wantErr:  "",
 		},
 		{
@@ -60,7 +58,7 @@ func TestLeafHelpConnectors(t *testing.T) {
 			args:     []string{"connect", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei connectors connect [flags]",
+			wantErr:  "Usage: kei connectors connect NAME [flags]",
 		},
 
 		// ---- connectors reconnect ----
@@ -68,7 +66,7 @@ func TestLeafHelpConnectors(t *testing.T) {
 			command:  "connectors",
 			args:     []string{"reconnect", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei connectors reconnect [flags]",
+			wantOut:  "Usage: kei connectors reconnect NAME [flags]",
 			wantErr:  "",
 		},
 		{
@@ -76,7 +74,7 @@ func TestLeafHelpConnectors(t *testing.T) {
 			args:     []string{"reconnect", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei connectors reconnect [flags]",
+			wantErr:  "Usage: kei connectors reconnect NAME [flags]",
 		},
 
 		// ---- connectors delete ----
@@ -84,7 +82,7 @@ func TestLeafHelpConnectors(t *testing.T) {
 			command:  "connectors",
 			args:     []string{"delete", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei connectors delete [flags]",
+			wantOut:  "Usage: kei connectors delete NAME [flags]",
 			wantErr:  "",
 		},
 		{
@@ -92,7 +90,7 @@ func TestLeafHelpConnectors(t *testing.T) {
 			args:     []string{"delete", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei connectors delete [flags]",
+			wantErr:  "Usage: kei connectors delete NAME [flags]",
 		},
 
 		// ---- connectors test ----
@@ -100,7 +98,7 @@ func TestLeafHelpConnectors(t *testing.T) {
 			command:  "connectors",
 			args:     []string{"test", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei connectors test [flags]",
+			wantOut:  "Usage: kei connectors test NAME [flags]",
 			wantErr:  "",
 		},
 		{
@@ -108,7 +106,7 @@ func TestLeafHelpConnectors(t *testing.T) {
 			args:     []string{"test", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei connectors test [flags]",
+			wantErr:  "Usage: kei connectors test NAME [flags]",
 		},
 
 		// ---- connectors create ----
@@ -132,7 +130,7 @@ func TestLeafHelpConnectors(t *testing.T) {
 			command:  "connectors",
 			args:     []string{"manifests", "list", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei connectors manifests list [flags]",
+			wantOut:  "Usage: kei connectors manifests list CONNECTOR_ID [flags]",
 			wantErr:  "",
 		},
 		{
@@ -140,7 +138,7 @@ func TestLeafHelpConnectors(t *testing.T) {
 			args:     []string{"manifests", "list", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei connectors manifests list [flags]",
+			wantErr:  "Usage: kei connectors manifests list CONNECTOR_ID [flags]",
 		},
 
 		// ---- connectors manifests show ----
@@ -148,7 +146,7 @@ func TestLeafHelpConnectors(t *testing.T) {
 			command:  "connectors",
 			args:     []string{"manifests", "show", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei connectors manifests show [flags]",
+			wantOut:  "Usage: kei connectors manifests show CONNECTOR_ID [MANIFEST_ID] [flags]",
 			wantErr:  "",
 		},
 		{
@@ -156,7 +154,7 @@ func TestLeafHelpConnectors(t *testing.T) {
 			args:     []string{"manifests", "show", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei connectors manifests show [flags]",
+			wantErr:  "Usage: kei connectors manifests show CONNECTOR_ID [MANIFEST_ID] [flags]",
 		},
 
 		// ---- connectors manifests approve ----
@@ -164,7 +162,7 @@ func TestLeafHelpConnectors(t *testing.T) {
 			command:  "connectors",
 			args:     []string{"manifests", "approve", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei connectors manifests approve [flags]",
+			wantOut:  "Usage: kei connectors manifests approve CONNECTOR_ID [MANIFEST_ID] [flags]",
 			wantErr:  "",
 		},
 		{
@@ -172,7 +170,7 @@ func TestLeafHelpConnectors(t *testing.T) {
 			args:     []string{"manifests", "approve", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei connectors manifests approve [flags]",
+			wantErr:  "Usage: kei connectors manifests approve CONNECTOR_ID [MANIFEST_ID] [flags]",
 		},
 
 		// ---- connectors templates ----
@@ -192,29 +190,5 @@ func TestLeafHelpConnectors(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		name := strings.ReplaceAll(tt.command+" "+strings.Join(tt.args, " "), " ", "_")
-		t.Run(name, func(t *testing.T) {
-			stdout := new(bytes.Buffer)
-			stderr := new(bytes.Buffer)
-			gotCode := Main("test", tt.command, tt.args, stdout, stderr, strings.NewReader(""))
-
-			if gotCode != tt.wantCode {
-				t.Errorf("Main(%q, %q) exit code = %d, want %d\nstdout=%q\nstderr=%q",
-					tt.command, tt.args, gotCode, tt.wantCode, stdout.String(), stderr.String())
-			}
-			if tt.wantOut != "" && !strings.Contains(stdout.String(), tt.wantOut) {
-				t.Errorf("stdout missing %q:\n%s", tt.wantOut, stdout.String())
-			}
-			if tt.wantOut == "" && stdout.Len() > 0 {
-				t.Errorf("unexpected stdout:\n%s", stdout.String())
-			}
-			if tt.wantErr != "" && !strings.Contains(stderr.String(), tt.wantErr) {
-				t.Errorf("stderr missing %q:\n%s", tt.wantErr, stderr.String())
-			}
-			if tt.wantErr == "" && stderr.Len() > 0 {
-				t.Errorf("unexpected stderr:\n%s", stderr.String())
-			}
-		})
-	}
+	runLeafCases(t, tests)
 }

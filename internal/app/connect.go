@@ -60,7 +60,7 @@ func defaultConnectSteps() connectSteps {
 // runtime configuration already holds a credential, the credential is never
 // re-requested (the server shows it once).
 func runConnectCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore, steps connectSteps) int {
-	lc := newCommandFlags("", "connect", "Set up a harness against Kei", stdout, stderr)
+	lc := newCommandFlags("", "connect", "Set up a harness against Kei", stdout, stderr).WithArgs("HARNESS")
 	workspace := lc.fs.String("workspace", "", "workspace name (default: the organization's default workspace)")
 	yes := lc.fs.Bool("yes", false, "confirm without prompting")
 	// Intercept -h/--help before parsePositionals (positionals before flags).

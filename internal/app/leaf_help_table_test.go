@@ -312,7 +312,7 @@ func TestLeafCommandsHelp(t *testing.T) {
 			command:  "policy",
 			args:     []string{"test", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei policy test [flags]",
+			wantOut:  "Usage: kei policy test TARGET [flags]",
 			wantErr:  "",
 		},
 		{
@@ -320,7 +320,7 @@ func TestLeafCommandsHelp(t *testing.T) {
 			args:     []string{"test", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei policy test [flags]",
+			wantErr:  "Usage: kei policy test TARGET [flags]",
 		},
 		// policy test requires --as and a positional target.
 		{
@@ -455,6 +455,12 @@ func TestLeafCommandsHelp(t *testing.T) {
 		// policies list has no required flags; skip (c).
 	}
 
+	runLeafCases(t, tests)
+}
+
+// runLeafCases runs every leafCase in tests as a subtest, checking exit code,
+// stdout, and stderr against the expected substrings.
+func runLeafCases(t *testing.T, tests []leafCase) {
 	for _, tt := range tests {
 		name := strings.ReplaceAll(tt.command+" "+strings.Join(tt.args, " "), " ", "_")
 		t.Run(name, func(t *testing.T) {
