@@ -1,7 +1,6 @@
 package app
 
 import (
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -95,13 +94,13 @@ func runServiceInstallCommand(args []string, stdout, stderr io.Writer, client *h
 		fmt.Fprintf(stderr, "service install failed: %v\n", err)
 		return 1
 	}
-	flags := flag.NewFlagSet("service install", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	configPath := flags.String("config", defaultPath, "configuration file path")
-	if err := flags.Parse(args); err != nil {
-		return 2
+	lc := newCommandFlags("runtime", "service install", "Install the runtime service", stdout, stderr)
+	configPath := lc.fs.String("config", defaultPath, "configuration file path")
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
-	if flags.NArg() != 0 {
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "service install accepts no positional arguments")
 		return 2
 	}
@@ -315,12 +314,12 @@ WantedBy=default.target
 }
 
 func runServiceUninstallCommand(args []string, stdout, stderr io.Writer) int {
-	flags := flag.NewFlagSet("service uninstall", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	if err := flags.Parse(args); err != nil {
-		return 2
+	lc := newCommandFlags("runtime", "service uninstall", "Uninstall the runtime service", stdout, stderr)
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
-	if flags.NArg() != 0 {
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "service uninstall accepts no positional arguments")
 		return 2
 	}
@@ -390,12 +389,12 @@ func uninstallSystemdService(stdout io.Writer) error {
 }
 
 func runServiceStatusCommand(args []string, stdout, stderr io.Writer) int {
-	flags := flag.NewFlagSet("service status", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	if err := flags.Parse(args); err != nil {
-		return 2
+	lc := newCommandFlags("runtime", "service status", "Show the runtime service status", stdout, stderr)
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
-	if flags.NArg() != 0 {
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "service status accepts no positional arguments")
 		return 2
 	}

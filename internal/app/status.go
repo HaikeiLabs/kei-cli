@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -46,14 +45,17 @@ type policyBundleHealth struct {
 // runBotStatusCommand prints installation state and safe deployment metadata.
 // The runtime credential is never returned by the status endpoint.
 func runBotStatusCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("bot status", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	installationID := flags.String("installation", "", "Kei installation ID")
-	if err := flags.Parse(args); err != nil {
+	lc := newCommandFlags("bot", "status", "Show bot status", stdout, stderr)
+	installationID := lc.fs.String("installation", "", "Kei installation ID")
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
+	}
+	if lc.fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "bot status accepts no positional arguments")
 		return 2
 	}
-	if flags.NArg() != 0 || *installationID == "" {
-		fmt.Fprintln(stderr, "bot status requires --installation ID")
+	if !requireFlags(lc.fs, stderr, "installation") {
 		return 2
 	}
 	if _, err := uuid.Parse(*installationID); err != nil {

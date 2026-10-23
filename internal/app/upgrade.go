@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,14 +27,14 @@ var releaseVersionPattern = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9
 // runUpgradeCommand installs the published platform binary directly from S3.
 // The archive checksum is verified before extraction or replacement.
 func runUpgradeCommand(args []string, stdout, stderr io.Writer, client *http.Client, executable func() (string, error), getenv func(string) string) int {
-	flags := flag.NewFlagSet("upgrade", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	requested := flags.String("version", "latest", "release version to install (default: latest)")
-	force := flags.Bool("force", false, "reinstall even when the running version already matches the target")
-	if err := flags.Parse(args); err != nil {
-		return 2
+	lc := newCommandFlags("", "upgrade", "Upgrade the CLI to a newer release", stdout, stderr)
+	requested := lc.fs.String("version", "latest", "release version to install (default: latest)")
+	force := lc.fs.Bool("force", false, "reinstall even when the running version already matches the target")
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
-	if flags.NArg() != 0 {
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "upgrade accepts no positional arguments")
 		return 2
 	}
