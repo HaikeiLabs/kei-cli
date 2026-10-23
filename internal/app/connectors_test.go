@@ -1318,12 +1318,12 @@ func TestConnectorsCreateReadsPromptedConfigThenSecretFromOneStdin(t *testing.T)
 func TestConnectorsCreateAdvertisesGroupAllowlist(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runConnectorsCommand([]string{"create", "--help"}, &stdout, &stderr, strings.NewReader(""), nil, nil)
-	if code != 2 {
+	if code != 0 {
 		t.Fatalf("create --help exit = %d, stderr: %s", code, stderr.String())
 	}
 	for _, flag := range []string{"allow-group", "no-default-access", "capabilities"} {
-		if !strings.Contains(stderr.String(), flag) {
-			t.Errorf("create help missing %s: %s", flag, stderr.String())
+		if !strings.Contains(stdout.String(), flag) {
+			t.Errorf("create help missing %s: %s", flag, stdout.String())
 		}
 	}
 }

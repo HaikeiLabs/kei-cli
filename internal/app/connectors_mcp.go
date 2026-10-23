@@ -260,11 +260,14 @@ func suggestConnectorSlug(value string) string {
 }
 
 func runConnectorsTemplates(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("connectors templates", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
-		fmt.Fprintln(stderr, "connectors templates accepts no positional arguments")
+	lc := newCommandFlags("connectors", "templates", "List connector templates", stdout, stderr)
+	jsonOutput := lc.fs.Bool("json", false, "output as JSON")
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
+	}
+	if lc.fs.NArg() > 0 {
+		fmt.Fprintf(stderr, "connectors templates accepts no positional arguments\n")
 		return 2
 	}
 	baseURL, token, ok := loadCLIWebTokenAndBaseURL(store, stderr)

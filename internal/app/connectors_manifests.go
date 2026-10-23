@@ -3,7 +3,6 @@ package app
 import (
 	"bytes"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -69,52 +68,55 @@ func runConnectorsManifests(args []string, stdout, stderr io.Writer, stdin io.Re
 	}
 }
 
-// parseManifestArgs parses flags around a connector ID and, when allowed, an
-// optional manifest ID.
-func parseManifestArgs(flags *flag.FlagSet, args []string, allowManifest bool) (connectorID, manifestID string, err error) {
+// parseManifestLeaf is like parseLeaf but also extracts positional args
+// (connector ID, optional manifest ID) that may come before or after flags.
+func parseManifestLeaf(lc leafCommand, args []string, allowManifest bool) (connectorID, manifestID string, code int, ok bool) {
 	var positional []string
-	for len(args) > 0 {
-		if !strings.HasPrefix(args[0], "-") {
-			positional, args = append(positional, args[0]), args[1:]
-			continue
-		}
-		if err := flags.Parse(args); err != nil {
-			return "", "", err
-		}
-		args = flags.Args()
+	rest := args
+	for len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
+		positional = append(positional, rest[0])
+		rest = rest[1:]
 	}
+	code, ok = parseLeaf(lc, rest)
+	if !ok {
+		return "", "", code, false
+	}
+	positional = append(positional, lc.fs.Args()...)
+
 	max := 1
 	if allowManifest {
 		max = 2
 	}
 	if len(positional) == 0 || len(positional) > max {
 		if allowManifest {
-			return "", "", fmt.Errorf("takes a connector ID and an optional manifest ID")
+			fmt.Fprintf(lc.stderr, "%s: takes a connector ID and an optional manifest ID\n", lc)
+		} else {
+			fmt.Fprintf(lc.stderr, "%s: takes one connector ID\n", lc)
 		}
-		return "", "", fmt.Errorf("takes one connector ID")
+		return "", "", 2, false
 	}
 	connectorID = positional[0]
 	if _, err := uuid.Parse(connectorID); err != nil {
-		return "", "", fmt.Errorf("connector ID must be a UUID")
+		fmt.Fprintf(lc.stderr, "%s: connector ID must be a UUID: %v\n", lc, err)
+		return "", "", 2, false
 	}
 	if len(positional) == 2 {
 		manifestID = positional[1]
 		if _, err := uuid.Parse(manifestID); err != nil {
-			return "", "", fmt.Errorf("manifest ID must be a UUID")
+			fmt.Fprintf(lc.stderr, "%s: manifest ID must be a UUID: %v\n", lc, err)
+			return "", "", 2, false
 		}
 	}
-	return connectorID, manifestID, nil
+	return connectorID, manifestID, 0, true
 }
 
 func runConnectorsManifestsList(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("connectors manifests list", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := connectorWorkspaceFlag(flags)
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	connectorID, _, err := parseManifestArgs(flags, args, false)
-	if err != nil {
-		fmt.Fprintf(stderr, "connectors manifests list: %v\n", err)
-		return 2
+	lc := newCommandFlags("connectors", "manifests list", "List connector tool manifests", stdout, stderr)
+	workspace := workspaceFlag(lc.fs)
+	jsonOutput := lc.fs.Bool("json", false, "output as JSON")
+	connectorID, _, rc, ok := parseManifestLeaf(lc, args, false)
+	if !ok {
+		return rc
 	}
 	ws, ok := requireConnectorWorkspace("manifests list", *workspace, stderr)
 	if !ok {
@@ -147,14 +149,12 @@ func runConnectorsManifestsList(args []string, stdout, stderr io.Writer, client 
 }
 
 func runConnectorsManifestsShow(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("connectors manifests show", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := connectorWorkspaceFlag(flags)
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	connectorID, manifestID, err := parseManifestArgs(flags, args, true)
-	if err != nil {
-		fmt.Fprintf(stderr, "connectors manifests show: %v\n", err)
-		return 2
+	lc := newCommandFlags("connectors", "manifests show", "Show a connector tool manifest", stdout, stderr)
+	workspace := workspaceFlag(lc.fs)
+	jsonOutput := lc.fs.Bool("json", false, "output as JSON")
+	connectorID, manifestID, rc, ok := parseManifestLeaf(lc, args, true)
+	if !ok {
+		return rc
 	}
 	ws, ok := requireConnectorWorkspace("manifests show", *workspace, stderr)
 	if !ok {
@@ -168,9 +168,12 @@ func runConnectorsManifestsShow(args []string, stdout, stderr io.Writer, client 
 		fmt.Fprintf(stderr, "connectors manifests show: %v\n", err)
 		return 1
 	}
-	var payload []byte
-	var shown toolManifest
-	var all []toolManifest
+	var (
+		err      error
+		payload  []byte
+		shown    toolManifest
+		all      []toolManifest
+	)
 	if manifestID != "" {
 		if payload, err = session.do(http.MethodGet, "/"+url.PathEscape(connectorID)+"/tool-manifests/"+url.PathEscape(manifestID), nil); err != nil {
 			return fail(err)
@@ -232,16 +235,15 @@ func printManifestChanges(w io.Writer, candidate toolManifest, all []toolManifes
 // manifest and its changes first and needs confirmation (--yes, or y at a
 // terminal). The console requires an organization administrator.
 func runConnectorsManifestsApprove(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("connectors manifests approve", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := connectorWorkspaceFlag(flags)
-	yes := flags.Bool("yes", false, "approve without prompting")
-	connectorID, manifestID, err := parseManifestArgs(flags, args, true)
-	if err == nil && manifestID == "" {
-		err = fmt.Errorf("takes a connector ID and the ID of the manifest to approve")
+	lc := newCommandFlags("connectors", "manifests approve", "Approve a connector tool manifest", stdout, stderr)
+	workspace := workspaceFlag(lc.fs)
+	yes := lc.fs.Bool("yes", false, "approve without prompting")
+	connectorID, manifestID, rc, ok := parseManifestLeaf(lc, args, true)
+	if !ok {
+		return rc
 	}
-	if err != nil {
-		fmt.Fprintf(stderr, "connectors manifests approve: %v\n", err)
+	if manifestID == "" {
+		fmt.Fprintf(stderr, "%s: takes a connector ID and the ID of the manifest to approve\n", lc)
 		return 2
 	}
 	ws, ok := requireConnectorWorkspace("manifests approve", *workspace, stderr)
