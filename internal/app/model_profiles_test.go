@@ -450,15 +450,8 @@ func TestModelProfilesWorkspaceAndAgentRequired(t *testing.T) {
 		"assignment no agent":   {"assignment", "--workspace", "Main"},
 		"readiness no ws":       {"readiness", testProfileID},
 	}
-	// Cases without --workspace now auto-pick the default and proceed to
-	// credential check, which fails with code 1 (no token).
-	wantNoWS := 1
 	for name, args := range cases {
 		want := 2
-		switch name {
-		case "assign no workspace", "unassign no workspace", "readiness no ws":
-			want = wantNoWS
-		}
 		var stdout, stderr bytes.Buffer
 		if code := runModelProfilesCommand(args, &stdout, &stderr, nil, http.DefaultClient, &memoryCredentialStore{}); code != want {
 			t.Errorf("%s exit = %d, want %d (stderr=%s)", name, code, want, stderr.String())
@@ -721,7 +714,7 @@ func TestModelProfilesCommandDispatch(t *testing.T) {
 		{[]string{"list"}, 1},           // no token
 		{[]string{"get"}, 2},            // no profile
 		{[]string{"delete", "x"}, 2},    // no --yes
-		{[]string{"readiness", "x"}, 1}, // no token — workspace auto-picked, fails at credential
+		{[]string{"readiness", "x"}, 2}, // no --workspace
 		{[]string{"test"}, 2},           // no --endpoint or profile
 	}
 	t.Setenv("KEI_WORKSPACE_ID", "")

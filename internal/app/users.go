@@ -108,11 +108,14 @@ func runUsersCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, c
 }
 
 func runUsersList(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("users list", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	pageSize := flags.Int("page-size", 50, "page size (max 200)")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+	lc := newCommandFlags("users", "list", "List users", stdout, stderr)
+	jsonOutput := jsonFlag(lc.fs)
+	pageSize := lc.fs.Int("page-size", 50, "page size (max 200)")
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
+	}
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "users list accepts no positional arguments")
 		return 2
 	}
@@ -166,10 +169,15 @@ func runUsersList(args []string, stdout, stderr io.Writer, client *http.Client, 
 }
 
 func runUsersGet(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("users get", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	pos, err := parsePositionals(flags, args, 1)
+	lc := newCommandFlags("users", "get", "Get a user by ID", stdout, stderr)
+	jsonOutput := jsonFlag(lc.fs)
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			lc.printUsage(lc.stdout)
+			return 0
+		}
+	}
+	pos, err := parsePositionals(lc.fs, args, 1)
 	if err != nil {
 		fmt.Fprintln(stderr, "users get requires a user ID")
 		return 2
@@ -198,18 +206,20 @@ func runUsersGet(args []string, stdout, stderr io.Writer, client *http.Client, s
 }
 
 func runUsersCreate(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("users create", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	email := flags.String("email", "", "user email (required)")
-	name := flags.String("name", "", "display name")
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	yes := flags.Bool("yes", false, "confirm without prompting")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+	lc := newCommandFlags("users", "create", "Create a user", stdout, stderr)
+	email := lc.fs.String("email", "", "user email (required)")
+	name := lc.fs.String("name", "", "display name")
+	jsonOutput := jsonFlag(lc.fs)
+	yes := yesFlag(lc.fs)
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
+	}
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "users create requires --email EMAIL")
 		return 2
 	}
-	if *email == "" {
-		fmt.Fprintln(stderr, "users create requires --email EMAIL")
+	if !requireFlags(lc.fs, stderr, "email") {
 		return 2
 	}
 	if !confirmWrite(stdin, stderr, *yes, "Create a new Kei user?") {
@@ -238,20 +248,25 @@ func runUsersCreate(args []string, stdout, stderr io.Writer, stdin io.Reader, cl
 }
 
 func runUsersUpdate(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("users update", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	email := flags.String("email", "", "new email")
-	name := flags.String("name", "", "new display name")
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	yes := flags.Bool("yes", false, "confirm without prompting")
-	pos, err := parsePositionals(flags, args, 1)
+	lc := newCommandFlags("users", "update", "Update a user", stdout, stderr)
+	email := lc.fs.String("email", "", "new email")
+	name := lc.fs.String("name", "", "new display name")
+	jsonOutput := jsonFlag(lc.fs)
+	yes := yesFlag(lc.fs)
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			lc.printUsage(lc.stdout)
+			return 0
+		}
+	}
+	pos, err := parsePositionals(lc.fs, args, 1)
 	if err != nil {
 		fmt.Fprintln(stderr, "users update requires a user ID")
 		return 2
 	}
 	id := pos[0]
 	set := make(map[string]bool)
-	flags.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	lc.fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 	if !set["email"] && !set["name"] {
 		fmt.Fprintln(stderr, "users update requires --email and/or --name")
 		return 2
@@ -293,16 +308,18 @@ func runUsersUpdate(args []string, stdout, stderr io.Writer, stdin io.Reader, cl
 }
 
 func runUsersResolve(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("users resolve", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	email := flags.String("email", "", "user email to resolve")
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+	lc := newCommandFlags("users", "resolve", "Resolve a user identity", stdout, stderr)
+	email := lc.fs.String("email", "", "user email to resolve")
+	jsonOutput := jsonFlag(lc.fs)
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
+	}
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "users resolve requires --email EMAIL")
 		return 2
 	}
-	if *email == "" {
-		fmt.Fprintln(stderr, "users resolve requires --email EMAIL")
+	if !requireFlags(lc.fs, stderr, "email") {
 		return 2
 	}
 	session, ok := openAPISession("users resolve", stderr, client, store)
@@ -336,10 +353,15 @@ func runUsersIdentities(args []string, stdout, stderr io.Writer, client *http.Cl
 }
 
 func runUsersIdentitiesList(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("users identities list", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	pos, err := parsePositionals(flags, args, 1)
+	lc := newCommandFlags("users", "identities list", "List user identities", stdout, stderr)
+	jsonOutput := jsonFlag(lc.fs)
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			lc.printUsage(lc.stdout)
+			return 0
+		}
+	}
+	pos, err := parsePositionals(lc.fs, args, 1)
 	if err != nil {
 		fmt.Fprintln(stderr, "users identities list requires a user ID")
 		return 2
@@ -403,10 +425,15 @@ func runUsersRemoteIdentities(args []string, stdout, stderr io.Writer, client *h
 }
 
 func runUsersRemoteIdentitiesList(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("users remote-identities list", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	pos, err := parsePositionals(flags, args, 1)
+	lc := newCommandFlags("users", "remote-identities list", "List remote identities", stdout, stderr)
+	jsonOutput := jsonFlag(lc.fs)
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			lc.printUsage(lc.stdout)
+			return 0
+		}
+	}
+	pos, err := parsePositionals(lc.fs, args, 1)
 	if err != nil {
 		fmt.Fprintln(stderr, "users remote-identities list requires a user ID")
 		return 2
