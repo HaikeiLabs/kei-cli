@@ -162,13 +162,13 @@ func runPolicyCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, 
 	}
 	switch sub {
 	case "list":
-		return runPoliciesList(rest, stdout, stderr, client, store)
+		return runPoliciesList("policy", rest, stdout, stderr, client, store)
 	case "get":
-		return runPoliciesGet(rest, stdout, stderr, client, store)
+		return runPoliciesGet("policy", rest, stdout, stderr, client, store)
 	case "create":
 		return runPolicyCreate(rest, stdout, stderr, client, store)
 	case "delete":
-		return runPoliciesDelete(rest, stdout, stderr, client, store)
+		return runPoliciesDelete("policy", rest, stdout, stderr, client, store)
 	case "test":
 		return runPolicyTest(rest, stdout, stderr, client, store)
 	default:
@@ -196,24 +196,20 @@ func runPoliciesCommand(args []string, stdout, stderr io.Writer, stdin io.Reader
 	}
 	switch sub {
 	case "list":
-		return runPoliciesList(rest, stdout, stderr, client, store)
+		return runPoliciesList("policies", rest, stdout, stderr, client, store)
 	case "get":
-		return runPoliciesGet(rest, stdout, stderr, client, store)
+		return runPoliciesGet("policies", rest, stdout, stderr, client, store)
 	case "create":
 		return runPoliciesCreate(rest, stdout, stderr, client, store)
 	case "update":
 		return runPoliciesUpdate(rest, stdout, stderr, client, store)
 	case "delete":
-		return runPoliciesDelete(rest, stdout, stderr, client, store)
+		return runPoliciesDelete("policies", rest, stdout, stderr, client, store)
 	case "import":
 		return runPoliciesImport(rest, stdout, stderr, stdin, client, store, harness.Default)
 	default:
 		panic("unexpected subcommand: " + sub)
 	}
-}
-
-func policiesWorkspaceFlag(flags *flag.FlagSet) *string {
-	return flags.String("workspace", "", "workspace name or ID (or set KEI_WORKSPACE)")
 }
 
 func requirePoliciesWorkspace(command, workspace string, stderr io.Writer) (workspaceSelection, bool) {
@@ -320,13 +316,16 @@ func decodePoliciesPage(payload []byte) (policiesPage, error) {
 	return policiesPage{Policies: policies}, nil
 }
 
-func runPoliciesList(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("policies list", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := policiesWorkspaceFlag(flags)
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	pageSize := flags.Int("page-size", 100, "page size")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+func runPoliciesList(group string, args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
+	lc := newCommandFlags(group, "list", "List policies", stdout, stderr)
+	workspace := workspaceFlag(lc.fs)
+	jsonOutput := jsonFlag(lc.fs)
+	pageSize := lc.fs.Int("page-size", 100, "page size")
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
+	}
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "policies list accepts no positional arguments")
 		return 2
 	}
@@ -384,19 +383,23 @@ func runPoliciesList(args []string, stdout, stderr io.Writer, client *http.Clien
 	return 0
 }
 
-func runPoliciesGet(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("policies get", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := policiesWorkspaceFlag(flags)
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	id, err := parsePolicyFlags(flags, args)
-	if err != nil {
-		return 2
+func runPoliciesGet(group string, args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
+	lc := newCommandFlags(group, "get", "Get a policy by ID", stdout, stderr).WithArgs("ID")
+	workspace := workspaceFlag(lc.fs)
+	jsonOutput := jsonFlag(lc.fs)
+	// Intercept -h/--help before parsePositionals.
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			lc.printUsage(lc.stdout)
+			return 0
+		}
 	}
-	if id == "" {
+	pos, err := parsePositionals(lc.fs, args, 1)
+	if err != nil {
 		fmt.Fprintln(stderr, "policies get requires a policy ID")
 		return 2
 	}
+	id := pos[0]
 	ws, ok := requirePoliciesWorkspace("get", *workspace, stderr)
 	if !ok || !requirePolicyID("get", id, stderr) {
 		return 2
@@ -440,18 +443,21 @@ func runPoliciesGet(args []string, stdout, stderr io.Writer, client *http.Client
 }
 
 func runPoliciesCreate(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("policies create", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := policiesWorkspaceFlag(flags)
-	name := flags.String("name", "", "policy name")
-	srcPattern := flags.String("src-pattern", "", "source pattern (e.g. harness:claude_code)")
-	dstPattern := flags.String("dst-pattern", "", "target pattern (e.g. shell:git, skill:read, path:/workspace/.env)")
-	effect := flags.String("effect", "", "effect: permit or deny")
-	priority := flags.Int("priority", 0, "priority (higher = more specific)")
-	description := flags.String("description", "", "policy description")
-	agentID := flags.String("agent-id", "", "agent ID to scope the policy to (default: every agent in the workspace)")
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+	lc := newCommandFlags("policies", "create", "Create a policy", stdout, stderr)
+	workspace := workspaceFlag(lc.fs)
+	name := lc.fs.String("name", "", "policy name")
+	srcPattern := lc.fs.String("src-pattern", "", "source pattern (e.g. harness:claude_code)")
+	dstPattern := lc.fs.String("dst-pattern", "", "target pattern (e.g. shell:git, skill:read, path:/workspace/.env)")
+	effect := lc.fs.String("effect", "", "effect: permit or deny")
+	priority := lc.fs.Int("priority", 0, "priority (higher = more specific)")
+	description := lc.fs.String("description", "", "policy description")
+	agentID := lc.fs.String("agent-id", "", "agent ID to scope the policy to (default: every agent in the workspace)")
+	jsonOutput := jsonFlag(lc.fs)
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
+	}
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "policies create accepts no positional arguments")
 		return 2
 	}
@@ -528,13 +534,16 @@ func standingRuleSource(group string) (string, error) {
 }
 
 func runPolicyCreate(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("policy create", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := policiesWorkspaceFlag(flags)
-	group := flags.String("group", "", "group or autogroup the rule applies to")
-	allow := flags.String("allow", "", "target to permit")
-	deny := flags.String("deny", "", "target to deny")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+	lc := newCommandFlags("policy", "create", "Create a standing rule", stdout, stderr)
+	workspace := workspaceFlag(lc.fs)
+	group := lc.fs.String("group", "", "group or autogroup the rule applies to")
+	allow := lc.fs.String("allow", "", "target to permit")
+	deny := lc.fs.String("deny", "", "target to deny")
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
+	}
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "policy create accepts no positional arguments")
 		return 2
 	}
@@ -586,19 +595,19 @@ func runPolicyCreate(args []string, stdout, stderr io.Writer, client *http.Clien
 }
 
 func runPolicyTest(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("policy test", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := policiesWorkspaceFlag(flags)
-	as := flags.String("as", "", "subject to evaluate (e.g. group:Engineering)")
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	if err := flags.Parse(args); err != nil {
-		return 2
+	lc := newCommandFlags("policy", "test", "Test a policy", stdout, stderr)
+	workspace := workspaceFlag(lc.fs)
+	as := lc.fs.String("as", "", "subject to evaluate (e.g. group:Engineering)")
+	jsonOutput := jsonFlag(lc.fs)
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
-	if *as == "" || flags.NArg() != 1 {
+	if *as == "" || lc.fs.NArg() != 1 {
 		fmt.Fprintln(stderr, `policy test requires --as <who> and one target, e.g. kei policy test --as group:Engineering "shell:git"`)
 		return 2
 	}
-	target := flags.Arg(0)
+	target := lc.fs.Arg(0)
 	ws, ok := requirePoliciesWorkspace("test", *workspace, stderr)
 	if !ok {
 		return 2
@@ -652,26 +661,30 @@ func runPolicyTest(args []string, stdout, stderr io.Writer, client *http.Client,
 }
 
 func runPoliciesUpdate(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("policies update", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := policiesWorkspaceFlag(flags)
-	name := flags.String("name", "", "policy name")
-	srcPattern := flags.String("src-pattern", "", "source pattern")
-	dstPattern := flags.String("dst-pattern", "", "target pattern")
-	effect := flags.String("effect", "", "effect: permit or deny")
-	priority := flags.Int("priority", 0, "priority")
-	enabled := flags.Bool("enabled", false, "enabled")
-	description := flags.String("description", "", "policy description")
-	agentID := flags.String("agent-id", "", "agent ID to scope the policy to; an empty value clears it")
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	id, err := parsePolicyFlags(flags, args)
-	if err != nil {
-		return 2
+	lc := newCommandFlags("policies", "update", "Update a policy", stdout, stderr).WithArgs("ID")
+	workspace := workspaceFlag(lc.fs)
+	name := lc.fs.String("name", "", "policy name")
+	srcPattern := lc.fs.String("src-pattern", "", "source pattern")
+	dstPattern := lc.fs.String("dst-pattern", "", "target pattern")
+	effect := lc.fs.String("effect", "", "effect: permit or deny")
+	priority := lc.fs.Int("priority", 0, "priority")
+	enabled := lc.fs.Bool("enabled", false, "enabled")
+	description := lc.fs.String("description", "", "policy description")
+	agentID := lc.fs.String("agent-id", "", "agent ID to scope the policy to; an empty value clears it")
+	jsonOutput := jsonFlag(lc.fs)
+	// Intercept -h/--help before parsePositionals.
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			lc.printUsage(lc.stdout)
+			return 0
+		}
 	}
-	if id == "" {
+	pos, err := parsePositionals(lc.fs, args, 1)
+	if err != nil {
 		fmt.Fprintln(stderr, "policies update requires a policy ID")
 		return 2
 	}
+	id := pos[0]
 	ws, ok := requirePoliciesWorkspace("update", *workspace, stderr)
 	if !ok || !requirePolicyID("update", id, stderr) {
 		return 2
@@ -681,7 +694,7 @@ func runPoliciesUpdate(args []string, stdout, stderr io.Writer, client *http.Cli
 		return 2
 	}
 	set := make(map[string]bool)
-	flags.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	lc.fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 	request := updatePolicyRequest{}
 	if set["name"] {
 		request.Name = name
@@ -775,19 +788,23 @@ func runPoliciesUpdate(args []string, stdout, stderr io.Writer, client *http.Cli
 	return 0
 }
 
-func runPoliciesDelete(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("policies delete", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := policiesWorkspaceFlag(flags)
-	yes := flags.Bool("yes", false, "confirm deletion")
-	id, err := parsePolicyFlags(flags, args)
-	if err != nil {
-		return 2
+func runPoliciesDelete(group string, args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
+	lc := newCommandFlags(group, "delete", "Delete a policy", stdout, stderr).WithArgs("ID")
+	workspace := workspaceFlag(lc.fs)
+	yes := yesFlag(lc.fs)
+	// Intercept -h/--help before parsePositionals.
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			lc.printUsage(lc.stdout)
+			return 0
+		}
 	}
-	if id == "" {
+	pos, err := parsePositionals(lc.fs, args, 1)
+	if err != nil {
 		fmt.Fprintln(stderr, "policies delete requires a policy ID")
 		return 2
 	}
+	id := pos[0]
 	ws, ok := requirePoliciesWorkspace("delete", *workspace, stderr)
 	if !ok || !requirePolicyID("delete", id, stderr) {
 		return 2
@@ -821,16 +838,19 @@ type importedPolicy struct {
 }
 
 func runPoliciesImport(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore, registry *harness.Registry) int {
-	flags := flag.NewFlagSet("policies import", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := policiesWorkspaceFlag(flags)
+	lc := newCommandFlags("policies", "import", "Import policies from a harness", stdout, stderr)
+	workspace := workspaceFlag(lc.fs)
 	importNames := registry.ImportNames()
-	from := flags.String("from", "", "harness to import from: "+harness.JoinOr(importNames))
-	file := flags.String("file", "", "override the source file or directory")
-	src := flags.String("src", "", "source pattern: harness:<kind> (only that harness) or harness:* (every harness)")
-	out := flags.String("out", "", "write the proposed policy-set JSON to this file")
-	apply := flags.Bool("apply", false, "create the imported policies (default: dry run)")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+	from := lc.fs.String("from", "", "harness to import from: "+harness.JoinOr(importNames))
+	file := lc.fs.String("file", "", "override the source file or directory")
+	src := lc.fs.String("src", "", "source pattern: harness:<kind> (only that harness) or harness:* (every harness)")
+	out := lc.fs.String("out", "", "write the proposed policy-set JSON to this file")
+	apply := lc.fs.Bool("apply", false, "create the imported policies (default: dry run)")
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
+	}
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "policies import accepts no positional arguments")
 		return 2
 	}

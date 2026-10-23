@@ -53,7 +53,7 @@ func runWorkspaceCommand(args []string, stdout, stderr io.Writer, stdin io.Reade
 // runWorkspaceUseCommand saves the named workspace as the current one for the
 // login on this host, so later commands can omit --workspace.
 func runWorkspaceUseCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("workspaces", "use", "Set the current workspace", stdout, stderr)
+	lc := newCommandFlags("workspaces", "use", "Set the current workspace", stdout, stderr).WithArgs("NAME")
 	rc, ok := parseLeaf(lc, args)
 	if !ok {
 		return rc

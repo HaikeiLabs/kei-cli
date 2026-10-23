@@ -12,19 +12,25 @@ import (
 // leafCommand wraps a flag.FlagSet for a single leaf CLI command.
 // It provides a consistent usage-format and parse flow that every leaf
 // command in kei should use.
+// leafCommand wraps a flag.FlagSet for a single leaf CLI command.
+// It provides a consistent usage-format and parse flow that every leaf
+// command in kei should use.
 type leafCommand struct {
-	fs      *flag.FlagSet
-	stdout  io.Writer
-	stderr  io.Writer
-	summary string
-	group   string
-	name    string
+	fs        *flag.FlagSet
+	stdout    io.Writer
+	stderr    io.Writer
+	summary   string
+	group     string
+	name      string
+	usageArgs string // positional args shown in usage line, e.g. "GROUP USER"
 }
 
 // newCommandFlags creates a leafCommand for the command "kei <group> <name>"
 // with the given one-line summary. The flag set uses flag.ContinueOnError and
 // writes its usage banner to stderr (the default flag-package behaviour).
 // parseLeaf handles the explicit -h/--help case and writes usage to stdout.
+// Commands that take positional arguments should call .WithArgs on the result
+// to set the positional-args placeholder shown in the usage line.
 func newCommandFlags(group, name, summary string, stdout, stderr io.Writer) leafCommand {
 	fullName := group + " " + name
 	if group == "" {
@@ -51,13 +57,18 @@ func newCommandFlags(group, name, summary string, stdout, stderr io.Writer) leaf
 	return lc
 }
 
-// printUsage writes the standard leaf-command usage to w.
+// printUsage writes the standard leaf-command usage to w, including any
+// positional-args placeholder when one was provided to newCommandFlags.
 func (lc leafCommand) printUsage(w io.Writer) {
 	prefix := "kei " + lc.group + " " + lc.name
 	if lc.group == "" {
 		prefix = "kei " + lc.name
 	}
-	fmt.Fprintf(w, "Usage: %s [flags]\n\n", prefix)
+	if lc.usageArgs != "" {
+		fmt.Fprintf(w, "Usage: %s %s [flags]\n\n", prefix, lc.usageArgs)
+	} else {
+		fmt.Fprintf(w, "Usage: %s [flags]\n\n", prefix)
+	}
 	if lc.summary != "" {
 		fmt.Fprintln(w, lc.summary)
 		fmt.Fprintln(w)
@@ -174,6 +185,18 @@ func yesFlag(fs *flag.FlagSet) *bool {
 // workspaceFlagHelp is like workspaceFlag but with a custom help string.
 func workspaceFlagHelp(fs *flag.FlagSet, help string) *string {
 	return fs.String("workspace", "", help)
+}
+
+// WithArgs returns a copy of the leafCommand with the positional-args
+// placeholder set for the usage line (e.g. "GROUP USER"). It also updates
+// the underlying flag set's Usage function so the new placeholder appears
+// in error-driven usage output (e.g. unknown flags).
+func (lc leafCommand) WithArgs(usageArgs string) leafCommand {
+	lc.usageArgs = usageArgs
+	lc.fs.Usage = func() {
+		lc.printUsage(lc.stderr)
+	}
+	return lc
 }
 
 // String returns the full command name for error messages.

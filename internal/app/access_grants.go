@@ -4,12 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"text/tabwriter"
 	"time"
 )
@@ -140,10 +138,6 @@ func runAccessGrantCommand(args []string, stdout, stderr io.Writer, stdin io.Rea
 	}
 }
 
-func accessGrantWorkspaceFlag(flags *flag.FlagSet) *string {
-	return flags.String("workspace", "", "workspace name or ID (or set KEI_WORKSPACE)")
-}
-
 func requireAccessGrantWorkspace(command, workspace string, stderr io.Writer) (workspaceSelection, bool) {
 	sel, err := selectWorkspace(workspace, keiWebURL())
 	if err != nil {
@@ -159,15 +153,18 @@ func requireAccessGrantWorkspace(command, workspace string, stderr io.Writer) (w
 // --- Create ---
 
 func runAccessGrantCreate(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("access grant create", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := accessGrantWorkspaceFlag(flags)
-	principal := flags.String("principal", "", "grant principal, e.g. user:<id> or agent:<id>")
-	target := flags.String("target", "", "grant target, e.g. shell:git or connector:linear")
-	ttl := flags.String("ttl", "", "time-to-live, e.g. 4h (expire_time = now + ttl)")
-	reason := flags.String("reason", "", "reason for the grant (optional)")
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+	lc := newCommandFlags("access grant", "create", "Create a time-bound access grant", stdout, stderr)
+	workspace := workspaceFlag(lc.fs)
+	principal := lc.fs.String("principal", "", "grant principal, e.g. user:<id> or agent:<id>")
+	target := lc.fs.String("target", "", "grant target, e.g. shell:git or connector:linear")
+	ttl := lc.fs.String("ttl", "", "time-to-live, e.g. 4h")
+	reason := lc.fs.String("reason", "", "reason for the grant (optional)")
+	jsonOutput := jsonFlag(lc.fs)
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
+	}
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "access grant create accepts no positional arguments")
 		return 2
 	}
@@ -219,11 +216,14 @@ func runAccessGrantCreate(args []string, stdout, stderr io.Writer, client *http.
 // --- List ---
 
 func runAccessGrantList(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("access grant list", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := accessGrantWorkspaceFlag(flags)
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+	lc := newCommandFlags("access grant", "list", "List access grants", stdout, stderr)
+	workspace := workspaceFlag(lc.fs)
+	jsonOutput := jsonFlag(lc.fs)
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
+	}
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "access grant list accepts no positional arguments")
 		return 2
 	}
@@ -271,33 +271,19 @@ func runAccessGrantList(args []string, stdout, stderr io.Writer, client *http.Cl
 // --- Get ---
 
 func runAccessGrantGet(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("access grant get", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := accessGrantWorkspaceFlag(flags)
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	id := ""
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		id, args = args[0], args[1:]
+	lc := newCommandFlags("access grant", "get", "Get an access grant by ID", stdout, stderr).WithArgs("GRANT_ID")
+	workspace := workspaceFlag(lc.fs)
+	jsonOutput := jsonFlag(lc.fs)
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
-	if err := flags.Parse(args); err != nil {
-		return 2
-	}
-	rest := flags.Args()
-	if id == "" && len(rest) > 0 {
-		id, rest = rest[0], rest[1:]
-		if err := flags.Parse(rest); err != nil {
-			return 2
-		}
-		rest = flags.Args()
-	}
-	if len(rest) != 0 {
-		fmt.Fprintf(stderr, "access grant get: unexpected argument %q\n", rest[0])
-		return 2
-	}
-	if id == "" {
+	pos, err := parsePositionals(lc.fs, args, 1)
+	if err != nil {
 		fmt.Fprintln(stderr, "access grant get requires a grant ID")
 		return 2
 	}
+	id := pos[0]
 	ws, ok := requireAccessGrantWorkspace("get", *workspace, stderr)
 	if !ok {
 		return 2
@@ -338,34 +324,20 @@ func runAccessGrantGet(args []string, stdout, stderr io.Writer, client *http.Cli
 // --- Revoke ---
 
 func runAccessGrantRevoke(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("access grant revoke", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := accessGrantWorkspaceFlag(flags)
-	yes := flags.Bool("yes", false, "confirm revocation")
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	id := ""
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		id, args = args[0], args[1:]
+	lc := newCommandFlags("access grant", "revoke", "Revoke an access grant", stdout, stderr).WithArgs("GRANT_ID")
+	workspace := workspaceFlag(lc.fs)
+	yes := yesFlag(lc.fs)
+	jsonOutput := jsonFlag(lc.fs)
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
-	if err := flags.Parse(args); err != nil {
-		return 2
-	}
-	rest := flags.Args()
-	if id == "" && len(rest) > 0 {
-		id, rest = rest[0], rest[1:]
-		if err := flags.Parse(rest); err != nil {
-			return 2
-		}
-		rest = flags.Args()
-	}
-	if len(rest) != 0 {
-		fmt.Fprintf(stderr, "access grant revoke: unexpected argument %q\n", rest[0])
-		return 2
-	}
-	if id == "" {
+	pos, err := parsePositionals(lc.fs, args, 1)
+	if err != nil {
 		fmt.Fprintln(stderr, "access grant revoke requires a grant ID")
 		return 2
 	}
+	id := pos[0]
 	ws, ok := requireAccessGrantWorkspace("revoke", *workspace, stderr)
 	if !ok {
 		return 2

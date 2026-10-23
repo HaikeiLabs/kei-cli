@@ -182,7 +182,7 @@ func runGroupsCreate(args []string, stdout, stderr io.Writer, stdin io.Reader, c
 }
 
 func runGroupsDelete(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("groups", "delete", "Delete a group", stdout, stderr)
+	lc := newCommandFlags("groups", "delete", "Delete a group", stdout, stderr).WithArgs("GROUP")
 	workspace := workspaceFlag(lc.fs)
 	yes := yesFlag(lc.fs)
 	force := lc.fs.Bool("force", false, "delete even if policies reference the group")
@@ -357,7 +357,7 @@ func groupsQuery(session *apiSession, workspaceID string) url.Values {
 }
 
 func runGroupsMembersList(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("groups", "members list", "List group members", stdout, stderr)
+	lc := newCommandFlags("groups", "members list", "List group members", stdout, stderr).WithArgs("GROUP")
 	jsonOutput := jsonFlag(lc.fs)
 	workspace := workspaceFlagHelp(lc.fs, "workspace name or ID (default: the organization's default workspace)")
 	// Intercept -h/--help before parsePositionals.
@@ -426,7 +426,7 @@ func runGroupsMembersList(args []string, stdout, stderr io.Writer, client *http.
 }
 
 func runGroupsMembersAdd(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("groups", "members add", "Add a member to a group", stdout, stderr)
+	lc := newCommandFlags("groups", "members add", "Add a member to a group", stdout, stderr).WithArgs("GROUP USER")
 	workspace := workspaceFlagHelp(lc.fs, "workspace name or ID (default: the organization's default workspace)")
 	yes := yesFlag(lc.fs)
 	// Intercept -h/--help before parsePositionals.
@@ -468,7 +468,7 @@ func runGroupsMembersAdd(args []string, stdout, stderr io.Writer, stdin io.Reade
 }
 
 func runGroupsMembersRemove(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("groups", "members remove", "Remove a member from a group", stdout, stderr)
+	lc := newCommandFlags("groups", "members remove", "Remove a member from a group", stdout, stderr).WithArgs("GROUP USER")
 	workspace := workspaceFlagHelp(lc.fs, "workspace name or ID (default: the organization's default workspace)")
 	yes := yesFlag(lc.fs)
 	// Intercept -h/--help before parsePositionals.
