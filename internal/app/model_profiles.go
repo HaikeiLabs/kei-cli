@@ -431,7 +431,7 @@ func runModelProfilesList(args []string, stdout, stderr io.Writer, client *http.
 }
 
 func runModelProfilesGet(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("model-profiles", "get", "Get a model profile by ID", stdout, stderr)
+	lc := newCommandFlags("model-profiles", "get", "Get a model profile by ID", stdout, stderr).WithArgs("PROFILE")
 	workspace := workspaceFlagHelp(lc.fs, "workspace name; omit for organization-level profiles")
 	for _, a := range args {
 		if a == "-h" || a == "--help" {
@@ -539,7 +539,7 @@ func runModelProfilesCreate(args []string, stdout, stderr io.Writer, stdin io.Re
 }
 
 func runModelProfilesUpdate(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("model-profiles", "update", "Update a model profile", stdout, stderr)
+	lc := newCommandFlags("model-profiles", "update", "Update a model profile", stdout, stderr).WithArgs("PROFILE")
 	workspace := workspaceFlagHelp(lc.fs, "workspace name; omit for organization-level profiles")
 	lc.fs.String("display-name", "", "model profile display name")
 	lc.fs.String("endpoint", "", "model API endpoint URL (https)")
@@ -639,7 +639,7 @@ func runModelProfilesUpdate(args []string, stdout, stderr io.Writer, stdin io.Re
 }
 
 func runModelProfilesDelete(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("model-profiles", "delete", "Delete a model profile", stdout, stderr)
+	lc := newCommandFlags("model-profiles", "delete", "Delete a model profile", stdout, stderr).WithArgs("PROFILE")
 	workspace := workspaceFlagHelp(lc.fs, "workspace name; omit for organization-level profiles")
 	yes := yesFlag(lc.fs)
 	for _, a := range args {
@@ -681,7 +681,7 @@ func runModelProfilesDelete(args []string, stdout, stderr io.Writer, client *htt
 // runModelProfilesSetDefault sets the organization default (POST
 // model-profiles:setDefault) or, with --workspace, the workspace default.
 func runModelProfilesSetDefault(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("model-profiles", "set-default", "Set the default model profile", stdout, stderr)
+	lc := newCommandFlags("model-profiles", "set-default", "Set the default model profile", stdout, stderr).WithArgs("PROFILE")
 	workspace := workspaceFlagHelp(lc.fs, "workspace name; omit for organization-level profiles")
 	for _, a := range args {
 		if a == "-h" || a == "--help" {
@@ -718,7 +718,7 @@ func runModelProfilesSetDefault(args []string, stdout, stderr io.Writer, client 
 }
 
 func runModelProfilesAssign(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("model-profiles", "assign", "Assign a model profile to an agent", stdout, stderr)
+	lc := newCommandFlags("model-profiles", "assign", "Assign a model profile to an agent", stdout, stderr).WithArgs("PROFILE")
 	workspace := workspaceFlagHelp(lc.fs, "workspace name; omit for organization-level profiles")
 	agentID := lc.fs.String("agent", "", "agent ID to assign the profile to")
 	for _, a := range args {
@@ -839,7 +839,7 @@ func runModelProfilesAssignment(args []string, stdout, stderr io.Writer, client 
 }
 
 func runModelProfilesReadiness(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("model-profiles", "readiness", "Check model profile readiness", stdout, stderr)
+	lc := newCommandFlags("model-profiles", "readiness", "Check model profile readiness", stdout, stderr).WithArgs("PROFILE")
 	workspace := workspaceFlagHelp(lc.fs, "workspace name; omit for organization-level profiles")
 	for _, a := range args {
 		if a == "-h" || a == "--help" {
@@ -886,7 +886,7 @@ func runModelProfilesReadiness(args []string, stdout, stderr io.Writer, client *
 // profile and checks its stored endpoint; provider reachability is what
 // readiness reports.
 func runModelProfilesTest(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("model-profiles", "test", "Test a model profile", stdout, stderr)
+	lc := newCommandFlags("model-profiles", "test", "Test a model profile", stdout, stderr).WithArgs("PROFILE")
 	workspace := workspaceFlagHelp(lc.fs, "workspace name; omit for organization-level profiles")
 	endpoint := lc.fs.String("endpoint", "", "model API endpoint URL to validate (https)")
 	for _, a := range args {

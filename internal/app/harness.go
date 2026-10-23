@@ -368,7 +368,7 @@ func parseHarnessRemoveLeaf(lc leafCommand, args []string) (agentID string, code
 }
 
 func runHarnessRemove(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore, registry *harness.Registry) int {
-	lc := newCommandFlags("harness", "remove", "Remove a harness", stdout, stderr)
+	lc := newCommandFlags("harness", "remove", "Remove a harness", stdout, stderr).WithArgs("[AGENT_ID]")
 	installation := lc.fs.String("installation", "", "runtime installation ID")
 	agentID, rc, ok := parseHarnessRemoveLeaf(lc, args)
 	if !ok {

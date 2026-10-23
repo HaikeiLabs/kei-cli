@@ -169,7 +169,7 @@ func runUsersList(args []string, stdout, stderr io.Writer, client *http.Client, 
 }
 
 func runUsersGet(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("users", "get", "Get a user by ID", stdout, stderr)
+	lc := newCommandFlags("users", "get", "Get a user by ID", stdout, stderr).WithArgs("USER_ID")
 	jsonOutput := jsonFlag(lc.fs)
 	for _, a := range args {
 		if a == "-h" || a == "--help" {
@@ -248,7 +248,7 @@ func runUsersCreate(args []string, stdout, stderr io.Writer, stdin io.Reader, cl
 }
 
 func runUsersUpdate(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("users", "update", "Update a user", stdout, stderr)
+	lc := newCommandFlags("users", "update", "Update a user", stdout, stderr).WithArgs("USER_ID")
 	email := lc.fs.String("email", "", "new email")
 	name := lc.fs.String("name", "", "new display name")
 	jsonOutput := jsonFlag(lc.fs)
@@ -353,7 +353,7 @@ func runUsersIdentities(args []string, stdout, stderr io.Writer, client *http.Cl
 }
 
 func runUsersIdentitiesList(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("users", "identities list", "List user identities", stdout, stderr)
+	lc := newCommandFlags("users", "identities list", "List user identities", stdout, stderr).WithArgs("USER_ID")
 	jsonOutput := jsonFlag(lc.fs)
 	for _, a := range args {
 		if a == "-h" || a == "--help" {
@@ -425,7 +425,7 @@ func runUsersRemoteIdentities(args []string, stdout, stderr io.Writer, client *h
 }
 
 func runUsersRemoteIdentitiesList(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("users", "remote-identities list", "List remote identities", stdout, stderr)
+	lc := newCommandFlags("users", "remote-identities list", "List remote identities", stdout, stderr).WithArgs("USER_ID")
 	jsonOutput := jsonFlag(lc.fs)
 	for _, a := range args {
 		if a == "-h" || a == "--help" {

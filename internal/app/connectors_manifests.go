@@ -111,7 +111,7 @@ func parseManifestLeaf(lc leafCommand, args []string, allowManifest bool) (conne
 }
 
 func runConnectorsManifestsList(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("connectors", "manifests list", "List connector tool manifests", stdout, stderr)
+	lc := newCommandFlags("connectors", "manifests list", "List connector tool manifests", stdout, stderr).WithArgs("CONNECTOR_ID")
 	workspace := workspaceFlag(lc.fs)
 	jsonOutput := lc.fs.Bool("json", false, "output as JSON")
 	connectorID, _, rc, ok := parseManifestLeaf(lc, args, false)
@@ -149,7 +149,7 @@ func runConnectorsManifestsList(args []string, stdout, stderr io.Writer, client 
 }
 
 func runConnectorsManifestsShow(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("connectors", "manifests show", "Show a connector tool manifest", stdout, stderr)
+	lc := newCommandFlags("connectors", "manifests show", "Show a connector tool manifest", stdout, stderr).WithArgs("CONNECTOR_ID [MANIFEST_ID]")
 	workspace := workspaceFlag(lc.fs)
 	jsonOutput := lc.fs.Bool("json", false, "output as JSON")
 	connectorID, manifestID, rc, ok := parseManifestLeaf(lc, args, true)
@@ -235,7 +235,7 @@ func printManifestChanges(w io.Writer, candidate toolManifest, all []toolManifes
 // manifest and its changes first and needs confirmation (--yes, or y at a
 // terminal). The console requires an organization administrator.
 func runConnectorsManifestsApprove(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("connectors", "manifests approve", "Approve a connector tool manifest", stdout, stderr)
+	lc := newCommandFlags("connectors", "manifests approve", "Approve a connector tool manifest", stdout, stderr).WithArgs("CONNECTOR_ID [MANIFEST_ID]")
 	workspace := workspaceFlag(lc.fs)
 	yes := lc.fs.Bool("yes", false, "approve without prompting")
 	connectorID, manifestID, rc, ok := parseManifestLeaf(lc, args, true)

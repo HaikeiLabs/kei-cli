@@ -326,16 +326,19 @@ func runAccessCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, 
 }
 
 func runBotCredentialCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("bot credential", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	installationID := flags.String("installation", "", "installation ID")
-	workspace := flags.String("workspace", "", "workspace name (or set KEI_WORKSPACE)")
-	rotate := flags.Bool("rotate", false, "rotate an existing runtime credential")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || *installationID == "" {
+	lc := newCommandFlags("bot", "credential", "Manage bot credentials", stdout, stderr)
+	installation := installationFlag(lc.fs)
+	workspace := workspaceFlag(lc.fs)
+	rotate := lc.fs.Bool("rotate", false, "rotate an existing runtime credential")
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
+	}
+	if lc.fs.NArg() != 0 || *installation == "" {
 		fmt.Fprintln(stderr, "bot credential requires --installation ID")
 		return 2
 	}
-	if _, err := uuid.Parse(*installationID); err != nil {
+	if _, err := uuid.Parse(*installation); err != nil {
 		fmt.Fprintln(stderr, "bot credential: --installation must be a UUID")
 		return 2
 	}
@@ -370,7 +373,7 @@ func runBotCredentialCommand(args []string, stdout, stderr io.Writer, client *ht
 	if *rotate {
 		action = "rotate"
 	}
-	runtimeToken, status, err := requestRuntimeCredentialAction(context.Background(), client, baseURL, cliToken, *installationID, wid, action)
+	runtimeToken, status, err := requestRuntimeCredentialAction(context.Background(), client, baseURL, cliToken, *installation, wid, action)
 	if err != nil {
 		fmt.Fprintf(stderr, "bot credential failed: %v\n", err)
 		return 1
@@ -397,16 +400,16 @@ func writerIsTerminal(w io.Writer) bool {
 }
 
 func runBotInitCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("bot init", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	platform := flags.String("platform", "", "runtime platform (cli, teams, discord, slack, whatsapp, or openwebui)")
-	agentID := flags.String("agent", "", "Kei agent ID")
-	displayName := flags.String("name", "", "installation name")
-	workspace := flags.String("workspace", "", "workspace name")
-	if err := flags.Parse(args); err != nil {
-		return 2
+	lc := newCommandFlags("bot", "init", "Initialize a new bot", stdout, stderr)
+	platform := lc.fs.String("platform", "", "runtime platform (cli, teams, discord, slack, whatsapp, or openwebui)")
+	agentID := lc.fs.String("agent", "", "Kei agent ID")
+	displayName := lc.fs.String("name", "", "installation name")
+	workspace := workspaceFlag(lc.fs)
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
-	if flags.NArg() != 0 || *displayName == "" || !validRuntimePlatform(*platform) {
+	if lc.fs.NArg() != 0 || *displayName == "" || !validRuntimePlatform(*platform) {
 		fmt.Fprintln(stderr, "bot init requires --platform cli|teams|discord|slack|whatsapp|openwebui and --name NAME")
 		return 2
 	}
