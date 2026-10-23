@@ -401,3 +401,45 @@ jobs:
             --cache-control "no-cache"
 
           echo "Published latest.txt: $VERSION"
+
+  prepare-release-notes:
+    name: Prepare release notes
+    needs: [release, validate-tag]
+    if: success()
+    runs-on: ubuntu-latest
+    outputs:
+      notes: ${{ steps.notes.outputs.notes }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout tags and history
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Prepare release notes
+        id: notes
+        run: |
+          PREVIOUS_TAG="$(git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null || true)"
+          RANGE="${PREVIOUS_TAG:+$PREVIOUS_TAG..}HEAD"
+          if [ -z "$PREVIOUS_TAG" ]; then
+            NOTES="$(git log -n 30 "$RANGE" --format='%s' 2>/dev/null | tr '\n' ' ' | cut -c1-1000)" || true
+          else
+            NOTES="$(git log "$RANGE" --format='%s' 2>/dev/null | tr '\n' ' ' | cut -c1-1000)" || true
+          fi
+          echo "notes=$NOTES" >> "$GITHUB_OUTPUT" || true
+
+  announce:
+    name: Discord announcement
+    needs: [release, validate-tag, prepare-release-notes]
+    if: success()
+    permissions:
+      contents: read
+    uses: HaikeiLabs/github-workflows/.github/workflows/release-discord.yml@68984830da43be688f58864ca4f3c48faa5ebcb2
+    with:
+      tag: ${{ needs.validate-tag.outputs.tag }}
+      repo-name: kei-cli
+      notes: ${{ needs.prepare-release-notes.outputs.notes }}
+    secrets:
+      webhook: ${{ secrets.DISCORD_RELEASES_WEBHOOK }}
