@@ -25,31 +25,31 @@ type runtimeIdentity struct {
 }
 
 func runSetupCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client) int {
-	flags := flag.NewFlagSet("setup", flag.ContinueOnError)
-	flags.SetOutput(stderr)
+	lc := newCommandFlags("", "setup", "Configure the Kei CLI", stdout, stderr)
 	configPath, err := defaultConfigPath()
 	if err != nil {
 		fmt.Fprintf(stderr, "setup failed: %v\n", err)
 		return 1
 	}
-	path := flags.String("config", configPath, "configuration file path")
-	controlPlaneURL := flags.String("control-plane-url", defaultRuntimeControlPlaneURL, "Kei runtime control-plane URL")
-	runtimeToken := flags.String("runtime-token", "", "runtime installation token (prefer the interactive prompt)")
-	harnessURL := flags.String("harness-url", "http://127.0.0.1:8088", "local headless harness URL")
-	proxyPath := flags.String("proxy-path", defaultProxyPath(), "kei-proxy executable path")
-	proxyRegistry := flags.String("proxy-registry", "", "kei-proxy tool registry path")
-	modelEndpoint := flags.String("model-endpoint", "", "optional OpenAI-compatible model endpoint")
-	model := flags.String("model", "", "optional model name")
-	skipVerify := flags.Bool("skip-verify", false, "do not verify the runtime token against Kei")
-	if err := flags.Parse(args); err != nil {
-		return 2
+	path := lc.fs.String("config", configPath, "configuration file path")
+	controlPlaneURL := lc.fs.String("control-plane-url", defaultRuntimeControlPlaneURL, "Kei runtime control-plane URL")
+	runtimeToken := lc.fs.String("runtime-token", "", "runtime installation token (prefer the interactive prompt)")
+	harnessURL := lc.fs.String("harness-url", "http://127.0.0.1:8088", "local headless harness URL")
+	proxyPath := lc.fs.String("proxy-path", defaultProxyPath(), "kei-proxy executable path")
+	proxyRegistry := lc.fs.String("proxy-registry", "", "kei-proxy tool registry path")
+	modelEndpoint := lc.fs.String("model-endpoint", "", "optional OpenAI-compatible model endpoint")
+	model := lc.fs.String("model", "", "optional model name")
+	skipVerify := lc.fs.Bool("skip-verify", false, "do not verify the runtime token against Kei")
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
-	if flags.NArg() != 0 {
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "setup accepts no positional arguments")
 		return 2
 	}
 	provided := make(map[string]bool)
-	flags.Visit(func(flag *flag.Flag) { provided[flag.Name] = true })
+	lc.fs.Visit(func(f *flag.Flag) { provided[f.Name] = true })
 
 	reader := bufio.NewReader(stdin)
 	if !provided["control-plane-url"] {

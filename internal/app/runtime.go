@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -45,14 +44,14 @@ func runRuntimeBootstrapCommand(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "runtime bootstrap failed: %v\n", err)
 		return 1
 	}
-	flags := flag.NewFlagSet("runtime bootstrap", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	configPath := flags.String("config", defaultPath, "configuration file path")
-	proxyOverride := flags.String("proxy-path", "", "override the configured kei-proxy path")
-	if err := flags.Parse(args); err != nil {
-		return 2
+	lc := newCommandFlags("runtime", "bootstrap", "Bootstrap the runtime", stdout, stderr)
+	configPath := lc.fs.String("config", defaultPath, "configuration file path")
+	proxyOverride := lc.fs.String("proxy-path", "", "override the configured kei-proxy path")
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
-	if flags.NArg() != 0 {
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "runtime bootstrap accepts no positional arguments")
 		return 2
 	}
@@ -100,14 +99,14 @@ func runRuntimeHeartbeatCommand(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "runtime heartbeat: %v\n", err)
 		return 1
 	}
-	flags := flag.NewFlagSet("runtime heartbeat", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	configPath := flags.String("config", defaultPath, "configuration file path")
-	proxyOverride := flags.String("proxy-path", "", "override the configured kei-proxy path")
-	if err := flags.Parse(args); err != nil {
-		return 2
+	lc := newCommandFlags("runtime", "heartbeat", "Send a runtime heartbeat", stdout, stderr)
+	configPath := lc.fs.String("config", defaultPath, "configuration file path")
+	proxyOverride := lc.fs.String("proxy-path", "", "override the configured kei-proxy path")
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
-	if flags.NArg() != 0 {
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "runtime heartbeat accepts no positional arguments")
 		return 2
 	}

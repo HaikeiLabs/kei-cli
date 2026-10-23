@@ -1,7 +1,6 @@
 package app
 
 import (
-	"flag"
 	"fmt"
 	"io"
 )
@@ -10,12 +9,12 @@ import (
 // credential store. It is idempotent: logging out while not logged in is not
 // an error.
 func runLogoutCommand(args []string, stdout, stderr io.Writer, store credentialStore) int {
-	flags := flag.NewFlagSet("logout", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	if err := flags.Parse(args); err != nil {
-		return 2
+	lc := newCommandFlags("", "logout", "Log out of Kei", stdout, stderr)
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
-	if flags.NArg() != 0 {
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "logout accepts no positional arguments")
 		return 2
 	}
