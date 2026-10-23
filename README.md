@@ -240,6 +240,7 @@ or manage its agent assignments:
 
 ```sh
 kei bot status --installation INSTALLATION_ID
+kei bot update --installation INSTALLATION_ID --name "Renamed runtime"
 kei bot delete --installation INSTALLATION_ID --yes
 kei bot agents list --installation INSTALLATION_ID
 kei bot agents add --installation INSTALLATION_ID --agent AGENT_ID
