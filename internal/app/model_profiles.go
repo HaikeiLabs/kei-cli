@@ -370,42 +370,6 @@ func readAPIKey(stdin io.Reader, stderr io.Writer) (string, error) {
 	return key, nil
 }
 
-func profileWorkspaceFlag(flags *flag.FlagSet) *string {
-	return flags.String("workspace", "", "workspace name; omit for organization-level profiles")
-}
-
-func requireProfileWorkspace(command, workspace string, stderr io.Writer) (workspaceSelection, bool) {
-	sel, err := selectWorkspace(workspace, keiWebURL())
-	if err != nil {
-		fmt.Fprintf(stderr, "model-profiles %s: %v\n", command, err)
-		return workspaceSelection{}, false
-	}
-	if sel.fromIDEnv {
-		fmt.Fprintln(stderr, deprecationNote)
-	}
-	return sel, true
-}
-
-func requireAgentID(command, agentID string, stderr io.Writer) bool {
-	if agentID == "" {
-		fmt.Fprintf(stderr, "model-profiles %s requires --agent AGENT_ID\n", command)
-		return false
-	}
-	if _, err := uuid.Parse(agentID); err != nil {
-		fmt.Fprintln(stderr, "agent ID must be a UUID")
-		return false
-	}
-	return true
-}
-
-func requireProfileArg(command, id string, stderr io.Writer) bool {
-	if id == "" {
-		fmt.Fprintf(stderr, "model-profiles %s requires a profile ID or name\n", command)
-		return false
-	}
-	return true
-}
-
 func validProfileAuthType(authType string) bool {
 	return authType == "none" || authType == "api_key"
 }
@@ -420,14 +384,14 @@ func writeProfileResult(command string, stdout, stderr io.Writer, payload []byte
 }
 
 func runModelProfilesList(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("model-profiles list", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := profileWorkspaceFlag(flags)
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	if err := flags.Parse(args); err != nil {
-		return 2
+	lc := newCommandFlags("model-profiles", "list", "List model profiles", stdout, stderr)
+	workspace := workspaceFlagHelp(lc.fs, "workspace name; omit for organization-level profiles")
+	jsonOutput := jsonFlag(lc.fs)
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
-	if flags.NArg() != 0 {
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "model-profiles list takes no positional arguments")
 		return 2
 	}
@@ -467,15 +431,21 @@ func runModelProfilesList(args []string, stdout, stderr io.Writer, client *http.
 }
 
 func runModelProfilesGet(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("model-profiles get", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := profileWorkspaceFlag(flags)
-	id, err := parsePolicyFlags(flags, args)
+	lc := newCommandFlags("model-profiles", "get", "Get a model profile by ID", stdout, stderr)
+	workspace := workspaceFlagHelp(lc.fs, "workspace name; omit for organization-level profiles")
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			lc.printUsage(lc.stdout)
+			return 0
+		}
+	}
+	id, err := parsePolicyFlags(lc.fs, args)
 	if err != nil {
 		fmt.Fprintf(stderr, "model-profiles get: %v\n", err)
 		return 2
 	}
-	if !requireProfileArg("get", id, stderr) {
+	if id == "" {
+		fmt.Fprintln(stderr, "model-profiles get requires a profile ID or name")
 		return 2
 	}
 	session, ok := openOrgSession("model-profiles get", workspaceSelection{value: *workspace}, stderr, client, store)
@@ -492,24 +462,23 @@ func runModelProfilesGet(args []string, stdout, stderr io.Writer, client *http.C
 }
 
 func runModelProfilesCreate(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("model-profiles create", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := profileWorkspaceFlag(flags)
-	displayName := flags.String("display-name", "", "model profile display name")
-	endpoint := flags.String("endpoint", "", "model API endpoint URL (https)")
-	authType := flags.String("auth-type", "", "none or api_key (api_key reads the key from stdin)")
-	defaultModel := flags.String("default-model", "", "default model identifier")
-	agentID := flags.String("agent", "", "assign the workspace profile to this agent ID")
-	workspaceDefault := flags.Bool("workspace-default", false, "make this the workspace's default profile")
-	if err := flags.Parse(args); err != nil {
-		return 2
+	lc := newCommandFlags("model-profiles", "create", "Create a model profile", stdout, stderr)
+	workspace := workspaceFlagHelp(lc.fs, "workspace name; omit for organization-level profiles")
+	displayName := lc.fs.String("display-name", "", "model profile display name")
+	endpoint := lc.fs.String("endpoint", "", "model API endpoint URL (https)")
+	authType := lc.fs.String("auth-type", "", "none or api_key (api_key reads the key from stdin)")
+	defaultModel := lc.fs.String("default-model", "", "default model identifier")
+	agentID := lc.fs.String("agent", "", "assign the workspace profile to this agent ID")
+	workspaceDefault := lc.fs.Bool("workspace-default", false, "make this the workspace's default profile")
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
-	if flags.NArg() != 0 {
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "model-profiles create takes no positional arguments")
 		return 2
 	}
-	if *displayName == "" || *endpoint == "" || *authType == "" || *defaultModel == "" {
-		fmt.Fprintln(stderr, "model-profiles create requires --display-name, --endpoint, --auth-type, and --default-model")
+	if !requireFlags(lc.fs, stderr, "display-name", "endpoint", "auth-type", "default-model") {
 		return 2
 	}
 	if err := validateModelProfileEndpoint(*endpoint); err != nil {
@@ -570,24 +539,30 @@ func runModelProfilesCreate(args []string, stdout, stderr io.Writer, stdin io.Re
 }
 
 func runModelProfilesUpdate(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("model-profiles update", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := profileWorkspaceFlag(flags)
-	flags.String("display-name", "", "model profile display name")
-	flags.String("endpoint", "", "model API endpoint URL (https)")
-	authType := flags.String("auth-type", "", "none or api_key (switching to api_key reads the key from stdin)")
-	flags.String("default-model", "", "default model identifier")
-	rotateKey := flags.Bool("rotate-key", false, "read a replacement API key from stdin")
-	id, err := parsePolicyFlags(flags, args)
+	lc := newCommandFlags("model-profiles", "update", "Update a model profile", stdout, stderr)
+	workspace := workspaceFlagHelp(lc.fs, "workspace name; omit for organization-level profiles")
+	lc.fs.String("display-name", "", "model profile display name")
+	lc.fs.String("endpoint", "", "model API endpoint URL (https)")
+	authType := lc.fs.String("auth-type", "", "none or api_key (switching to api_key reads the key from stdin)")
+	lc.fs.String("default-model", "", "default model identifier")
+	rotateKey := lc.fs.Bool("rotate-key", false, "read a replacement API key from stdin")
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			lc.printUsage(lc.stdout)
+			return 0
+		}
+	}
+	id, err := parsePolicyFlags(lc.fs, args)
 	if err != nil {
 		fmt.Fprintf(stderr, "model-profiles update: %v\n", err)
 		return 2
 	}
-	if !requireProfileArg("update", id, stderr) {
+	if id == "" {
+		fmt.Fprintln(stderr, "model-profiles update requires a profile ID or name")
 		return 2
 	}
 	var req updateModelProfileRequest
-	flags.Visit(func(f *flag.Flag) {
+	lc.fs.Visit(func(f *flag.Flag) {
 		value := f.Value.String()
 		switch f.Name {
 		case "display-name":
@@ -664,16 +639,22 @@ func runModelProfilesUpdate(args []string, stdout, stderr io.Writer, stdin io.Re
 }
 
 func runModelProfilesDelete(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("model-profiles delete", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := profileWorkspaceFlag(flags)
-	yes := flags.Bool("yes", false, "confirm deletion")
-	id, err := parsePolicyFlags(flags, args)
+	lc := newCommandFlags("model-profiles", "delete", "Delete a model profile", stdout, stderr)
+	workspace := workspaceFlagHelp(lc.fs, "workspace name; omit for organization-level profiles")
+	yes := yesFlag(lc.fs)
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			lc.printUsage(lc.stdout)
+			return 0
+		}
+	}
+	id, err := parsePolicyFlags(lc.fs, args)
 	if err != nil {
 		fmt.Fprintf(stderr, "model-profiles delete: %v\n", err)
 		return 2
 	}
-	if !requireProfileArg("delete", id, stderr) {
+	if id == "" {
+		fmt.Fprintln(stderr, "model-profiles delete requires a profile ID or name")
 		return 2
 	}
 	if !*yes {
@@ -700,15 +681,21 @@ func runModelProfilesDelete(args []string, stdout, stderr io.Writer, client *htt
 // runModelProfilesSetDefault sets the organization default (POST
 // model-profiles:setDefault) or, with --workspace, the workspace default.
 func runModelProfilesSetDefault(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("model-profiles set-default", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := profileWorkspaceFlag(flags)
-	id, err := parsePolicyFlags(flags, args)
+	lc := newCommandFlags("model-profiles", "set-default", "Set the default model profile", stdout, stderr)
+	workspace := workspaceFlagHelp(lc.fs, "workspace name; omit for organization-level profiles")
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			lc.printUsage(lc.stdout)
+			return 0
+		}
+	}
+	id, err := parsePolicyFlags(lc.fs, args)
 	if err != nil {
 		fmt.Fprintf(stderr, "model-profiles set-default: %v\n", err)
 		return 2
 	}
-	if !requireProfileArg("set-default", id, stderr) {
+	if id == "" {
+		fmt.Fprintln(stderr, "model-profiles set-default requires a profile ID or name")
 		return 2
 	}
 	session, ok := openOrgSession("model-profiles set-default", workspaceSelection{value: *workspace}, stderr, client, store)
@@ -731,21 +718,38 @@ func runModelProfilesSetDefault(args []string, stdout, stderr io.Writer, client 
 }
 
 func runModelProfilesAssign(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("model-profiles assign", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := profileWorkspaceFlag(flags)
-	agentID := flags.String("agent", "", "agent ID to assign the profile to")
-	id, err := parsePolicyFlags(flags, args)
+	lc := newCommandFlags("model-profiles", "assign", "Assign a model profile to an agent", stdout, stderr)
+	workspace := workspaceFlagHelp(lc.fs, "workspace name; omit for organization-level profiles")
+	agentID := lc.fs.String("agent", "", "agent ID to assign the profile to")
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			lc.printUsage(lc.stdout)
+			return 0
+		}
+	}
+	id, err := parsePolicyFlags(lc.fs, args)
 	if err != nil {
 		fmt.Fprintf(stderr, "model-profiles assign: %v\n", err)
 		return 2
 	}
-	if !requireProfileArg("assign", id, stderr) || !requireAgentID("assign", *agentID, stderr) {
+	if id == "" {
+		fmt.Fprintln(stderr, "model-profiles assign requires a profile ID or name")
 		return 2
 	}
-	ws, ok := requireProfileWorkspace("assign", *workspace, stderr)
-	if !ok {
+	if !requireFlags(lc.fs, stderr, "agent", "workspace") {
 		return 2
+	}
+	if _, err := uuid.Parse(*agentID); err != nil {
+		fmt.Fprintln(stderr, "agent ID must be a UUID")
+		return 2
+	}
+	ws, err := selectWorkspace(*workspace, keiWebURL())
+	if err != nil {
+		fmt.Fprintf(stderr, "model-profiles assign: %v\n", err)
+		return 2
+	}
+	if ws.fromIDEnv {
+		fmt.Fprintln(stderr, deprecationNote)
 	}
 	session, ok := openOrgSession("model-profiles assign", ws, stderr, client, store)
 	if !ok {
@@ -761,23 +765,31 @@ func runModelProfilesAssign(args []string, stdout, stderr io.Writer, client *htt
 }
 
 func runModelProfilesUnassign(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("model-profiles unassign", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := profileWorkspaceFlag(flags)
-	agentID := flags.String("agent", "", "agent ID whose profile assignment to remove")
-	if err := flags.Parse(args); err != nil {
-		return 2
+	lc := newCommandFlags("model-profiles", "unassign", "Unassign a model profile from an agent", stdout, stderr)
+	workspace := workspaceFlagHelp(lc.fs, "workspace name; omit for organization-level profiles")
+	agentID := lc.fs.String("agent", "", "agent ID whose profile assignment to remove")
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
-	if flags.NArg() != 0 {
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "model-profiles unassign takes no positional arguments")
 		return 2
 	}
-	if !requireAgentID("unassign", *agentID, stderr) {
+	if !requireFlags(lc.fs, stderr, "agent", "workspace") {
 		return 2
 	}
-	ws, ok := requireProfileWorkspace("unassign", *workspace, stderr)
-	if !ok {
+	if _, err := uuid.Parse(*agentID); err != nil {
+		fmt.Fprintln(stderr, "agent ID must be a UUID")
 		return 2
+	}
+	ws, err := selectWorkspace(*workspace, keiWebURL())
+	if err != nil {
+		fmt.Fprintf(stderr, "model-profiles unassign: %v\n", err)
+		return 2
+	}
+	if ws.fromIDEnv {
+		fmt.Fprintln(stderr, deprecationNote)
 	}
 	session, ok := openOrgSession("model-profiles unassign", ws, stderr, client, store)
 	if !ok {
@@ -792,23 +804,31 @@ func runModelProfilesUnassign(args []string, stdout, stderr io.Writer, client *h
 }
 
 func runModelProfilesAssignment(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("model-profiles assignment", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := profileWorkspaceFlag(flags)
-	agentID := flags.String("agent", "", "agent ID whose profile assignment to show")
-	if err := flags.Parse(args); err != nil {
-		return 2
+	lc := newCommandFlags("model-profiles", "assignment", "Show model profile assignment", stdout, stderr)
+	workspace := workspaceFlagHelp(lc.fs, "workspace name; omit for organization-level profiles")
+	agentID := lc.fs.String("agent", "", "agent ID whose profile assignment to show")
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
-	if flags.NArg() != 0 {
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "model-profiles assignment takes no positional arguments")
 		return 2
 	}
-	if !requireAgentID("assignment", *agentID, stderr) {
+	if !requireFlags(lc.fs, stderr, "agent", "workspace") {
 		return 2
 	}
-	ws, ok := requireProfileWorkspace("assignment", *workspace, stderr)
-	if !ok {
+	if _, err := uuid.Parse(*agentID); err != nil {
+		fmt.Fprintln(stderr, "agent ID must be a UUID")
 		return 2
+	}
+	ws, err := selectWorkspace(*workspace, keiWebURL())
+	if err != nil {
+		fmt.Fprintf(stderr, "model-profiles assignment: %v\n", err)
+		return 2
+	}
+	if ws.fromIDEnv {
+		fmt.Fprintln(stderr, deprecationNote)
 	}
 	session, ok := openOrgSession("model-profiles assignment", ws, stderr, client, store)
 	if !ok {
@@ -819,20 +839,33 @@ func runModelProfilesAssignment(args []string, stdout, stderr io.Writer, client 
 }
 
 func runModelProfilesReadiness(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("model-profiles readiness", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := profileWorkspaceFlag(flags)
-	id, err := parsePolicyFlags(flags, args)
+	lc := newCommandFlags("model-profiles", "readiness", "Check model profile readiness", stdout, stderr)
+	workspace := workspaceFlagHelp(lc.fs, "workspace name; omit for organization-level profiles")
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			lc.printUsage(lc.stdout)
+			return 0
+		}
+	}
+	id, err := parsePolicyFlags(lc.fs, args)
 	if err != nil {
 		fmt.Fprintf(stderr, "model-profiles readiness: %v\n", err)
 		return 2
 	}
-	if !requireProfileArg("readiness", id, stderr) {
+	if id == "" {
+		fmt.Fprintln(stderr, "model-profiles readiness requires a profile ID or name")
 		return 2
 	}
-	ws, ok := requireProfileWorkspace("readiness", *workspace, stderr)
-	if !ok {
+	if !requireFlags(lc.fs, stderr, "workspace") {
 		return 2
+	}
+	ws, err := selectWorkspace(*workspace, keiWebURL())
+	if err != nil {
+		fmt.Fprintf(stderr, "model-profiles readiness: %v\n", err)
+		return 2
+	}
+	if ws.fromIDEnv {
+		fmt.Fprintln(stderr, deprecationNote)
 	}
 	session, ok := openOrgSession("model-profiles readiness", ws, stderr, client, store)
 	if !ok {
@@ -853,11 +886,16 @@ func runModelProfilesReadiness(args []string, stdout, stderr io.Writer, client *
 // profile and checks its stored endpoint; provider reachability is what
 // readiness reports.
 func runModelProfilesTest(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("model-profiles test", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := profileWorkspaceFlag(flags)
-	endpoint := flags.String("endpoint", "", "model API endpoint URL to validate (https)")
-	id, err := parsePolicyFlags(flags, args)
+	lc := newCommandFlags("model-profiles", "test", "Test a model profile", stdout, stderr)
+	workspace := workspaceFlagHelp(lc.fs, "workspace name; omit for organization-level profiles")
+	endpoint := lc.fs.String("endpoint", "", "model API endpoint URL to validate (https)")
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			lc.printUsage(lc.stdout)
+			return 0
+		}
+	}
+	id, err := parsePolicyFlags(lc.fs, args)
 	if err != nil {
 		fmt.Fprintf(stderr, "model-profiles test: %v\n", err)
 		return 2

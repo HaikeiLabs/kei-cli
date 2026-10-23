@@ -107,13 +107,13 @@ func runDirectorySyncCommand(args []string, stdout, stderr io.Writer, stdin io.R
 }
 
 func runDirectorySyncGet(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("directory-sync get", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	if err := flags.Parse(args); err != nil {
-		return 2
+	lc := newCommandFlags("directory-sync", "get", "Get the directory sync configuration", stdout, stderr)
+	jsonOutput := jsonFlag(lc.fs)
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
-	if flags.NArg() != 0 {
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "directory-sync get takes no positional arguments")
 		return 2
 	}
@@ -140,20 +140,20 @@ func runDirectorySyncGet(args []string, stdout, stderr io.Writer, client *http.C
 // runDirectorySyncSet changes (or, the first time, creates) the directory
 // sync with PATCH; update_mask names exactly the flags given.
 func runDirectorySyncSet(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("directory-sync set", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	tenantID := flags.String("tenant-id", "", "the customer's Entra tenant ID (GUID)")
-	clientID := flags.String("client-id", "", "client ID of the customer's sync app registration (GUID)")
-	appID := flags.String("app-id", "", "client ID of the app whose app roles are synced (GUID)")
-	groupID := flags.String("group-id", "", "Entra security group ID to sync (GUID; mutually exclusive with --app-id)")
-	dryRun := flags.Bool("dry-run", true, "report what would change without writing (true or false)")
-	createUsers := flags.Bool("create-users", false, "create Kei users for assigned Entra users (true or false)")
-	revoke := flags.Bool("revoke", false, "remove memberships no longer assigned in Entra (true or false)")
-	yes := flags.Bool("yes", false, "confirm without prompting")
-	if err := flags.Parse(args); err != nil {
-		return 2
+	lc := newCommandFlags("directory-sync", "set", "Configure directory sync", stdout, stderr)
+	tenantID := lc.fs.String("tenant-id", "", "the customer's Entra tenant ID (GUID)")
+	clientID := lc.fs.String("client-id", "", "client ID of the customer's sync app registration (GUID)")
+	appID := lc.fs.String("app-id", "", "client ID of the app whose app roles are synced (GUID)")
+	groupID := lc.fs.String("group-id", "", "Entra security group ID to sync (GUID; mutually exclusive with --app-id)")
+	dryRun := lc.fs.Bool("dry-run", true, "report what would change without writing (true or false)")
+	createUsers := lc.fs.Bool("create-users", false, "create Kei users for assigned Entra users (true or false)")
+	revoke := lc.fs.Bool("revoke", false, "remove memberships no longer assigned in Entra (true or false)")
+	yes := yesFlag(lc.fs)
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
-	if flags.NArg() != 0 {
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "directory-sync set takes no positional arguments")
 		return 2
 	}
@@ -163,7 +163,7 @@ func runDirectorySyncSet(args []string, stdout, stderr io.Writer, stdin io.Reade
 			return 2
 		}
 		appIDSet := false
-		flags.Visit(func(f *flag.Flag) {
+		lc.fs.Visit(func(f *flag.Flag) {
 			appIDSet = appIDSet || f.Name == "app-id"
 		})
 		if appIDSet {
@@ -173,7 +173,7 @@ func runDirectorySyncSet(args []string, stdout, stderr io.Writer, stdin io.Reade
 	}
 	var req patchDirectorySyncRequest
 	var changes []string
-	flags.Visit(func(f *flag.Flag) {
+	lc.fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "tenant-id":
 			req.TenantID = tenantID
@@ -220,13 +220,13 @@ func runDirectorySyncSetEnabled(enabled bool, args []string, stdout, stderr io.W
 	if enabled {
 		command = "enable"
 	}
-	flags := flag.NewFlagSet("directory-sync "+command, flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	yes := flags.Bool("yes", false, "confirm without prompting")
-	if err := flags.Parse(args); err != nil {
-		return 2
+	lc := newCommandFlags("directory-sync", command, "Enable or disable directory sync", stdout, stderr)
+	yes := yesFlag(lc.fs)
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
-	if flags.NArg() != 0 {
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintf(stderr, "directory-sync %s takes no positional arguments\n", command)
 		return 2
 	}
@@ -263,14 +263,14 @@ func runDirectorySyncSetEnabled(enabled bool, args []string, stdout, stderr io.W
 }
 
 func runDirectorySyncReport(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("directory-sync report", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	limit := flags.Int("limit", 1, "number of runs to show, newest first; 1 shows the run in full")
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	if err := flags.Parse(args); err != nil {
-		return 2
+	lc := newCommandFlags("directory-sync", "report", "Get the latest sync report", stdout, stderr)
+	limit := lc.fs.Int("limit", 1, "number of runs to show, newest first; 1 shows the run in full")
+	jsonOutput := jsonFlag(lc.fs)
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
-	if flags.NArg() != 0 {
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "directory-sync report takes no positional arguments")
 		return 2
 	}

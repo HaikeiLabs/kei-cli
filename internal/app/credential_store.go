@@ -107,10 +107,13 @@ func parseBackendConfig(command, raw string, stderr io.Writer) (map[string]strin
 }
 
 func runCredentialStoreGet(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("credential-store get", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := flags.String("workspace", "", "workspace name: read its override instead of the organization's store")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+	lc := newCommandFlags("credential-store", "get", "Get the credential store configuration", stdout, stderr)
+	workspace := workspaceFlagHelp(lc.fs, "workspace name: read its override instead of the organization's store")
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
+	}
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "credential-store get takes no positional arguments")
 		return 2
 	}
@@ -156,17 +159,19 @@ func runCredentialStoreGet(args []string, stdout, stderr io.Writer, client *http
 // catalog marks PUT deprecated in favour of PATCH, but PATCH cannot create a
 // store, so put remains the way to configure one the first time.
 func runCredentialStorePut(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("credential-store put", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	secretBackend := flags.String("secret-backend", "", "secret backend (aws-secrets-manager, azure-key-vault, or gcp-secret-manager)")
-	backendConfigRaw := flags.String("backend-config", "{}", "backend configuration as a JSON object of strings")
-	secretNamePrefix := flags.String("secret-name-prefix", "", "prefix for secret names")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+	lc := newCommandFlags("credential-store", "put", "Create or replace the credential store", stdout, stderr)
+	secretBackend := lc.fs.String("secret-backend", "", "secret backend (aws-secrets-manager, azure-key-vault, or gcp-secret-manager)")
+	backendConfigRaw := lc.fs.String("backend-config", "{}", "backend configuration as a JSON object of strings")
+	secretNamePrefix := lc.fs.String("secret-name-prefix", "", "prefix for secret names")
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
+	}
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "credential-store put takes no positional arguments")
 		return 2
 	}
-	if *secretBackend == "" {
-		fmt.Fprintln(stderr, "credential-store put requires --secret-backend")
+	if !requireFlags(lc.fs, stderr, "secret-backend") {
 		return 2
 	}
 	backendConfig, ok := parseBackendConfig("put", *backendConfigRaw, stderr)
@@ -193,19 +198,22 @@ func runCredentialStorePut(args []string, stdout, stderr io.Writer, client *http
 // runCredentialStoreUpdate changes an existing credential store with PATCH;
 // update_mask names exactly the flags given.
 func runCredentialStoreUpdate(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("credential-store update", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	flags.String("secret-backend", "", "secret backend (aws-secrets-manager, azure-key-vault, or gcp-secret-manager)")
-	flags.String("backend-config", "", "backend configuration as a JSON object of strings")
-	flags.String("secret-name-prefix", "", "prefix for secret names")
-	flags.String("status", "", "store status (for example active or disabled)")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+	lc := newCommandFlags("credential-store", "update", "Update the credential store configuration", stdout, stderr)
+	lc.fs.String("secret-backend", "", "secret backend (aws-secrets-manager, azure-key-vault, or gcp-secret-manager)")
+	lc.fs.String("backend-config", "", "backend configuration as a JSON object of strings")
+	lc.fs.String("secret-name-prefix", "", "prefix for secret names")
+	lc.fs.String("status", "", "store status (for example active or disabled)")
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
+	}
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "credential-store update takes no positional arguments")
 		return 2
 	}
 	var req patchCredentialStoreRequest
 	valid := true
-	flags.Visit(func(f *flag.Flag) {
+	lc.fs.Visit(func(f *flag.Flag) {
 		value := f.Value.String()
 		switch f.Name {
 		case "secret-backend":
