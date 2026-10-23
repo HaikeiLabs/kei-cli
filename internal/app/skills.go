@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -106,13 +105,13 @@ func runSkillsCommand(args []string, stdout, stderr io.Writer, client *http.Clie
 // runSkillsInstall is `kei skills install`: the skills step of harness sync
 // on its own, for the detected harnesses or one --harness KIND.
 func runSkillsInstall(args []string, stdout, stderr io.Writer, client *http.Client, registry *harness.Registry, env harness.Env) int {
-	flags := flag.NewFlagSet("skills install", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	configPath := flags.String("config", "", "runtime configuration path (default ~/.config/kei.yaml)")
-	kindFilter := flags.String("harness", "", "only install into this harness kind")
-	dryRun := flags.Bool("dry-run", false, "print the per-harness plan without writing")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
-		return 2
+	lc := newCommandFlags("skills", "install", "Install skills into harnesses", stdout, stderr)
+	configPath := lc.fs.String("config", "", "runtime configuration path (default ~/.config/kei.yaml)")
+	kindFilter := lc.fs.String("harness", "", "only install into this harness kind")
+	dryRun := lc.fs.Bool("dry-run", false, "print the per-harness plan without writing")
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
 	if h, ok := registry.Get(*kindFilter); *kindFilter != "" && (!ok || len(h.SkillDirs(env)) == 0) {
 		fmt.Fprintf(stderr, "--harness must be a harness kind with a skill dir: %s\n", harness.JoinOr(skillKinds(registry, env)))

@@ -26,7 +26,19 @@ func Run(args []string, stdout, stderr io.Writer, defaultBaseURL string) int {
 	flags := flag.NewFlagSet("docs", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	baseURL := flags.String("base-url", defaultBaseURL, "docs site base URL")
+
+	// Handle -h/--help explicitly: print usage to stdout, exit 0.
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			docsUsage(stdout, flags)
+			return 0
+		}
+	}
+
 	if err := flags.Parse(args); err != nil {
+		// flag.ContinueOnError already wrote the error to stderr.
+		// Print the standard usage so the user sees the right format.
+		docsUsage(stderr, flags)
 		return 2
 	}
 
@@ -35,6 +47,18 @@ func Run(args []string, stdout, stderr io.Writer, defaultBaseURL string) int {
 		return list(client, stdout, stderr, *baseURL)
 	}
 	return fetch(client, flags.Arg(0), stdout, stderr, *baseURL)
+}
+
+func docsUsage(w io.Writer, fs *flag.FlagSet) {
+	fmt.Fprintf(w, "Usage: kei docs [flags]\n\n")
+	fmt.Fprintln(w, "Fetch and print pages from the Haikei documentation site.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Flags:")
+	tw := tabwriter.NewWriter(w, 0, 0, 3, ' ', tabwriter.DiscardEmptyColumns)
+	fs.VisitAll(func(f *flag.Flag) {
+		fmt.Fprintf(tw, "  --%s\t%s\n", f.Name, f.Usage)
+	})
+	tw.Flush()
 }
 
 func list(client *http.Client, stdout, stderr io.Writer, baseURL string) int {

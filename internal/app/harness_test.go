@@ -209,10 +209,10 @@ func TestHarnessAddAlreadyExistsPrintsHint(t *testing.T) {
 func TestHarnessAddUsagePointsDesktopToSync(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runHarnessCommand([]string{"add", "--help"}, &stdout, &stderr, nil, nil)
-	if code != 2 {
-		t.Fatalf("add --help exit=%d, want 2 stderr=%s", code, stderr.String())
+	if code != 0 {
+		t.Fatalf("add --help exit=%d, want 0 stderr=%s", code, stderr.String())
 	}
-	out := stderr.String()
+	out := stdout.String()
 	if !strings.Contains(out, "custom (SDK) harness") {
 		t.Fatalf("usage missing custom/SDK note: %q", out)
 	}
