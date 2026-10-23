@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -55,21 +54,20 @@ func loadAgeIdentity(path string) (age.Identity, string, error) {
 // Behavior is specified in ADR-030:
 // https://github.com/HaikeiLabs/kei/blob/main/docs/adr/030-audit-args-encryption.md
 func runAuditDecryptCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("audit decrypt", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	recordID := flags.String("record", "", "audit record ID to decrypt")
-	identityPath := flags.String("identity", "", "path to age identity file (default ~/.config/kei/audit-identity.txt)")
-	outPath := flags.String("out", "", "output file path")
-	toStdout := flags.Bool("stdout", false, "print decrypted plaintext to stdout")
-	if err := flags.Parse(args); err != nil {
-		return 2
+	lc := newCommandFlags("audit", "decrypt", "Decrypt an audit record", stdout, stderr)
+	recordID := lc.fs.String("record", "", "audit record ID to decrypt")
+	identityPath := lc.fs.String("identity", "", "path to age identity file (default ~/.config/kei/audit-identity.txt)")
+	outPath := lc.fs.String("out", "", "output file path")
+	toStdout := lc.fs.Bool("stdout", false, "print decrypted plaintext to stdout")
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
-	if flags.NArg() != 0 {
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "audit decrypt accepts no positional arguments")
 		return 2
 	}
-	if *recordID == "" {
-		fmt.Fprintln(stderr, "audit decrypt: --record is required")
+	if !requireFlags(lc.fs, stderr, "record") {
 		return 2
 	}
 

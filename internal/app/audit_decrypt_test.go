@@ -283,8 +283,8 @@ func TestAuditDecryptMissingRecordFlag(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("expected exit 2, got %d", code)
 	}
-	if !strings.Contains(stderr.String(), "--record is required") {
-		t.Fatalf("expected --record required error, got: %s", stderr.String())
+	if !strings.Contains(stderr.String(), "missing required flag --record") {
+		t.Fatalf("expected 'missing required flag --record' error, got: %s", stderr.String())
 	}
 }
 

@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -165,16 +164,16 @@ func runAuditKeysCommand(args []string, stdout, stderr io.Writer, stdin io.Reade
 // https://github.com/HaikeiLabs/kei/blob/main/docs/adr/030-audit-args-encryption.md
 // See also HAI-348.
 func runAuditKeysCreateCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("audit keys create", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	identityOut := flags.String("identity-out", "", "path to write the age identity file (default ~/.config/kei/audit-identity.txt)")
-	name := flags.String("name", "", "display name for the key")
-	force := flags.Bool("force", false, "overwrite existing identity file")
-	yes := flags.Bool("yes", false, "confirm key rotation")
-	if err := flags.Parse(args); err != nil {
-		return 2
+	lc := newCommandFlags("audit keys", "create", "Create an audit encryption key", stdout, stderr)
+	identityOut := lc.fs.String("identity-out", "", "path to write the age identity file (default ~/.config/kei/audit-identity.txt)")
+	name := lc.fs.String("name", "", "display name for the key")
+	force := lc.fs.Bool("force", false, "overwrite existing identity file")
+	yes := yesFlag(lc.fs)
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
-	if flags.NArg() != 0 {
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "audit keys create accepts no positional arguments")
 		return 2
 	}
@@ -280,9 +279,12 @@ func runAuditKeysCreateCommand(args []string, stdout, stderr io.Writer, stdin io
 // Behavior is specified in ADR-030:
 // https://github.com/HaikeiLabs/kei/blob/main/docs/adr/030-audit-args-encryption.md
 func runAuditKeysListCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("audit keys list", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+	lc := newCommandFlags("audit keys", "list", "List audit encryption keys", stdout, stderr)
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
+	}
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "audit keys list takes no positional arguments")
 		return 2
 	}
@@ -358,17 +360,17 @@ func runAuditKeysListCommand(args []string, stdout, stderr io.Writer, client *ht
 // https://github.com/HaikeiLabs/kei/blob/main/docs/adr/030-audit-args-encryption.md
 // See also HAI-348.
 func runAuditKeysDisableCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("audit keys disable", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	yes := flags.Bool("yes", false, "confirm disabling key")
-	if err := flags.Parse(args); err != nil {
-		return 2
+	lc := newCommandFlags("audit keys", "disable", "Disable an audit encryption key", stdout, stderr)
+	yes := yesFlag(lc.fs)
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
-	if flags.NArg() != 1 {
+	if lc.fs.NArg() != 1 {
 		fmt.Fprintln(stderr, "audit keys disable requires exactly one argument: the key ID to disable")
 		return 2
 	}
-	keyID := flags.Arg(0)
+	keyID := lc.fs.Arg(0)
 
 	if !confirmRotation(stdin, stderr, *yes) {
 		return 2
