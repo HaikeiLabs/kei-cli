@@ -69,7 +69,7 @@ func TestLeafCommandsHelp(t *testing.T) {
 			command:  "workspaces",
 			args:     []string{"use", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei workspaces use [flags]",
+			wantOut:  "Usage: kei workspaces use NAME [flags]",
 			wantErr:  "",
 		},
 		{
@@ -77,7 +77,7 @@ func TestLeafCommandsHelp(t *testing.T) {
 			args:     []string{"use", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei workspaces use [flags]",
+			wantErr:  "Usage: kei workspaces use NAME [flags]",
 		},
 		// workspaces use has no required flags; skip (c).
 
@@ -153,7 +153,7 @@ func TestLeafCommandsHelp(t *testing.T) {
 			command:  "groups",
 			args:     []string{"delete", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei groups delete [flags]",
+			wantOut:  "Usage: kei groups delete GROUP [flags]",
 			wantErr:  "",
 		},
 		{
@@ -161,7 +161,7 @@ func TestLeafCommandsHelp(t *testing.T) {
 			args:     []string{"delete", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei groups delete [flags]",
+			wantErr:  "Usage: kei groups delete GROUP [flags]",
 		},
 		// groups delete requires --workspace; pass a positional arg so
 		// parsePositionals succeeds and requireFlags fires before network.
@@ -179,7 +179,7 @@ func TestLeafCommandsHelp(t *testing.T) {
 			command:  "groups",
 			args:     []string{"members", "list", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei groups members list [flags]",
+			wantOut:  "Usage: kei groups members list GROUP [flags]",
 			wantErr:  "",
 		},
 		{
@@ -187,7 +187,7 @@ func TestLeafCommandsHelp(t *testing.T) {
 			args:     []string{"members", "list", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei groups members list [flags]",
+			wantErr:  "Usage: kei groups members list GROUP [flags]",
 		},
 		// groups members list has no required flags; skip (c) (positional GROUP is required, checked before network).
 
@@ -196,7 +196,7 @@ func TestLeafCommandsHelp(t *testing.T) {
 			command:  "groups",
 			args:     []string{"members", "add", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei groups members add [flags]",
+			wantOut:  "Usage: kei groups members add GROUP USER [flags]",
 			wantErr:  "",
 		},
 		{
@@ -204,7 +204,7 @@ func TestLeafCommandsHelp(t *testing.T) {
 			args:     []string{"members", "add", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei groups members add [flags]",
+			wantErr:  "Usage: kei groups members add GROUP USER [flags]",
 		},
 		// groups members add has no required flags; skip (c) (positionals checked before network).
 
@@ -213,7 +213,7 @@ func TestLeafCommandsHelp(t *testing.T) {
 			command:  "groups",
 			args:     []string{"members", "remove", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei groups members remove [flags]",
+			wantOut:  "Usage: kei groups members remove GROUP USER [flags]",
 			wantErr:  "",
 		},
 		{
@@ -221,9 +221,238 @@ func TestLeafCommandsHelp(t *testing.T) {
 			args:     []string{"members", "remove", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei groups members remove [flags]",
+			wantErr:  "Usage: kei groups members remove GROUP USER [flags]",
 		},
 		// groups members remove has no required flags; skip (c).
+
+		// ---- policy list (policy group, no deprecation) ----
+		{
+			command:  "policy",
+			args:     []string{"list", "-h"},
+			wantCode: 0,
+			wantOut:  "Usage: kei policy list [flags]",
+			wantErr:  "",
+		},
+		{
+			command:  "policy",
+			args:     []string{"list", "--definitely-unknown"},
+			wantCode: 2,
+			wantOut:  "",
+			wantErr:  "Usage: kei policy list [flags]",
+		},
+		// policy list has no required flags; skip (c).
+
+		// ---- policy get ----
+		{
+			command:  "policy",
+			args:     []string{"get", "-h"},
+			wantCode: 0,
+			wantOut:  "Usage: kei policy get ID [flags]",
+			wantErr:  "",
+		},
+		{
+			command:  "policy",
+			args:     []string{"get", "--definitely-unknown"},
+			wantCode: 2,
+			wantOut:  "",
+			wantErr:  "Usage: kei policy get ID [flags]",
+		},
+		// policy get has no required flags; skip (c).
+
+		// ---- policy create (--group/--allow/--deny simplified command) ----
+		{
+			command:  "policy",
+			args:     []string{"create", "-h"},
+			wantCode: 0,
+			wantOut:  "Usage: kei policy create [flags]",
+			wantErr:  "",
+		},
+		{
+			command:  "policy",
+			args:     []string{"create", "--definitely-unknown"},
+			wantCode: 2,
+			wantOut:  "",
+			wantErr:  "Usage: kei policy create [flags]",
+		},
+		// policy create requires --group.
+		{
+			command:  "policy",
+			args:     []string{"create"},
+			wantCode: 2,
+			wantOut:  "",
+			wantErr:  "policy create: --group is required",
+		},
+
+		// ---- policy delete ----
+		{
+			command:  "policy",
+			args:     []string{"delete", "-h"},
+			wantCode: 0,
+			wantOut:  "Usage: kei policy delete ID [flags]",
+			wantErr:  "",
+		},
+		{
+			command:  "policy",
+			args:     []string{"delete", "--definitely-unknown"},
+			wantCode: 2,
+			wantOut:  "",
+			wantErr:  "Usage: kei policy delete ID [flags]",
+		},
+		// policy delete requires --yes confirmation.
+		{
+			command:  "policy",
+			args:     []string{"delete", "some-policy-id"},
+			wantCode: 2,
+			wantOut:  "",
+			wantErr:  "policies delete removes the policy for all agents; pass --yes to confirm",
+		},
+
+		// ---- policy test ----
+		{
+			command:  "policy",
+			args:     []string{"test", "-h"},
+			wantCode: 0,
+			wantOut:  "Usage: kei policy test [flags]",
+			wantErr:  "",
+		},
+		{
+			command:  "policy",
+			args:     []string{"test", "--definitely-unknown"},
+			wantCode: 2,
+			wantOut:  "",
+			wantErr:  "Usage: kei policy test [flags]",
+		},
+		// policy test requires --as and a positional target.
+		{
+			command:  "policy",
+			args:     []string{"test"},
+			wantCode: 2,
+			wantOut:  "",
+			wantErr:  "policy test requires --as",
+		},
+
+		// ---- policies update (unique to policies group) ----
+		{
+			command:  "policies",
+			args:     []string{"update", "-h"},
+			wantCode: 0,
+			wantOut:  "Usage: kei policies update ID [flags]",
+			wantErr:  "Deprecated:",
+		},
+		{
+			command:  "policies",
+			args:     []string{"update", "--definitely-unknown"},
+			wantCode: 2,
+			wantOut:  "",
+			wantErr:  "Usage: kei policies update ID [flags]",
+		},
+		// policies update has no required flags; skip (c).
+
+		// ---- policies import (unique to policies group) ----
+		{
+			command:  "policies",
+			args:     []string{"import", "-h"},
+			wantCode: 0,
+			wantOut:  "Usage: kei policies import [flags]",
+			wantErr:  "Deprecated:",
+		},
+		{
+			command:  "policies",
+			args:     []string{"import", "--definitely-unknown"},
+			wantCode: 2,
+			wantOut:  "",
+			wantErr:  "Usage: kei policies import [flags]",
+		},
+		// policies import requires --from.
+		{
+			command:  "policies",
+			args:     []string{"import"},
+			wantCode: 2,
+			wantOut:  "",
+			wantErr:  "policies import requires --from",
+		},
+
+		// ---- policies create (detailed version, unique to policies group) ----
+		{
+			command:  "policies",
+			args:     []string{"create", "-h"},
+			wantCode: 0,
+			wantOut:  "Usage: kei policies create [flags]",
+			wantErr:  "Deprecated:",
+		},
+		{
+			command:  "policies",
+			args:     []string{"create", "--definitely-unknown"},
+			wantCode: 2,
+			wantOut:  "",
+			wantErr:  "Usage: kei policies create [flags]",
+		},
+		// policies create requires --name, --src-pattern, --dst-pattern, and --effect.
+		{
+			command:  "policies",
+			args:     []string{"create"},
+			wantCode: 2,
+			wantOut:  "",
+			wantErr:  "policies create requires --name, --src-pattern, --dst-pattern, and --effect",
+		},
+
+		// ---- policies get (via policies group) ----
+		{
+			command:  "policies",
+			args:     []string{"get", "-h"},
+			wantCode: 0,
+			wantOut:  "Usage: kei policies get ID [flags]",
+			wantErr:  "Deprecated:",
+		},
+		{
+			command:  "policies",
+			args:     []string{"get", "--definitely-unknown"},
+			wantCode: 2,
+			wantOut:  "",
+			wantErr:  "Usage: kei policies get ID [flags]",
+		},
+		// policies get has no required flags; skip (c).
+
+		// ---- policies delete (via policies group) ----
+		{
+			command:  "policies",
+			args:     []string{"delete", "-h"},
+			wantCode: 0,
+			wantOut:  "Usage: kei policies delete ID [flags]",
+			wantErr:  "Deprecated:",
+		},
+		{
+			command:  "policies",
+			args:     []string{"delete", "--definitely-unknown"},
+			wantCode: 2,
+			wantOut:  "",
+			wantErr:  "Usage: kei policies delete ID [flags]",
+		},
+		// policies delete requires --yes confirmation.
+		{
+			command:  "policies",
+			args:     []string{"delete", "some-policy-id"},
+			wantCode: 2,
+			wantOut:  "",
+			wantErr:  "policies delete removes the policy for all agents; pass --yes to confirm",
+		},
+
+		// ---- policies list (via policies group) ----
+		{
+			command:  "policies",
+			args:     []string{"list", "-h"},
+			wantCode: 0,
+			wantOut:  "Usage: kei policies list [flags]",
+			wantErr:  "Deprecated:",
+		},
+		{
+			command:  "policies",
+			args:     []string{"list", "--definitely-unknown"},
+			wantCode: 2,
+			wantOut:  "",
+			wantErr:  "Usage: kei policies list [flags]",
+		},
+		// policies list has no required flags; skip (c).
 	}
 
 	for _, tt := range tests {
