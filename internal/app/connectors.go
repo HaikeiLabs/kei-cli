@@ -494,7 +494,7 @@ func runConnectorsConnect(args []string, stdout, stderr io.Writer, client *http.
 	fail := func(err error) int {
 		var status *connectorStatusError
 		if errors.As(err, &status) && status.StatusCode == http.StatusForbidden {
-			err = fmt.Errorf("%w; ask an admin to allow your group, e.g. kei policies create --workspace %s --src-pattern group:<group> --dst-pattern connector:%s --effect permit", err, ws.value, id)
+			err = fmt.Errorf("%w; ask an admin to allow your group, e.g. kei policy create --group <group> --allow connector:%s --workspace %s", err, id, ws.value)
 		}
 		fmt.Fprintf(stderr, "connectors connect: %v\n", err)
 		return 1
