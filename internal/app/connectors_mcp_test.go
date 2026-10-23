@@ -161,9 +161,12 @@ func TestConnectorsTemplatesList(t *testing.T) {
 
 func TestConnectorsCreateAccountModelHelpMentionsTemplateConflict(t *testing.T) {
 	_, server, store := newFakeConsole(t, failOnRequest(t))
-	_, _, stderr := runConnectors(t, server, store, "", "create", "--help")
-	if !strings.Contains(stderr, "cannot be combined with --template") {
-		t.Fatalf("create help = %q", stderr)
+	code, stdout, stderr := runConnectors(t, server, store, "", "create", "--help")
+	if code != 0 {
+		t.Fatalf("create --help exit = %d, stderr: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "cannot be combined with --template") {
+		t.Fatalf("create help = %q", stdout)
 	}
 }
 

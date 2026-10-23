@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -159,32 +158,34 @@ func runConnectorsCommand(args []string, stdout, stderr io.Writer, stdin io.Read
 	}
 }
 
-// parseConnectorFlags parses flags that may come before or after one optional
-// positional connector ID.
-func parseConnectorFlags(flags *flag.FlagSet, args []string) (string, error) {
-	id := ""
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		id, args = args[0], args[1:]
+// parseConnectorLeaf is like parseLeaf but also extracts a leading or trailing
+// positional connector ID. It returns the ID and handles -h (exit 0, stdout)
+// and parse errors (exit 2, stderr).
+func parseConnectorLeaf(lc leafCommand, args []string) (id string, code int, ok bool) {
+	// Try a leading positional connector ID (e.g. "get myid --workspace ws").
+	rest := args
+	if len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
+		id = rest[0]
+		rest = rest[1:]
 	}
-	if err := flags.Parse(args); err != nil {
-		return "", err
+	code, ok = parseLeaf(lc, rest)
+	if !ok {
+		return "", code, false
 	}
-	rest := flags.Args()
-	if id == "" && len(rest) > 0 {
-		id, rest = rest[0], rest[1:]
-		if err := flags.Parse(rest); err != nil {
-			return "", err
-		}
-		rest = flags.Args()
+	// If no leading ID, take the first positional arg (e.g. "get --workspace ws myid").
+	if id == "" && lc.fs.NArg() > 0 {
+		id = lc.fs.Arg(0)
 	}
-	if len(rest) != 0 {
-		return "", fmt.Errorf("unexpected argument %q", rest[0])
+	// Reject extra positional args.
+	expected := 0
+	if id != "" {
+		expected = 1
 	}
-	return id, nil
-}
-
-func connectorWorkspaceFlag(flags *flag.FlagSet) *string {
-	return flags.String("workspace", "", "workspace name or ID (or set KEI_WORKSPACE)")
+	if lc.fs.NArg() > expected {
+		fmt.Fprintf(lc.stderr, "%s: unexpected argument %q\n", lc, lc.fs.Arg(expected))
+		return "", 2, false
+	}
+	return id, 0, true
 }
 
 func requireConnectorWorkspace(command, workspace string, stderr io.Writer) (workspaceSelection, bool) {
@@ -315,14 +316,13 @@ func connectorState(status string) string {
 }
 
 func runConnectorsList(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("connectors list", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := connectorWorkspaceFlag(flags)
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	withManifests := flags.Bool("manifests", false, "also show each mcp connector's tool-manifest status (one request per mcp connector)")
-	if id, err := parseConnectorFlags(flags, args); err != nil || id != "" {
-		fmt.Fprintln(stderr, "connectors list accepts no positional arguments")
-		return 2
+	lc := newCommandFlags("connectors", "list", "List data connectors", stdout, stderr)
+	workspace := workspaceFlag(lc.fs)
+	jsonOutput := lc.fs.Bool("json", false, "output as JSON")
+	withManifests := lc.fs.Bool("manifests", false, "also show each mcp connector's tool-manifest status (one request per mcp connector)")
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
 	ws, ok := requireConnectorWorkspace("list", *workspace, stderr)
 	if !ok {
@@ -379,13 +379,12 @@ func runConnectorsList(args []string, stdout, stderr io.Writer, client *http.Cli
 }
 
 func runConnectorsGet(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("connectors get", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := connectorWorkspaceFlag(flags)
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	id, err := parseConnectorFlags(flags, args)
-	if err != nil {
-		return 2
+	lc := newCommandFlags("connectors", "get", "Get a connector by ID", stdout, stderr)
+	workspace := workspaceFlag(lc.fs)
+	jsonOutput := lc.fs.Bool("json", false, "output as JSON")
+	id, rc, ok := parseConnectorLeaf(lc, args)
+	if !ok {
+		return rc
 	}
 	ws, ok := requireConnectorWorkspace("get", *workspace, stderr)
 	if !ok || !requireConnectorID("get", id, stderr) {
@@ -477,13 +476,12 @@ func runConnectorsGet(args []string, stdout, stderr io.Writer, client *http.Clie
 }
 
 func runConnectorsConnect(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("connectors connect", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := connectorWorkspaceFlag(flags)
-	noBrowser := flags.Bool("no-browser", false, "print the auth URL without opening a browser")
-	id, err := parseConnectorFlags(flags, args)
-	if err != nil {
-		return 2
+	lc := newCommandFlags("connectors", "connect", "Connect a connector (OAuth)", stdout, stderr)
+	workspace := workspaceFlag(lc.fs)
+	noBrowser := lc.fs.Bool("no-browser", false, "print the auth URL without opening a browser")
+	id, rc, ok := parseConnectorLeaf(lc, args)
+	if !ok {
+		return rc
 	}
 	ws, ok := requireConnectorWorkspace("connect", *workspace, stderr)
 	if !ok || !requireConnectorID("connect", id, stderr) {
@@ -587,14 +585,13 @@ func runConnectorsConnect(args []string, stdout, stderr io.Writer, client *http.
 }
 
 func runConnectorsReconnect(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("connectors reconnect", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := connectorWorkspaceFlag(flags)
-	noBrowser := flags.Bool("no-browser", false, "print the consent URL without opening a browser")
-	keepSecret := flags.Bool("keep-secret", false, "reactivate a shared-secret connector without replacing its secret")
-	id, err := parseConnectorFlags(flags, args)
-	if err != nil {
-		return 2
+	lc := newCommandFlags("connectors", "reconnect", "Reconnect a connector", stdout, stderr)
+	workspace := workspaceFlag(lc.fs)
+	noBrowser := lc.fs.Bool("no-browser", false, "print the consent URL without opening a browser")
+	keepSecret := lc.fs.Bool("keep-secret", false, "reactivate a shared-secret connector without replacing its secret")
+	id, rc, ok := parseConnectorLeaf(lc, args)
+	if !ok {
+		return rc
 	}
 	ws, ok := requireConnectorWorkspace("reconnect", *workspace, stderr)
 	if !ok || !requireConnectorID("reconnect", id, stderr) {
@@ -666,13 +663,12 @@ func runConnectorsReconnect(args []string, stdout, stderr io.Writer, stdin io.Re
 }
 
 func runConnectorsDelete(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("connectors delete", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := connectorWorkspaceFlag(flags)
-	yes := flags.Bool("yes", false, "confirm deletion")
-	id, err := parseConnectorFlags(flags, args)
-	if err != nil {
-		return 2
+	lc := newCommandFlags("connectors", "delete", "Delete a connector", stdout, stderr)
+	workspace := workspaceFlag(lc.fs)
+	yes := lc.fs.Bool("yes", false, "confirm deletion")
+	id, rc, ok := parseConnectorLeaf(lc, args)
+	if !ok {
+		return rc
 	}
 	ws, ok := requireConnectorWorkspace("delete", *workspace, stderr)
 	if !ok || !requireConnectorID("delete", id, stderr) {
@@ -695,11 +691,13 @@ func runConnectorsDelete(args []string, stdout, stderr io.Writer, client *http.C
 }
 
 func runConnectorsTest(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("connectors test", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := connectorWorkspaceFlag(flags)
-	id, err := parseConnectorFlags(flags, args)
-	if err != nil || id == "" {
+	lc := newCommandFlags("connectors", "test", "Test a connector", stdout, stderr)
+	workspace := workspaceFlag(lc.fs)
+	id, rc, ok := parseConnectorLeaf(lc, args)
+	if !ok {
+		return rc
+	}
+	if id == "" {
 		fmt.Fprintln(stderr, "connectors test requires a connector name or ID")
 		return 2
 	}
@@ -786,32 +784,31 @@ func (s *repeatedStrings) Set(value string) error {
 }
 
 func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("connectors create", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := connectorWorkspaceFlag(flags)
-	providerFlag := flags.String("provider", "", "provider: gmail, google_drive, linear, github, tito, skills_repo, crm, or http_api (or --template for a catalog template such as an MCP server)")
-	name := flags.String("name", "", "connector name (letters, digits, and . _ : / -)")
-	accountModelFlag := flags.String("account-model", "", "OAuth account model: per_user, shared, or domain_delegation (gmail, google_drive); skills_repo takes per_user, or --credential-ref instead; cannot be combined with --template")
+	lc := newCommandFlags("connectors", "create", "Create a data connector", stdout, stderr)
+	workspace := workspaceFlag(lc.fs)
+	providerFlag := lc.fs.String("provider", "", "provider: gmail, google_drive, linear, github, tito, skills_repo, crm, or http_api (or --template for a catalog template such as an MCP server)")
+	name := lc.fs.String("name", "", "connector name (letters, digits, and . _ : / -)")
+	accountModelFlag := lc.fs.String("account-model", "", "OAuth account model: per_user, shared, or domain_delegation (gmail, google_drive); skills_repo takes per_user, or --credential-ref instead; cannot be combined with --template")
 	values := setupValues{}
-	flags.Var(values, "set", "non-secret setup field as name=value (repeatable)")
-	credentialRef := flags.String("credential-ref", "", "existing secret-manager reference for the provider's secret field")
-	capabilitiesFlag := flags.String("capabilities", "", "comma-separated capabilities (default: the provider's read capabilities)")
+	lc.fs.Var(values, "set", "non-secret setup field as name=value (repeatable)")
+	credentialRef := lc.fs.String("credential-ref", "", "existing secret-manager reference for the provider's secret field")
+	capabilitiesFlag := lc.fs.String("capabilities", "", "comma-separated capabilities (default: the provider's read capabilities)")
 	var allowGroups repeatedStrings
-	flags.Var(&allowGroups, "allow-group", "group name to allow (repeatable; defaults to admins)")
-	noDefaultAccess := flags.Bool("no-default-access", false, "skip the default admins allow policy")
-	yes := flags.Bool("yes", false, "confirm without prompting")
-	httpAPI := registerHTTPAPIFlags(flags)
-	fromTemplate := registerTemplateCreateFlags(flags)
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	if id, err := parseConnectorFlags(flags, args); err != nil || id != "" {
-		fmt.Fprintln(stderr, "connectors create accepts no positional arguments")
-		return 2
+	lc.fs.Var(&allowGroups, "allow-group", "group name to allow (repeatable; defaults to admins)")
+	noDefaultAccess := lc.fs.Bool("no-default-access", false, "skip the default admins allow policy")
+	yes := lc.fs.Bool("yes", false, "confirm without prompting")
+	httpAPI := registerHTTPAPIFlags(lc.fs)
+	fromTemplate := registerTemplateCreateFlags(lc.fs)
+	jsonOutput := lc.fs.Bool("json", false, "output as JSON")
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
 	ws, ok := requireConnectorWorkspace("create", *workspace, stderr)
 	if !ok {
 		return 2
 	}
-	if !checkCreateFlagPaths(flags, stderr) {
+	if !checkCreateFlagPaths(lc.fs, stderr) {
 		return 2
 	}
 	if *noDefaultAccess && len(allowGroups) > 0 {
