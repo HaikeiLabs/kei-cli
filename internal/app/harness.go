@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -96,20 +95,13 @@ func harnessRequest(ctx context.Context, client *http.Client, baseURL, token, me
 }
 
 func runHarnessAdd(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore, registry *harness.Registry) int {
-	flags := flag.NewFlagSet("harness add", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	flags.Usage = func() {
-		fmt.Fprintln(stderr, "Register a custom (SDK) harness on a runtime installation.")
-		fmt.Fprintln(stderr, "Desktop harnesses (Claude Code, Codex, OpenCode) are sessions of the installation and are configured by 'kei harness sync'; they do not need 'kei harness add'.")
-		fmt.Fprintln(stderr, "")
-		fmt.Fprintln(stderr, "Usage: kei harness add --kind custom [--installation ID] [--agent AGENT_ID]")
-		flags.PrintDefaults()
-	}
-	installation := flags.String("installation", "", "runtime installation ID")
-	kind := flags.String("kind", "", harness.JoinOr(registry.Kinds()))
-	agentID := flags.String("agent", "", "assigned agent ID")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
-		return 2
+	lc := newCommandFlags("harness", "add", "Register a custom (SDK) harness on a runtime installation. Desktop harnesses (Claude Code, Codex, OpenCode) are sessions of the installation and are configured by 'kei harness sync'; they do not need 'kei harness add'.", stdout, stderr)
+	installation := lc.fs.String("installation", "", "runtime installation ID")
+	kind := lc.fs.String("kind", "", harness.JoinOr(registry.Kinds()))
+	agentID := lc.fs.String("agent", "", "assigned agent ID")
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
 	if *kind == (harness.OpenWebUI{}).Kind() {
 		fmt.Fprintln(stderr, "harness add: Open WebUI configures itself on deploy; use kei harness list/sync --harness openwebui")
@@ -230,12 +222,12 @@ func defaultAgentID(client *http.Client, baseURL, token, installationID string) 
 }
 
 func runHarnessList(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("harness list", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	installation := flags.String("installation", "", "runtime installation ID (omit to resolve current installation; falls back to Open WebUI only)")
-	jsonOutput := flags.Bool("json", false, "output JSON")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
-		return 2
+	lc := newCommandFlags("harness", "list", "List harnesses", stdout, stderr)
+	installation := lc.fs.String("installation", "", "runtime installation ID (omit to resolve current installation; falls back to Open WebUI only)")
+	jsonOutput := lc.fs.Bool("json", false, "output JSON")
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
 	if *installation != "" && !isUUID(*installation) {
 		fmt.Fprintln(stderr, "harness list: --installation must be a UUID")
@@ -349,14 +341,38 @@ func listInstallationHarnesses(client *http.Client, baseURL, token, installation
 	return harnesses, true
 }
 
+// parseHarnessRemoveLeaf is like parseLeaf but extracts a leading or trailing
+// positional agent ID (used by harness remove).
+func parseHarnessRemoveLeaf(lc leafCommand, args []string) (agentID string, code int, ok bool) {
+	rest := args
+	if len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
+		agentID = rest[0]
+		rest = rest[1:]
+	}
+	code, ok = parseLeaf(lc, rest)
+	if !ok {
+		return "", code, false
+	}
+	if agentID == "" && lc.fs.NArg() > 0 {
+		agentID = lc.fs.Arg(0)
+	}
+	expected := 0
+	if agentID != "" {
+		expected = 1
+	}
+	if lc.fs.NArg() > expected {
+		fmt.Fprintf(lc.stderr, "%s: unexpected argument %q\n", lc, lc.fs.Arg(expected))
+		return "", 2, false
+	}
+	return agentID, 0, true
+}
+
 func runHarnessRemove(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore, registry *harness.Registry) int {
-	flags := flag.NewFlagSet("harness remove", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	installation := flags.String("installation", "", "runtime installation ID")
-	agentID, err := parsePolicyFlags(flags, args)
-	if err != nil {
-		fmt.Fprintf(stderr, "harness remove: %v\n", err)
-		return 2
+	lc := newCommandFlags("harness", "remove", "Remove a harness", stdout, stderr)
+	installation := lc.fs.String("installation", "", "runtime installation ID")
+	agentID, rc, ok := parseHarnessRemoveLeaf(lc, args)
+	if !ok {
+		return rc
 	}
 	if !isUUID(*installation) || !isUUID(agentID) {
 		fmt.Fprintln(stderr, "harness remove requires AGENT_ID and --installation UUID")
@@ -460,19 +476,19 @@ func runHarnessSync(args []string, stdout, stderr io.Writer, client *http.Client
 		fmt.Fprintf(stderr, "harness sync: %v\n", err)
 		return 1
 	}
-	flags := flag.NewFlagSet("harness sync", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	configPath := flags.String("config", defaultPath, "runtime configuration path")
-	kindFilter := flags.String("harness", "", "only sync this harness kind")
-	manifestPath := flags.String("manifest", "", "path to a tool manifest JSON file (requires --harness custom)")
-	dryRun := flags.Bool("dry-run", false, "show changes without writing")
-	noHook := flags.Bool("no-hook", false, "skip audit-hook installation")
-	check := flags.Bool("check", false, "report drift between native config, the sync ledger and the current bundle; exit 1 on drift, 2 on error")
-	jsonOutput := flags.Bool("json", false, "with --check, print a machine-readable report ("+harness.DriftSchema+")")
-	openWebUIURL := flags.String("url", "", "with --harness openwebui, the Open WebUI base URL to report on (admin token from OPENWEBUI_ADMIN_TOKEN)")
-	installSkills := flags.Bool("install-skills", false, "check the Haikei skills after the sync and offer to update them now")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
-		return 2
+	lc := newCommandFlags("harness", "sync", "Sync harnesses", stdout, stderr)
+	configPath := lc.fs.String("config", defaultPath, "runtime configuration path")
+	kindFilter := lc.fs.String("harness", "", "only sync this harness kind")
+	manifestPath := lc.fs.String("manifest", "", "path to a tool manifest JSON file (requires --harness custom)")
+	dryRun := lc.fs.Bool("dry-run", false, "show changes without writing")
+	noHook := lc.fs.Bool("no-hook", false, "skip audit-hook installation")
+	check := lc.fs.Bool("check", false, "report drift between native config, the sync ledger and the current bundle; exit 1 on drift, 2 on error")
+	jsonOutput := lc.fs.Bool("json", false, "with --check, print a machine-readable report ("+harness.DriftSchema+")")
+	openWebUIURL := lc.fs.String("url", "", "with --harness openwebui, the Open WebUI base URL to report on (admin token from OPENWEBUI_ADMIN_TOKEN)")
+	installSkills := lc.fs.Bool("install-skills", false, "check the Haikei skills after the sync and offer to update them now")
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
 	}
 	if *kindFilter == (harness.OpenWebUI{}).Kind() {
 		// Read-only: kei-openwebui seeds its own functions and kei-proxy
