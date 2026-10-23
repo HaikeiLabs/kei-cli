@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -61,11 +60,17 @@ func defaultConnectSteps() connectSteps {
 // runtime configuration already holds a credential, the credential is never
 // re-requested (the server shows it once).
 func runConnectCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore, steps connectSteps) int {
-	flags := flag.NewFlagSet("connect", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspace := flags.String("workspace", "", "workspace name (default: the organization's default workspace)")
-	yes := flags.Bool("yes", false, "confirm without prompting")
-	positional, err := parsePositionals(flags, args, 1)
+	lc := newCommandFlags("", "connect", "Set up a harness against Kei", stdout, stderr)
+	workspace := lc.fs.String("workspace", "", "workspace name (default: the organization's default workspace)")
+	yes := lc.fs.Bool("yes", false, "confirm without prompting")
+	// Intercept -h/--help before parsePositionals (positionals before flags).
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			lc.printUsage(lc.stdout)
+			return 0
+		}
+	}
+	positional, err := parsePositionals(lc.fs, args, 1)
 	if err != nil {
 		fmt.Fprintln(stderr, "connect requires exactly one harness: claude-code|codex|opencode|pi")
 		return 2

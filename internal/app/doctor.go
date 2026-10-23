@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -187,12 +186,11 @@ func probeRunProxy(path string, env []string, args ...string) ([]byte, error) {
 }
 
 func runDoctorCommand(args []string, stdout, stderr io.Writer) int {
-	flags := flag.NewFlagSet("doctor", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	if err := flags.Parse(args); err != nil {
-		return 2
+	lc := newCommandFlags("", "doctor", "Diagnose local Kei setup", stdout, stderr)
+	if rc, ok := parseLeaf(lc, args); !ok {
+		return rc
 	}
-	if flags.NArg() != 0 {
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "doctor accepts no positional arguments")
 		return 2
 	}

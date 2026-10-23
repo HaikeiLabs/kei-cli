@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,15 +11,17 @@ import (
 )
 
 func runBotDeleteCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("bot delete", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	installationID := flags.String("installation", "", "Kei installation ID")
-	yes := flags.Bool("yes", false, "confirm permanent deletion")
-	if err := flags.Parse(args); err != nil {
+	lc := newCommandFlags("bot", "delete", "Delete a runtime installation", stdout, stderr)
+	installationID := lc.fs.String("installation", "", "Kei installation ID")
+	yes := lc.fs.Bool("yes", false, "confirm permanent deletion")
+	if rc, ok := parseLeaf(lc, args); !ok {
+		return rc
+	}
+	if lc.fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "bot delete accepts no positional arguments")
 		return 2
 	}
-	if flags.NArg() != 0 || *installationID == "" {
-		fmt.Fprintln(stderr, "bot delete requires --installation ID")
+	if !requireFlags(lc.fs, stderr, "installation") {
 		return 2
 	}
 	if _, err := uuid.Parse(*installationID); err != nil {

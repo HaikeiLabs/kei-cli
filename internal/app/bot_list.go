@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -34,14 +33,13 @@ type botInstallationPage struct {
 }
 
 func runBotListCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("bot list", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	jsonOutput := flags.Bool("json", false, "output as JSON")
-	all := flags.Bool("all", false, "fetch all pages")
-	if err := flags.Parse(args); err != nil {
-		return 2
+	lc := newCommandFlags("bot", "list", "List runtime installations", stdout, stderr)
+	jsonOutput := lc.fs.Bool("json", false, "output as JSON")
+	all := lc.fs.Bool("all", false, "fetch all pages")
+	if rc, ok := parseLeaf(lc, args); !ok {
+		return rc
 	}
-	if flags.NArg() != 0 {
+	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "bot list accepts no positional arguments")
 		return 2
 	}

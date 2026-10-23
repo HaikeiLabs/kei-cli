@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,11 +14,16 @@ import (
 // reported a heartbeat. Binding is intentionally explicit and authenticated
 // with the operator's Keychain-backed CLI session.
 func runBotBindCommand(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	flags := flag.NewFlagSet("bot bind", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	installationID := flags.String("installation", "", "installation ID")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || *installationID == "" {
-		fmt.Fprintln(stderr, "bot bind requires --installation ID")
+	lc := newCommandFlags("bot", "bind", "Bind a runtime installation", stdout, stderr)
+	installationID := lc.fs.String("installation", "", "installation ID")
+	if rc, ok := parseLeaf(lc, args); !ok {
+		return rc
+	}
+	if lc.fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "bot bind accepts no positional arguments")
+		return 2
+	}
+	if !requireFlags(lc.fs, stderr, "installation") {
 		return 2
 	}
 	if _, err := uuid.Parse(*installationID); err != nil {
