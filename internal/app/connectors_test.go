@@ -927,7 +927,7 @@ func TestConnectorsConnect403(t *testing.T) {
 	store.token = workspaceTestToken()
 
 	code, _, stderr := runConnectors(t, server, store, "", "connect", testConnectorID, "--workspace", "Main", "--no-browser")
-	for _, want := range []string{"403", "ask an admin", "kei policies create --workspace Main", "group:<group>", "connector:" + testConnectorID} {
+	for _, want := range []string{"403", "ask an admin", "kei policy create", "--group <group>", "--allow connector:" + testConnectorID, "--workspace Main"} {
 		if code != 1 || !strings.Contains(stderr, want) {
 			t.Errorf("exit=%d stderr=%q missing %q", code, stderr, want)
 		}
