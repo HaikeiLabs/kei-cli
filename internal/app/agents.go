@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -45,28 +44,6 @@ func runBotAgentsCommand(args []string, stdout, stderr io.Writer, client *http.C
 	}
 }
 
-func parseBotAgentFlags(args []string, stderr io.Writer, command string) (string, string, bool, bool) {
-	flags := flag.NewFlagSet("bot agents "+command, flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	installationID := flags.String("installation", "", "Kei installation ID")
-	agentID := flags.String("agent", "", "Kei agent ID")
-	makeDefault := flags.Bool("default", false, "make this the default agent")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
-		return "", "", false, false
-	}
-	if _, err := uuid.Parse(*installationID); err != nil {
-		fmt.Fprintln(stderr, "--installation must be a UUID")
-		return "", "", false, false
-	}
-	if *agentID != "" {
-		if _, err := uuid.Parse(*agentID); err != nil {
-			fmt.Fprintln(stderr, "--agent must be a UUID")
-			return "", "", false, false
-		}
-	}
-	return *installationID, *agentID, *makeDefault, true
-}
-
 func loadCLIWebToken(store credentialStore, stderr io.Writer) (string, string, bool) {
 	baseURL, err := normalizedKeiWebURL(keiWebURL())
 	if err != nil {
@@ -82,9 +59,22 @@ func loadCLIWebToken(store credentialStore, stderr io.Writer) (string, string, b
 }
 
 func runBotAgentsList(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	installationID, _, _, ok := parseBotAgentFlags(args, stderr, "list")
-	if !ok {
-		fmt.Fprintln(stderr, "bot agents list requires --installation ID")
+	lc := newCommandFlags("bot", "agents list", "List bot agents", stdout, stderr)
+	installationID := lc.fs.String("installation", "", "Kei installation ID")
+	lc.fs.String("agent", "", "Kei agent ID")  // accepted but unused by list; validated when passed
+	lc.fs.Bool("default", false, "make this the default agent")
+	if rc, ok := parseLeaf(lc, args); !ok {
+		return rc
+	}
+	if lc.fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "bot agents list accepts no positional arguments")
+		return 2
+	}
+	if !requireFlags(lc.fs, stderr, "installation") {
+		return 2
+	}
+	if _, err := uuid.Parse(*installationID); err != nil {
+		fmt.Fprintln(stderr, "bot agents list: --installation must be a UUID")
 		return 2
 	}
 	baseURL, token, ok := loadCLIWebToken(store, stderr)
@@ -96,7 +86,7 @@ func runBotAgentsList(args []string, stdout, stderr io.Writer, client *http.Clie
 		fmt.Fprintf(stderr, "bot agents list: %v\n", err)
 		return 1
 	}
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+"/api/v1/organizations/"+url.PathEscape(orgID)+"/runtime-installations/"+url.PathEscape(installationID)+"/agents", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+"/api/v1/organizations/"+url.PathEscape(orgID)+"/runtime-installations/"+url.PathEscape(*installationID)+"/agents", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	statusCode, body, err := doRequest(client, req, 4<<10) // TODO(HAI-362): explicit oversize error, AIP pagination, request_id on creates
 	if err != nil {
@@ -112,9 +102,26 @@ func runBotAgentsList(args []string, stdout, stderr io.Writer, client *http.Clie
 }
 
 func runBotAgentsAdd(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	installationID, agentID, makeDefault, ok := parseBotAgentFlags(args, stderr, "add")
-	if !ok || agentID == "" {
-		fmt.Fprintln(stderr, "bot agents add requires --installation ID and --agent ID")
+	lc := newCommandFlags("bot", "agents add", "Add an agent to a bot", stdout, stderr)
+	installationID := lc.fs.String("installation", "", "Kei installation ID")
+	agentID := lc.fs.String("agent", "", "Kei agent ID")
+	makeDefault := lc.fs.Bool("default", false, "make this the default agent")
+	if rc, ok := parseLeaf(lc, args); !ok {
+		return rc
+	}
+	if lc.fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "bot agents add accepts no positional arguments")
+		return 2
+	}
+	if !requireFlags(lc.fs, stderr, "installation", "agent") {
+		return 2
+	}
+	if _, err := uuid.Parse(*installationID); err != nil {
+		fmt.Fprintln(stderr, "bot agents add: --installation must be a UUID")
+		return 2
+	}
+	if _, err := uuid.Parse(*agentID); err != nil {
+		fmt.Fprintln(stderr, "bot agents add: --agent must be a UUID")
 		return 2
 	}
 	baseURL, token, ok := loadCLIWebToken(store, stderr)
@@ -127,16 +134,33 @@ func runBotAgentsAdd(args []string, stdout, stderr io.Writer, client *http.Clien
 		return 1
 	}
 	body, _ := json.Marshal(map[string]any{"agent_id": agentID, "default": makeDefault})
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, baseURL+"/api/v1/organizations/"+url.PathEscape(orgID)+"/runtime-installations/"+url.PathEscape(installationID)+"/agents", bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, baseURL+"/api/v1/organizations/"+url.PathEscape(orgID)+"/runtime-installations/"+url.PathEscape(*installationID)+"/agents", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	return doBotAgentMutation(req, stdout, stderr, client)
 }
 
 func runBotAgentsRemove(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	installationID, agentID, _, ok := parseBotAgentFlags(args, stderr, "remove")
-	if !ok || agentID == "" {
-		fmt.Fprintln(stderr, "bot agents remove requires --installation ID and --agent ID")
+	lc := newCommandFlags("bot", "agents remove", "Remove an agent from a bot", stdout, stderr)
+	installationID := lc.fs.String("installation", "", "Kei installation ID")
+	agentID := lc.fs.String("agent", "", "Kei agent ID")
+	lc.fs.Bool("default", false, "make this the default agent")
+	if rc, ok := parseLeaf(lc, args); !ok {
+		return rc
+	}
+	if lc.fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "bot agents remove accepts no positional arguments")
+		return 2
+	}
+	if !requireFlags(lc.fs, stderr, "installation", "agent") {
+		return 2
+	}
+	if _, err := uuid.Parse(*installationID); err != nil {
+		fmt.Fprintln(stderr, "bot agents remove: --installation must be a UUID")
+		return 2
+	}
+	if _, err := uuid.Parse(*agentID); err != nil {
+		fmt.Fprintln(stderr, "bot agents remove: --agent must be a UUID")
 		return 2
 	}
 	baseURL, token, ok := loadCLIWebToken(store, stderr)
@@ -148,7 +172,7 @@ func runBotAgentsRemove(args []string, stdout, stderr io.Writer, client *http.Cl
 		fmt.Fprintf(stderr, "bot agents remove: %v\n", err)
 		return 1
 	}
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodDelete, baseURL+"/api/v1/organizations/"+url.PathEscape(orgID)+"/runtime-installations/"+url.PathEscape(installationID)+"/agents/"+url.PathEscape(agentID), nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodDelete, baseURL+"/api/v1/organizations/"+url.PathEscape(orgID)+"/runtime-installations/"+url.PathEscape(*installationID)+"/agents/"+url.PathEscape(*agentID), nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	return doBotAgentMutation(req, stdout, stderr, client)
 }

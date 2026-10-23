@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -40,21 +39,23 @@ type feedbackSubmissionResponse struct {
 }
 
 func runFeedbackCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore, version string) int {
-	flags := flag.NewFlagSet("feedback", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	description := flags.String("description", "", "describe what happened and what you expected")
-	yes := flags.Bool("yes", false, "submit without asking for confirmation")
+	lc := newCommandFlags("", "feedback", "Submit a bug report with evidence", stdout, stderr)
+	description := lc.fs.String("description", "", "describe what happened and what you expected")
+	yes := lc.fs.Bool("yes", false, "submit without asking for confirmation")
 	var files feedbackFiles
-	flags.Var(&files, "file", "attach an evidence file (repeatable); with --export claude-desktop, the claude.ai export .zip or its conversations.json")
-	flags.Var(&files, "screenshot", "attach a screenshot (repeatable)")
+	lc.fs.Var(&files, "file", "attach an evidence file (repeatable); with --export claude-desktop, the claude.ai export .zip or its conversations.json")
+	lc.fs.Var(&files, "screenshot", "attach a screenshot (repeatable)")
 	var sessions feedbackFiles
-	flags.Var(&sessions, "session", "attach a session transcript file (repeatable), or a single session ID (uuid or exact name) when --export is set")
-	export := flags.String("export", "", "locate and attach a redacted harness transcript: claude, claude-desktop, codex, or opencode")
-	if err := flags.Parse(args); err != nil {
+	lc.fs.Var(&sessions, "session", "attach a session transcript file (repeatable), or a single session ID (uuid or exact name) when --export is set")
+	export := lc.fs.String("export", "", "locate and attach a redacted harness transcript: claude, claude-desktop, codex, or opencode")
+	if rc, ok := parseLeaf(lc, args); !ok {
+		return rc
+	}
+	if lc.fs.NArg() != 0 {
+		fmt.Fprintf(stderr, "feedback accepts no positional arguments: %q\n", lc.fs.Arg(0))
 		return 2
 	}
-	if flags.NArg() != 0 {
-		fmt.Fprintf(stderr, "feedback accepts no positional arguments: %q\n", flags.Arg(0))
+	if !requireFlags(lc.fs, stderr, "description") {
 		return 2
 	}
 	descriptionText := strings.TrimSpace(*description)
