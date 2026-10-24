@@ -10,10 +10,10 @@ import (
 type leafCase struct {
 	command  string
 	args     []string
-	required []string    // required flags this command expects (for the "no flags" case)
-	wantCode int         // expected exit code
-	wantOut  string      // substring expected on stdout
-	wantErr  string      // substring expected on stderr
+	required []string // required flags this command expects (for the "no flags" case)
+	wantCode int      // expected exit code
+	wantOut  string   // substring expected on stdout
+	wantErr  string   // substring expected on stderr
 }
 
 // TestLeafCommandsHelp drives Main for every migrated leaf command and
@@ -196,7 +196,7 @@ func TestLeafCommandsHelp(t *testing.T) {
 			command:  "groups",
 			args:     []string{"members", "add", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei groups members add GROUP USER [flags]",
+			wantOut:  "Usage: kei groups members add GROUP [USER] [flags]",
 			wantErr:  "",
 		},
 		{
@@ -204,7 +204,7 @@ func TestLeafCommandsHelp(t *testing.T) {
 			args:     []string{"members", "add", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei groups members add GROUP USER [flags]",
+			wantErr:  "Usage: kei groups members add GROUP [USER] [flags]",
 		},
 		// groups members add has no required flags; skip (c) (positionals checked before network).
 
@@ -213,7 +213,7 @@ func TestLeafCommandsHelp(t *testing.T) {
 			command:  "groups",
 			args:     []string{"members", "remove", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei groups members remove GROUP USER [flags]",
+			wantOut:  "Usage: kei groups members remove GROUP [USER] [flags]",
 			wantErr:  "",
 		},
 		{
@@ -221,7 +221,7 @@ func TestLeafCommandsHelp(t *testing.T) {
 			args:     []string{"members", "remove", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei groups members remove GROUP USER [flags]",
+			wantErr:  "Usage: kei groups members remove GROUP [USER] [flags]",
 		},
 		// groups members remove has no required flags; skip (c).
 

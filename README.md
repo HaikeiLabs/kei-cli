@@ -309,8 +309,22 @@ kei service-principals update pedro-bug-intake --enabled --yes
 kei service-principals delete pedro-bug-intake --yes
 ```
 
-Binding principals to runtime installation/agent pairs and adding them to groups
-are not available yet; their APIs are being implemented separately.
+Bind a principal to an installation/agent pair (both IDs are UUIDs), list or
+remove bindings, and manage group membership. The workspace is required; group
+and workspace names are resolved by the CLI. Group membership follows the
+existing `kei groups members` command style, using `--service-principal`:
+
+```sh
+kei service-principals bind pedro-bug-intake --installation INSTALLATION_ID --agent AGENT_ID --workspace Main --yes
+kei service-principals bindings list --workspace Main
+kei service-principals unbind pedro-bug-intake --installation INSTALLATION_ID --agent AGENT_ID --workspace Main --yes
+kei service-principals unbind --binding-id BINDING_ID --workspace Main --yes
+kei groups members add Support --service-principal pedro-bug-intake --workspace Main --yes
+kei groups members remove Support --service-principal pedro-bug-intake --workspace Main --yes
+```
+
+A binding only authorizes that installation/agent pair to select the principal;
+ordinary group policy grants still control access.
 
 The CLI always targets the Kei production API at `https://app.haikeilabs.com`.
 Set the `KEI_WEB_URL` environment variable to override the endpoint for
