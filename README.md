@@ -301,12 +301,12 @@ Organization owners and admins can manage service principals. The organization
 is taken from the current `kei login` token:
 
 ```sh
-kei service-principals create --name pedro-bug-intake --description "Discord bug intake" --yes
+kei service-principals create --name kei-bug-intake --description "Discord bug intake" --yes
 kei service-principals list --json
-kei service-principals get pedro-bug-intake
-kei service-principals update pedro-bug-intake --disabled --yes
-kei service-principals update pedro-bug-intake --enabled --yes
-kei service-principals delete pedro-bug-intake --yes
+kei service-principals get kei-bug-intake
+kei service-principals update kei-bug-intake --disabled --yes
+kei service-principals update kei-bug-intake --enabled --yes
+kei service-principals delete kei-bug-intake --yes
 ```
 
 Bind a principal to an installation/agent pair (both IDs are UUIDs), list or
@@ -315,12 +315,12 @@ and workspace names are resolved by the CLI. Group membership follows the
 existing `kei groups members` command style, using `--service-principal`:
 
 ```sh
-kei service-principals bind pedro-bug-intake --installation INSTALLATION_ID --agent AGENT_ID --workspace Main --yes
+kei service-principals bind kei-bug-intake --installation INSTALLATION_ID --agent AGENT_ID --workspace Main --yes
 kei service-principals bindings list --workspace Main
-kei service-principals unbind pedro-bug-intake --installation INSTALLATION_ID --agent AGENT_ID --workspace Main --yes
+kei service-principals unbind kei-bug-intake --installation INSTALLATION_ID --agent AGENT_ID --workspace Main --yes
 kei service-principals unbind --binding-id BINDING_ID --workspace Main --yes
-kei groups members add Support --service-principal pedro-bug-intake --workspace Main --yes
-kei groups members remove Support --service-principal pedro-bug-intake --workspace Main --yes
+kei groups members add Support --service-principal kei-bug-intake --workspace Main --yes
+kei groups members remove Support --service-principal kei-bug-intake --workspace Main --yes
 ```
 
 A binding only authorizes that installation/agent pair to select the principal;

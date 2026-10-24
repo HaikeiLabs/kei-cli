@@ -16,7 +16,7 @@ const (
 )
 
 func principalListJSON() string {
-	return `{"servicePrincipals":[{"id":"` + testServicePrincipalID + `","name":"organizations/org-1/servicePrincipals/` + testServicePrincipalName + `"}]}`
+	return `{"servicePrincipals":[{"service_principal_id":"` + testServicePrincipalID + `","name":"organizations/org-1/servicePrincipals/` + testServicePrincipalName + `"}]}`
 }
 
 func bindingJSON() string {

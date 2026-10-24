@@ -12,7 +12,7 @@ import (
 )
 
 type servicePrincipal struct {
-	ID          string `json:"id"`
+	ID          string `json:"service_principal_id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Disabled    bool   `json:"disabled"`
