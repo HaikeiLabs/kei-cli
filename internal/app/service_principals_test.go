@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-const testServicePrincipalName = "pedro-bug-intake"
+const testServicePrincipalName = "kei-bug-intake"
 
 func testServicePrincipalJSON() string {
 	return `{"name":"organizations/org-1/servicePrincipals/` + testServicePrincipalName + `","description":"Bug intake","disabled":false,"create_time":"2026-01-01T00:00:00Z","update_time":"2026-01-01T00:00:00Z"}`
