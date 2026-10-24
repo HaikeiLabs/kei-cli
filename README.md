@@ -297,6 +297,21 @@ List a workspace's groups, for example to find a group's ID by name:
 kei groups list --workspace e2e --json
 ```
 
+Organization owners and admins can manage service principals. The organization
+is taken from the current `kei login` token:
+
+```sh
+kei service-principals create --name pedro-bug-intake --description "Discord bug intake" --yes
+kei service-principals list --json
+kei service-principals get pedro-bug-intake
+kei service-principals update pedro-bug-intake --disabled --yes
+kei service-principals update pedro-bug-intake --enabled --yes
+kei service-principals delete pedro-bug-intake --yes
+```
+
+Binding principals to runtime installation/agent pairs and adding them to groups
+are not available yet; their APIs are being implemented separately.
+
 The CLI always targets the Kei production API at `https://app.haikeilabs.com`.
 Set the `KEI_WEB_URL` environment variable to override the endpoint for
 development and testing.
