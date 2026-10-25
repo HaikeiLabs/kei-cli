@@ -29,7 +29,7 @@ func TestServicePrincipalBindUnbindAndBindingsList(t *testing.T) {
 	server, store := newUsersGroupsServer(t, func(w http.ResponseWriter, r *http.Request) {
 		requireBearer(t, r)
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/organizations/org-1/servicePrincipals":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/organizations/org-1/service-principals":
 			principalIDRead = true
 			_, _ = w.Write([]byte(principalListJSON()))
 		case r.Method == http.MethodPost && r.URL.Path == bindingPath:
@@ -81,7 +81,7 @@ func TestServicePrincipalGroupMembershipUsesGroupsMembersStyle(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/groups":
 			_, _ = w.Write([]byte(`[{"id":"` + testGroupID + `","name":"Support","users":[]}]`))
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/organizations/org-1/servicePrincipals":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/organizations/org-1/service-principals":
 			_, _ = w.Write([]byte(principalListJSON()))
 		case r.Method == http.MethodPost && r.URL.Path == memberPath:
 			var body map[string]string
