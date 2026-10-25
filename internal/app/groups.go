@@ -426,7 +426,13 @@ func runGroupsMembersList(args []string, stdout, stderr io.Writer, client *http.
 }
 
 func runGroupsMembersAdd(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("groups", "members add", "Add a member to a group", stdout, stderr).WithArgs("GROUP USER")
+	for _, arg := range args {
+		if arg == "--service-principal" || strings.HasPrefix(arg, "--service-principal=") {
+			return runServicePrincipalGroupMembership(args, true, stdout, stderr, stdin, client, store)
+		}
+	}
+	lc := newCommandFlags("groups", "members add", "Add a member to a group", stdout, stderr).WithArgs("GROUP [USER]")
+	lc.fs.String("service-principal", "", "service principal name or UUID instead of a user")
 	workspace := workspaceFlagHelp(lc.fs, "workspace name or ID (default: the organization's default workspace)")
 	yes := yesFlag(lc.fs)
 	// Intercept -h/--help before parsePositionals.
@@ -468,7 +474,13 @@ func runGroupsMembersAdd(args []string, stdout, stderr io.Writer, stdin io.Reade
 }
 
 func runGroupsMembersRemove(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("groups", "members remove", "Remove a member from a group", stdout, stderr).WithArgs("GROUP USER")
+	for _, arg := range args {
+		if arg == "--service-principal" || strings.HasPrefix(arg, "--service-principal=") {
+			return runServicePrincipalGroupMembership(args, false, stdout, stderr, stdin, client, store)
+		}
+	}
+	lc := newCommandFlags("groups", "members remove", "Remove a member from a group", stdout, stderr).WithArgs("GROUP [USER]")
+	lc.fs.String("service-principal", "", "service principal name or UUID instead of a user")
 	workspace := workspaceFlagHelp(lc.fs, "workspace name or ID (default: the organization's default workspace)")
 	yes := yesFlag(lc.fs)
 	// Intercept -h/--help before parsePositionals.

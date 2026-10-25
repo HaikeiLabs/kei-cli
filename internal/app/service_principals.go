@@ -12,6 +12,7 @@ import (
 )
 
 type servicePrincipal struct {
+	ID          string `json:"service_principal_id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Disabled    bool   `json:"disabled"`
@@ -43,6 +44,9 @@ var servicePrincipalsGroup = commandGroup{
 		{name: "create", summary: "Create a service principal"},
 		{name: "update", summary: "Update a service principal"},
 		{name: "delete", summary: "Delete a service principal"},
+		{name: "bind", summary: "Bind a service principal to an installation and agent"},
+		{name: "unbind", summary: "Remove a service principal binding"},
+		{name: "bindings", summary: "List service principal bindings"},
 	},
 }
 
@@ -62,6 +66,12 @@ func runServicePrincipalsCommand(args []string, stdout, stderr io.Writer, stdin 
 		return runServicePrincipalsUpdate(rest, stdout, stderr, stdin, client, store)
 	case "delete":
 		return runServicePrincipalsDelete(rest, stdout, stderr, stdin, client, store)
+	case "bind":
+		return runServicePrincipalBind(rest, stdout, stderr, stdin, client, store)
+	case "unbind":
+		return runServicePrincipalUnbind(rest, stdout, stderr, stdin, client, store)
+	case "bindings":
+		return runServicePrincipalBindingsCommand(rest, stdout, stderr, client, store)
 	default:
 		panic("unexpected subcommand: " + sub)
 	}
