@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -32,6 +33,68 @@ type connectorTemplate struct {
 	Label       string  `json:"label"`
 	DisplayName string  `json:"display_name"`
 	DefaultURL  *string `json:"default_url"`
+	AuthMethod  string  `json:"auth_method"`
+	// CredentialFields name a secret_ref template's secrets (HAI-583): one
+	// per field, each set with :setSecret. Names and headers only, never a
+	// value.
+	CredentialFields []templateCredentialField `json:"credential_fields"`
+}
+
+// templateCredentialField is one secret of a secret_ref template.
+type templateCredentialField struct {
+	Field  string `json:"field"`
+	Header string `json:"header"`
+}
+
+// templateAuthSecretRef is the auth method of templates whose connectors send
+// static secrets from the workspace's credential store (ADR-036 §6.4).
+const templateAuthSecretRef = "secret_ref"
+
+// sealedField is one credential field's secret, sealed to the workspace's
+// runtimes and ready for :setSecret.
+type sealedField struct {
+	field   string
+	request setSecretRequest
+}
+
+// readAndSealTemplateSecrets reads each credential field's secret (without
+// echo on a terminal, else one stdin line per field) and seals it to the
+// workspace's credential delivery recipients. It runs before the connector is
+// created, so a missing secret or recipient creates nothing.
+func readAndSealTemplateSecrets(session *connectorSession, template connectorTemplate, stdin io.Reader, stdout io.Writer) ([]sealedField, error) {
+	if len(template.CredentialFields) == 0 {
+		return nil, fmt.Errorf("template %q declares no credential fields", template.ID)
+	}
+	reader := bufio.NewReader(stdin)
+	sealed := make([]sealedField, 0, len(template.CredentialFields))
+	for _, f := range template.CredentialFields {
+		secret, err := promptSecret(reader, stdin, stdout, f.Field+" (sent in "+f.Header+"): ")
+		if err != nil {
+			return nil, fmt.Errorf("read secret field %q: %w", f.Field, err)
+		}
+		if secret == "" {
+			return nil, fmt.Errorf("secret field %q is empty", f.Field)
+		}
+		request, err := session.sealForWorkspace(f.Field, secret)
+		if err != nil {
+			return nil, err
+		}
+		sealed = append(sealed, sealedField{field: f.Field, request: request})
+	}
+	return sealed, nil
+}
+
+// setSealedSecrets sets each sealed field on connector id and reports the
+// queued generation. It never prints a secret value.
+func setSealedSecrets(session *connectorSession, id string, sealed []sealedField, stdout io.Writer) error {
+	for _, s := range sealed {
+		status, err := session.setSecret(id, s.request)
+		if err != nil {
+			return fmt.Errorf("set secret %q: %w", s.field, err)
+		}
+		fmt.Fprintf(stdout, "Secret %q sealed and queued for delivery (generation %d).\n", s.field, status.Generation)
+	}
+	return nil
 }
 
 // mcpConnectorCreateRequest is the body of POST /api/v1/data-connectors for
@@ -137,6 +200,17 @@ func runConnectorsCreateFromTemplate(f templateCreateFlags, name string, ws work
 	if name == "" {
 		name = *f.label
 	}
+	// A secret_ref MCP connector holds one shared identity: read and seal
+	// each template credential field before creating anything (HAI-583).
+	var sealed []sealedField
+	if template.AuthMethod == templateAuthSecretRef {
+		if *f.expectedIssuer != "" {
+			return fail(fmt.Errorf("template %q uses static secrets; --expected-issuer is for OAuth templates", template.ID))
+		}
+		if sealed, err = readAndSealTemplateSecrets(session, template, stdin, stdout); err != nil {
+			return fail(err)
+		}
+	}
 	request := mcpConnectorCreateRequest{
 		Name: name, Provider: template.ID, DisplayName: *f.label,
 		Slug: optionalFlag(*f.slug), MCPURL: optionalFlag(*f.mcpURL), ExpectedIssuer: optionalFlag(*f.expectedIssuer),
@@ -169,6 +243,15 @@ func runConnectorsCreateFromTemplate(f templateCreateFlags, name string, ws work
 	var created connector
 	if err := json.Unmarshal(payload, &created); err != nil {
 		return fail(fmt.Errorf("decode response: %w", err))
+	}
+	if len(sealed) > 0 {
+		out := stdout
+		if jsonOutput {
+			out = io.Discard
+		}
+		if err := setSealedSecrets(session, created.ID, sealed, out); err != nil {
+			return fail(fmt.Errorf("connector %s was created, but %w. Delete it with: kei connectors delete %s --workspace %s --yes, then retry", created.ID, err, created.ID, ws.value))
+		}
 	}
 	capabilityNames := make([]string, 0, len(created.Capabilities))
 	for _, capability := range created.Capabilities {
@@ -225,6 +308,10 @@ func runConnectorsCreateFromTemplate(f templateCreateFlags, name string, ws work
 	}
 	if created.ExpectedIssuer != "" {
 		fmt.Fprintf(stdout, "Issuer: %s\n", created.ExpectedIssuer)
+	}
+	if len(sealed) > 0 {
+		fmt.Fprintln(stdout, "It uses a shared secret from the workspace's credential store and becomes connected when the runtime stores it. Its tools are usable once an admin approves its tool manifest.")
+		return 0
 	}
 	fmt.Fprintln(stdout, "Users connect their own accounts through their chat harness. Its tools are usable once an admin approves its tool manifest.")
 	return 0
