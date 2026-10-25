@@ -108,6 +108,15 @@ func TestGroupHelpContract(t *testing.T) {
 			},
 		},
 		{
+			name:        "service-principals",
+			groupPrefix: "kei service-principals",
+			helpArgs:    helpForms,
+			unknownArgs: []string{"bogus"},
+			invoke: func(args []string, stdout, stderr io.Writer) int {
+				return runServicePrincipalsCommand(args, stdout, stderr, nil, nil, nil)
+			},
+		},
+		{
 			name:        "groups members",
 			groupPrefix: "kei groups members",
 			helpArgs:    helpForms,
