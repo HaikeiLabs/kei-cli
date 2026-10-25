@@ -68,7 +68,7 @@ func runServicePrincipalsCommand(args []string, stdout, stderr io.Writer, stdin 
 }
 
 func servicePrincipalsPath(orgID, name string) string {
-	path := "/api/v1/organizations/" + url.PathEscape(orgID) + "/servicePrincipals"
+	path := "/api/v1/organizations/" + url.PathEscape(orgID) + "/service-principals"
 	if name != "" {
 		path += "/" + url.PathEscape(name)
 	}

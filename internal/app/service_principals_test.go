@@ -15,7 +15,7 @@ func testServicePrincipalJSON() string {
 }
 
 func TestServicePrincipalsCRUD(t *testing.T) {
-	base := "/api/v1/organizations/org-1/servicePrincipals"
+	base := "/api/v1/organizations/org-1/service-principals"
 	server, store := newUsersGroupsServer(t, func(w http.ResponseWriter, r *http.Request) {
 		requireBearer(t, r)
 		switch {
