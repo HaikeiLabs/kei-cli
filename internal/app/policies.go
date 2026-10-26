@@ -71,6 +71,58 @@ type updatePolicyRequest struct {
 	AgentID json.RawMessage `json:"agent_id,omitempty"`
 }
 
+type migrationReportResponse struct {
+	StandingPrincipals []struct {
+		ID            string   `json:"id"`
+		Name          string   `json:"name"`
+		SrcPattern    string   `json:"src_pattern"`
+		DstPattern    string   `json:"dst_pattern"`
+		Action        string   `json:"action"`
+		ProposedGroup string   `json:"proposed_group"`
+		Members       []string `json:"members"`
+		Conversion    string   `json:"conversion"`
+	} `json:"standing_principals"`
+	WildcardRoles []struct {
+		ID                 string `json:"id"`
+		Name               string `json:"name"`
+		SrcPattern         string `json:"src_pattern"`
+		DstPattern         string `json:"dst_pattern"`
+		Action             string `json:"action"`
+		ProposedSource     string `json:"proposed_source"`
+		NeedsOwnerDecision bool   `json:"needs_owner_decision"`
+		Note               string `json:"note,omitempty"`
+	} `json:"wildcard_roles"`
+	HarnessSources []struct {
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		SrcPattern  string `json:"src_pattern"`
+		DstPattern  string `json:"dst_pattern"`
+		Action      string `json:"action"`
+		HarnessKind string `json:"harness_kind"`
+		Condition   string `json:"condition"`
+	} `json:"harness_sources"`
+	DenyWinsImpact []struct {
+		ID           string   `json:"id"`
+		Name         string   `json:"name"`
+		SrcPattern   string   `json:"src_pattern"`
+		DstPattern   string   `json:"dst_pattern"`
+		Action       string   `json:"action"`
+		Priority     int      `json:"priority"`
+		OldDecision  string   `json:"old_decision"`
+		NewDecision  string   `json:"new_decision"`
+		OldOutranked []string `json:"old_outranked"`
+	} `json:"deny_wins_impact"`
+	RejectedRows []struct {
+		ID           string `json:"id"`
+		Name         string `json:"name"`
+		SrcPattern   string `json:"src_pattern"`
+		DstPattern   string `json:"dst_pattern"`
+		Action       string `json:"action"`
+		RejectReason string `json:"reject_reason"`
+	} `json:"rejected_rows"`
+	Markdown string `json:"markdown"`
+}
+
 type policySession struct {
 	client      *http.Client
 	baseURL     string
@@ -152,6 +204,7 @@ var policyGroup = commandGroup{
 		{name: "create", summary: "Create a policy"},
 		{name: "delete", summary: "Delete a policy"},
 		{name: "test", summary: "Test a policy"},
+		{name: "migration-report", summary: "Show ADR-038 policy migration report (dry run)"},
 	},
 }
 
@@ -171,6 +224,8 @@ func runPolicyCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, 
 		return runPoliciesDelete("policy", rest, stdout, stderr, client, store)
 	case "test":
 		return runPolicyTest(rest, stdout, stderr, client, store)
+	case "migration-report":
+		return runPolicyMigrationReport(rest, stdout, stderr, client, store)
 	default:
 		panic("unexpected subcommand: " + sub)
 	}
@@ -657,6 +712,69 @@ func runPolicyTest(args []string, stdout, stderr io.Writer, client *http.Client,
 		fmt.Fprintln(stdout, "Hint:")
 		fmt.Fprintln(stdout, *result.Hint)
 	}
+	return 0
+}
+
+func runPolicyMigrationReport(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
+	lc := newCommandFlags("policy", "migration-report", "Show ADR-038 policy migration report (dry run)", stdout, stderr)
+	workspace := workspaceFlag(lc.fs)
+	jsonOutput := jsonFlag(lc.fs)
+	rc, ok := parseLeaf(lc, args)
+	if !ok {
+		return rc
+	}
+	if lc.fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "policy migration-report accepts no positional arguments")
+		return 2
+	}
+	ws, ok := requirePoliciesWorkspace("migration-report", *workspace, stderr)
+	if !ok {
+		return 2
+	}
+	session, ok := openPolicySession("migration-report", ws, stderr, client, store)
+	if !ok {
+		return 1
+	}
+	orgID, err := organizationIDFromCLIToken(session.token)
+	if err != nil {
+		fmt.Fprintf(stderr, "policy migration-report: determine organization from login: %v\n", err)
+		return 1
+	}
+	endpoint := session.baseURL + "/api/v1/organizations/" + url.PathEscape(orgID) +
+		"/workspaces/" + url.PathEscape(session.workspaceID) + "/policies:migrationReport"
+	payload, err := session.request(http.MethodPost, endpoint, nil)
+	if err != nil {
+		fmt.Fprintf(stderr, "policy migration-report: %v\n", err)
+		return 1
+	}
+
+	var resp migrationReportResponse
+	if err := json.Unmarshal(payload, &resp); err != nil {
+		fmt.Fprintf(stderr, "policy migration-report: decode response: %v\n", err)
+		return 1
+	}
+
+	if *jsonOutput {
+		var pretty bytes.Buffer
+		if err := json.Indent(&pretty, payload, "", "  "); err != nil {
+			_, _ = stdout.Write(payload)
+			return 0
+		}
+		_, _ = pretty.WriteTo(stdout)
+		return 0
+	}
+
+	table := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintf(table, "%s\t%d\n", "Standing principals to autogroups:", len(resp.StandingPrincipals))
+	fmt.Fprintf(table, "%s\t%d\n", "Wildcard/role to autogroups:", len(resp.WildcardRoles))
+	fmt.Fprintf(table, "%s\t%d\n", "Harness scoping to conditions:", len(resp.HarnessSources))
+	fmt.Fprintf(table, "%s\t%d\n", "Deny-wins outcome changes:", len(resp.DenyWinsImpact))
+	fmt.Fprintf(table, "%s\t%d\n", "Rows that would be rejected:", len(resp.RejectedRows))
+	_ = table.Flush()
+
+	total := len(resp.StandingPrincipals) + len(resp.WildcardRoles) + len(resp.HarnessSources) + len(resp.DenyWinsImpact) + len(resp.RejectedRows)
+	fmt.Fprintf(stdout, "\nTotal rows in report: %d\n", total)
+	fmt.Fprintln(stdout, "This is a dry run. Nothing has been migrated or written.")
 	return 0
 }
 

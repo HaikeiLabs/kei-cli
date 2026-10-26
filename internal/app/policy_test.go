@@ -328,6 +328,80 @@ func TestPolicyTestNoReasonOrHint(t *testing.T) {
 	_ = fake
 }
 
+// --- Migration report ---
+
+func TestPolicyMigrationReport(t *testing.T) {
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		_, _ = w.Write([]byte(`{
+			"standing_principals":[
+				{"id":"` + testPolicyID + `","name":"allow-alice","src_pattern":"user:alice","dst_pattern":"shell:git","action":"permit","proposed_group":"migrated-user-alice","members":["user:alice"],"conversion":"autogroup"}
+			],
+			"wildcard_roles":[
+				{"id":"55555555-5555-5555-5555-555555555555","name":"allow-any","src_pattern":"*","dst_pattern":"shell:read","action":"permit","proposed_source":"autogroup:member","needs_owner_decision":false}
+			],
+			"harness_sources":[
+				{"id":"66666666-6666-6666-6666-666666666666","name":"allow-codex","src_pattern":"group:Engineering","dst_pattern":"harness:codex","action":"permit","harness_kind":"codex","condition":"when: {harness: \"codex\"}"}
+			],
+			"deny_wins_impact":[
+				{"id":"77777777-7777-7777-7777-777777777777","name":"conflict-pair","src_pattern":"group:Engineering","dst_pattern":"shell:git","action":"permit","priority":100,"old_decision":"allow","new_decision":"deny","old_outranked":["88888888-8888-8888-8888-888888888888"]}
+			],
+			"rejected_rows":[
+				{"id":"99999999-9999-9999-9999-999999999999","name":"invalid-rule","src_pattern":"user:unknown","dst_pattern":"shell:admin","action":"permit","reject_reason":"non_person_principal"}
+			],
+			"markdown":"# Policy migration dry run (ADR-038)\n\nRead-only.\n"
+		}`))
+	})
+	code, stdout, stderr := runPolicy(t, server, store, "", "migration-report", "--workspace", "Main")
+	if code != 0 {
+		t.Fatalf("exit = %d stderr=%s", code, stderr)
+	}
+	req := fake.only(t)
+	if req.Method != http.MethodPost {
+		t.Fatalf("method = %s, want POST", req.Method)
+	}
+	wantPath := "/api/v1/organizations/org-1/workspaces/" + testWorkspaceID + "/policies:migrationReport"
+	if req.Path != wantPath {
+		t.Fatalf("path = %s, want %s", req.Path, wantPath)
+	}
+	if req.Auth != "Bearer "+workspaceTestToken() {
+		t.Fatalf("Authorization = %q", req.Auth)
+	}
+	// Verify the human summary mentions all categories.
+	for _, want := range []string{"Standing principals to autogroups:", "1", "Wildcard/role to autogroups:", "1", "Harness scoping to conditions:", "1", "Deny-wins outcome changes:", "1", "Rows that would be rejected:", "1", "Total rows in report:", "5", "dry run"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("output missing %q:\n%s", want, stdout)
+		}
+	}
+	_ = fake
+}
+
+func TestPolicyMigrationReportJSON(t *testing.T) {
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		_, _ = w.Write([]byte(`{"standing_principals":[],"wildcard_roles":[],"harness_sources":[],"deny_wins_impact":[],"rejected_rows":[],"markdown":"# empty"}`))
+	})
+	code, stdout, stderr := runPolicy(t, server, store, "", "migration-report", "--workspace", "Main", "--json")
+	if code != 0 {
+		t.Fatalf("exit = %d stderr=%s", code, stderr)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(stdout), &parsed); err != nil {
+		t.Fatalf("--json output is not valid JSON: %v\n%s", err, stdout)
+	}
+	if len(parsed) == 0 {
+		t.Fatal("--json output is empty")
+	}
+	_ = fake
+}
+
+func TestPolicyMigrationReportUnknownPositional(t *testing.T) {
+	fake, server, store := newFakeConsole(t, failOnRequest(t))
+	code, _, stderr := runPolicy(t, server, store, "", "migration-report", "--workspace", "Main", "extra-arg")
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2; stderr=%q", code, stderr)
+	}
+	_ = fake
+}
+
 // --- Dispatch ---
 
 func TestPolicyCommandDispatch(t *testing.T) {
@@ -342,6 +416,7 @@ func TestPolicyCommandDispatch(t *testing.T) {
 		{[]string{"delete", "x"}, 2},
 		{[]string{"create"}, 2},
 		{[]string{"test"}, 2},
+		{[]string{"migration-report"}, 1}, // no token — workspace auto-picked, fails at credential
 	}
 	store := &memoryCredentialStore{}
 	for _, tt := range tests {
@@ -355,8 +430,8 @@ func TestPolicyCommandDispatch(t *testing.T) {
 func TestPolicyUsageListedInHelp(t *testing.T) {
 	var stdout bytes.Buffer
 	PrintUsage(&stdout)
-	if !strings.Contains(stdout.String(), "kei policy list|get|create|delete|test") {
-		t.Fatalf("usage missing policy:\n%s", stdout.String())
+	if !strings.Contains(stdout.String(), "kei policy list|get|create|delete|test|migration-report") {
+		t.Fatalf("usage missing policy migration-report:\n%s", stdout.String())
 	}
 }
 
