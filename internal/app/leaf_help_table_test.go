@@ -307,6 +307,23 @@ func TestLeafCommandsHelp(t *testing.T) {
 			wantErr:  "policies delete removes the policy for all agents; pass --yes to confirm",
 		},
 
+		// ---- policy migration-report ----
+		{
+			command:  "policy",
+			args:     []string{"migration-report", "-h"},
+			wantCode: 0,
+			wantOut:  "Usage: kei policy migration-report [flags]",
+			wantErr:  "",
+		},
+		{
+			command:  "policy",
+			args:     []string{"migration-report", "--definitely-unknown"},
+			wantCode: 2,
+			wantOut:  "",
+			wantErr:  "Usage: kei policy migration-report [flags]",
+		},
+		// (c) migration-report has no required flags; would hit the API.
+
 		// ---- policy test ----
 		{
 			command:  "policy",
