@@ -751,7 +751,6 @@ func fetchHarnessBundle(ctx context.Context, config runtimeConfig, client *http.
 					SrcPattern string `json:"src_pattern"`
 					DstPattern string `json:"dst_pattern"`
 					Action     string `json:"action"`
-					Priority   int    `json:"priority"`
 					Scope      struct {
 						AgentID *string `json:"agent_id"`
 					} `json:"scope"`
@@ -766,7 +765,7 @@ func fetchHarnessBundle(ctx context.Context, config runtimeConfig, client *http.
 		}
 		policies := make([]map[string]any, 0, len(v2.PolicySet.HarnessPolicies))
 		for _, p := range v2.PolicySet.HarnessPolicies {
-			policies = append(policies, map[string]any{"id": p.PolicyID, "name": p.Name, "src_pattern": p.SrcPattern, "dst_pattern": p.DstPattern, "effect": p.Action, "enabled": true, "priority": p.Priority, "scope": p.Scope})
+			policies = append(policies, map[string]any{"id": p.PolicyID, "name": p.Name, "src_pattern": p.SrcPattern, "dst_pattern": p.DstPattern, "effect": p.Action, "enabled": true, "scope": p.Scope})
 		}
 		set := map[string]any{"policies": policies}
 		if len(v2.PolicySet.Connectors) > 0 {

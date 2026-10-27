@@ -35,7 +35,6 @@ type bundlePolicy struct {
 	DstPattern string `json:"dst_pattern"`
 	Effect     string `json:"effect"`
 	Action     string `json:"action"`
-	Priority   int    `json:"priority"`
 	Enabled    bool   `json:"enabled"`
 	Scope      struct {
 		AgentID *string `json:"agent_id"`
@@ -177,7 +176,6 @@ func nativePermissionEntries(s nativeSyntax, harnessID string, harness *policybu
 			Principal: principal,
 			Target:    p.DstPattern,
 			Effect:    policyapi.Effect(effect),
-			Priority:  p.Priority,
 			Enabled:   p.Enabled,
 		})
 		byID[p.ID] = p
@@ -297,12 +295,9 @@ func blockedBySkippedDeny(permit bundlePolicy, denies []bundlePolicy) bool {
 	return false
 }
 
-// precedes reports whether a decides before b under ADR-028 §2: priority
-// descending, deny before permit at equal priority, then id ascending.
+// precedes reports whether a decides before b under ADR-038 D-1: deny before
+// permit, then id ascending. The stored priority is not read.
 func precedes(a, b bundlePolicy) bool {
-	if a.Priority != b.Priority {
-		return a.Priority > b.Priority
-	}
 	if ad, bd := policyEffect(a) == "deny", policyEffect(b) == "deny"; ad != bd {
 		return ad
 	}

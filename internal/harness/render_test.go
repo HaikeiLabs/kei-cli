@@ -127,3 +127,19 @@ func TestNativePermissionEntriesSharedHarnessFixtures(t *testing.T) {
 		}
 	}
 }
+
+// ADR-038 D-1: deny wins, whatever priority an older catalog still sends. A
+// skipped deny overlapping a permit withholds it even when the bundle gives
+// the permit the higher priority.
+func TestBlockedBySkippedDenyIgnoresPriority(t *testing.T) {
+	var permit, deny bundlePolicy
+	if err := json.Unmarshal([]byte(`{"id":"b-permit","dst_pattern":"shell:git status","effect":"permit","priority":100}`), &permit); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(`{"id":"a-deny","dst_pattern":"shell:git","effect":"deny","priority":1}`), &deny); err != nil {
+		t.Fatal(err)
+	}
+	if !blockedBySkippedDeny(permit, []bundlePolicy{deny}) {
+		t.Fatal("a deny must withhold an overlapping permit regardless of priority")
+	}
+}
