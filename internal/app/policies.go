@@ -29,7 +29,6 @@ type policy struct {
 	SrcPattern       string  `json:"src_pattern"`
 	DstPattern       string  `json:"dst_pattern"`
 	Effect           string  `json:"effect"`
-	Priority         int     `json:"priority"`
 	Enabled          bool    `json:"enabled"`
 	ApprovalRequired bool    `json:"approval_required"`
 	CreatedAt        string  `json:"created_at"`
@@ -43,7 +42,6 @@ type createPolicyRequest struct {
 	DstPattern  string                  `json:"dst_pattern"`
 	Effect      string                  `json:"effect"`
 	Action      string                  `json:"action,omitempty"`
-	Priority    int                     `json:"priority"`
 	Enabled     bool                    `json:"enabled"`
 	SelectorV2  *createPolicySelectorV2 `json:"selector_v2,omitempty"`
 	// AgentID scopes the policy to one agent; omitted, it applies to every
@@ -64,7 +62,6 @@ type updatePolicyRequest struct {
 	DstPattern  *string `json:"dst_pattern,omitempty"`
 	Effect      *string `json:"effect,omitempty"`
 	Action      *string `json:"action,omitempty"`
-	Priority    *int    `json:"priority,omitempty"`
 	Enabled     *bool   `json:"enabled,omitempty"`
 	// AgentID is the JSON for agent_id: a quoted UUID, or null to clear the
 	// agent. Nil leaves it out of the body.
@@ -426,13 +423,13 @@ func runPoliciesList(group string, args []string, stdout, stderr io.Writer, clie
 		return 0
 	}
 	table := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(table, "ID\tNAME\tSOURCE\tTARGET\tEFFECT\tPRIORITY\tENABLED")
+	fmt.Fprintln(table, "ID\tNAME\tSOURCE\tTARGET\tEFFECT\tENABLED")
 	for _, p := range allPolicies {
 		enabled := "no"
 		if p.Enabled {
 			enabled = "yes"
 		}
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%d\t%s\n", p.ID, p.Name, p.SrcPattern, p.DstPattern, p.Effect, p.Priority, enabled)
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\n", p.ID, p.Name, p.SrcPattern, p.DstPattern, p.Effect, enabled)
 	}
 	_ = table.Flush()
 	return 0
@@ -486,7 +483,7 @@ func runPoliciesGet(group string, args []string, stdout, stderr io.Writer, clien
 	if p.Enabled {
 		enabled = "yes"
 	}
-	fmt.Fprintf(stdout, "ID:          %s\nName:        %s\nSource:      %s\nTarget:      %s\nEffect:      %s\nPriority:    %d\nEnabled:     %s\n", p.ID, p.Name, p.SrcPattern, p.DstPattern, p.Effect, p.Priority, enabled)
+	fmt.Fprintf(stdout, "ID:          %s\nName:        %s\nSource:      %s\nTarget:      %s\nEffect:      %s\nEnabled:     %s\n", p.ID, p.Name, p.SrcPattern, p.DstPattern, p.Effect, enabled)
 	if p.Description != "" {
 		fmt.Fprintf(stdout, "Description: %s\n", p.Description)
 	}
@@ -504,7 +501,7 @@ func runPoliciesCreate(args []string, stdout, stderr io.Writer, client *http.Cli
 	srcPattern := lc.fs.String("src-pattern", "", "source pattern (e.g. harness:claude_code)")
 	dstPattern := lc.fs.String("dst-pattern", "", "target pattern (e.g. shell:git, skill:read, path:/workspace/.env)")
 	effect := lc.fs.String("effect", "", "effect: permit or deny")
-	priority := lc.fs.Int("priority", 0, "priority (higher = more specific)")
+	lc.fs.Int("priority", 0, "deprecated and ignored: deny always wins")
 	description := lc.fs.String("description", "", "policy description")
 	agentID := lc.fs.String("agent-id", "", "agent ID to scope the policy to (default: every agent in the workspace)")
 	jsonOutput := jsonFlag(lc.fs)
@@ -512,6 +509,9 @@ func runPoliciesCreate(args []string, stdout, stderr io.Writer, client *http.Cli
 	if !ok {
 		return rc
 	}
+	createSet := make(map[string]bool)
+	lc.fs.Visit(func(f *flag.Flag) { createSet[f.Name] = true })
+	warnPriorityIgnored(createSet, stderr)
 	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "policies create accepts no positional arguments")
 		return 2
@@ -547,7 +547,6 @@ func runPoliciesCreate(args []string, stdout, stderr io.Writer, client *http.Cli
 		DstPattern:  *dstPattern,
 		Effect:      *effect,
 		Action:      *effect,
-		Priority:    *priority,
 		Enabled:     true,
 		AgentID:     agent,
 	}
@@ -785,7 +784,7 @@ func runPoliciesUpdate(args []string, stdout, stderr io.Writer, client *http.Cli
 	srcPattern := lc.fs.String("src-pattern", "", "source pattern")
 	dstPattern := lc.fs.String("dst-pattern", "", "target pattern")
 	effect := lc.fs.String("effect", "", "effect: permit or deny")
-	priority := lc.fs.Int("priority", 0, "priority")
+	lc.fs.Int("priority", 0, "deprecated and ignored: deny always wins")
 	enabled := lc.fs.Bool("enabled", false, "enabled")
 	description := lc.fs.String("description", "", "policy description")
 	agentID := lc.fs.String("agent-id", "", "agent ID to scope the policy to; an empty value clears it")
@@ -813,6 +812,7 @@ func runPoliciesUpdate(args []string, stdout, stderr io.Writer, client *http.Cli
 	}
 	set := make(map[string]bool)
 	lc.fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	warnPriorityIgnored(set, stderr)
 	request := updatePolicyRequest{}
 	if set["name"] {
 		request.Name = name
@@ -826,9 +826,6 @@ func runPoliciesUpdate(args []string, stdout, stderr io.Writer, client *http.Cli
 	if set["effect"] {
 		request.Effect = effect
 		request.Action = effect
-	}
-	if set["priority"] {
-		request.Priority = priority
 	}
 	if set["enabled"] {
 		request.Enabled = enabled
@@ -846,8 +843,8 @@ func runPoliciesUpdate(args []string, stdout, stderr io.Writer, client *http.Cli
 			request.AgentID, _ = json.Marshal(*agentID)
 		}
 	}
-	if request.Name == nil && request.Description == nil && request.SrcPattern == nil && request.DstPattern == nil && request.Effect == nil && request.Priority == nil && request.Enabled == nil && request.AgentID == nil {
-		fmt.Fprintln(stderr, "policies update requires at least one field to update: --name, --src-pattern, --dst-pattern, --effect, --priority, --enabled, --description, or --agent-id")
+	if request.Name == nil && request.Description == nil && request.SrcPattern == nil && request.DstPattern == nil && request.Effect == nil && request.Enabled == nil && request.AgentID == nil {
+		fmt.Fprintln(stderr, "policies update requires at least one field to update: --name, --src-pattern, --dst-pattern, --effect, --enabled, --description, or --agent-id")
 		return 2
 	}
 	session, ok := openPolicySession("update", ws, stderr, client, store)
@@ -874,9 +871,6 @@ func runPoliciesUpdate(args []string, stdout, stderr io.Writer, client *http.Cli
 	}
 	if set["effect"] {
 		maskFields = append(maskFields, "effect")
-	}
-	if set["priority"] {
-		maskFields = append(maskFields, "priority")
 	}
 	if set["enabled"] {
 		maskFields = append(maskFields, "enabled")
@@ -1082,4 +1076,12 @@ func importPolicies(h harness.Harness, fileOverride, srcPattern string, stderr i
 		policies = append(policies, importedPolicy{Name: rule.Name, SrcPattern: srcPattern, DstPattern: rule.Dst, Effect: rule.Effect})
 	}
 	return policies, nil
+}
+
+// warnPriorityIgnored tells a caller that still passes --priority that the
+// catalog no longer uses it (ADR-038 D-1: deny wins, no priority).
+func warnPriorityIgnored(set map[string]bool, stderr io.Writer) {
+	if set["priority"] {
+		fmt.Fprintln(stderr, "warning: --priority is deprecated and ignored: a matching deny always wins")
+	}
 }
