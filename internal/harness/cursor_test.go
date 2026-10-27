@@ -11,6 +11,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/HaikeiLabs/kei-connector-contracts/harnessmatch"
+	policyapi "github.com/HaikeiLabs/kei-connector-contracts/policy"
 )
 
 // cursorPolicy pins the closed-policy set the runtime's cursor adapter maps
@@ -388,5 +391,27 @@ func TestCursorResyncIdempotent(t *testing.T) {
 		if !bytes.Equal(after[path], before) {
 			t.Errorf("re-sync rewrote %s", path)
 		}
+	}
+}
+
+// TestContractsRendererAcceptsCursorKind pins that the shared contracts
+// renderer gates kind cursor in (harnessmatch.Kinds, kei-connector-contracts
+// v0.13.0): cursor rules render as entries for the real kind, so
+// nativePermissionEntries passes s.kind through verbatim instead of masking
+// it as custom.
+func TestContractsRendererAcceptsCursorKind(t *testing.T) {
+	if !harnessmatch.ValidKind("cursor") {
+		t.Fatal("harnessmatch.Kinds does not list cursor; kei-connector-contracts needs the v0.13.0 bump")
+	}
+	rules := []policyapi.Rule{{
+		ID:        "allow-git",
+		Principal: "*",
+		Target:    "shell:git",
+		Effect:    policyapi.Effect("permit"),
+		Enabled:   true,
+	}}
+	res := policyapi.Render(rules, "", "", nil, "cursor")
+	if len(res.Entries) != 1 {
+		t.Fatalf("Render(cursor) entries = %d, want 1 (diagnostics: %v)", len(res.Entries), res.Diagnostics)
 	}
 }

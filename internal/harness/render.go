@@ -202,17 +202,7 @@ func nativePermissionEntries(s nativeSyntax, harnessID string, harness *policybu
 	if subject != nil {
 		user, email, groups = subject.UserID, subject.Email, subject.Groups
 	}
-	// The contracts' renderer gates entries on its own known-kind set
-	// (harnessmatch.Kinds). Kei-cli renders only kinds its own registry
-	// defines, so for a kind the contracts do not list yet — cursor until
-	// harnessmatch.Kinds includes it (HAI-882) — pass a kind the renderer
-	// accepts: harnessKind is used solely as that validity gate. Drop this
-	// once contracts ships cursor.
-	renderKind := kind
-	if !harnessmatch.ValidKind(renderKind) {
-		renderKind = "custom"
-	}
-	res := policyapi.Render(rules, user, email, groups, renderKind)
+	res := policyapi.Render(rules, user, email, groups, kind)
 
 	for _, e := range res.Entries {
 		p, ok := byID[e.RuleID]
