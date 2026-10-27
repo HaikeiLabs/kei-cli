@@ -288,7 +288,8 @@ func TestPoliciesCreateRequiresFields(t *testing.T) {
 // (kei-policy-catalog internal/policies/aip.go, policyBody, as of
 // HaikeiLabs/kei-policy-catalog#260). The catalog decodes it with
 // DisallowUnknownFields, so a field the CLI sends that is not here is a 400
-// "invalid request body": that was HAI-513, when agent_id was missing.
+// "invalid request body". agent_id is deliberately absent: the catalog rejects
+// it (HAI-673), so a CLI that sent it would fail.
 // selector_v2 and update_mask are accepted by the catalog but the CLI does
 // not send them.
 type catalogPolicyBody struct {
@@ -302,7 +303,6 @@ type catalogPolicyBody struct {
 	Enabled     *bool           `json:"enabled"`
 	SelectorV2  json.RawMessage `json:"selector_v2"`
 	UpdateMask  json.RawMessage `json:"update_mask"`
-	AgentID     *string         `json:"agent_id"`
 }
 
 func decodeCatalogPolicyBody(t *testing.T, raw string) catalogPolicyBody {
@@ -322,85 +322,72 @@ func policyCreatedResponse(w http.ResponseWriter, _ consoleRequest) {
 }
 
 // Every create and update flag together must produce a body the catalog's
-// schema accepts, with agent_id as a top-level UUID string.
+// schema accepts.
 func TestPoliciesRequestBodiesMatchCatalogSchema(t *testing.T) {
 	fake, server, store := newFakeConsole(t, policyCreatedResponse)
 	code, _, stderr := runPolicies(t, server, store, "", "create", "--workspace", "Main",
 		"--name", "x", "--src-pattern", "harness:claude", "--dst-pattern", "shell:git", "--effect", "deny",
-		"--description", "d", "--agent-id", testAgentID)
+		"--description", "d")
 	if code != 0 {
 		t.Fatalf("create exit = %d stderr=%s", code, stderr)
 	}
-	created := decodeCatalogPolicyBody(t, fake.only(t).Raw)
-	if created.AgentID == nil || *created.AgentID != testAgentID {
-		t.Fatalf("create agent_id = %v, want %s", created.AgentID, testAgentID)
-	}
+	decodeCatalogPolicyBody(t, fake.only(t).Raw)
 
 	fake, server, store = newFakeConsole(t, policyCreatedResponse)
 	code, _, stderr = runPolicies(t, server, store, "", "update", testPolicyID, "--workspace", "Main",
 		"--name", "y", "--src-pattern", "harness:codex", "--dst-pattern", "shell:rm", "--effect", "permit",
-		"--enabled=false", "--description", "e", "--agent-id", testAgentID)
+		"--enabled=false", "--description", "e")
 	if code != 0 {
 		t.Fatalf("update exit = %d stderr=%s", code, stderr)
 	}
 	req := fake.only(t)
-	updated := decodeCatalogPolicyBody(t, req.Raw)
-	if updated.AgentID == nil || *updated.AgentID != testAgentID {
-		t.Fatalf("update agent_id = %v, want %s", updated.AgentID, testAgentID)
-	}
+	decodeCatalogPolicyBody(t, req.Raw)
 	q, _ := url.ParseQuery(req.Query)
-	if q.Get("update_mask") != "name,description,src_pattern,dst_pattern,effect,enabled,agent_id" {
+	if q.Get("update_mask") != "name,description,src_pattern,dst_pattern,effect,enabled" {
 		t.Fatalf("update_mask = %q", q.Get("update_mask"))
 	}
 }
 
-func TestPoliciesCreateWithoutAgentIDOmitsIt(t *testing.T) {
+// --agent-id still parses so existing scripts keep working, but it is never
+// sent: the catalog rejects agent_id (HAI-673) and agents get access through
+// group membership.
+func TestPoliciesAgentIDIsDeprecatedAndNotSent(t *testing.T) {
+	const warning = "--agent-id is deprecated and ignored"
 	fake, server, store := newFakeConsole(t, policyCreatedResponse)
 	code, _, stderr := runPolicies(t, server, store, "", "create", "--workspace", "Main",
-		"--name", "x", "--src-pattern", "harness:claude", "--dst-pattern", "shell:git", "--effect", "deny")
-	if code != 0 {
-		t.Fatalf("exit = %d stderr=%s", code, stderr)
+		"--name", "x", "--src-pattern", "harness:claude", "--dst-pattern", "shell:git", "--effect", "deny", "--agent-id", testAgentID)
+	if code != 0 || !strings.Contains(stderr, warning) {
+		t.Fatalf("create exit = %d stderr=%q, want 0 with %q", code, stderr, warning)
 	}
 	if _, present := fake.only(t).Body["agent_id"]; present {
-		t.Fatal("body contains agent_id, but --agent-id was not set")
+		t.Fatalf("create body sends agent_id: %s", fake.only(t).Raw)
 	}
-}
 
-func TestPoliciesUpdateClearsAgentID(t *testing.T) {
-	fake, server, store := newFakeConsole(t, policyCreatedResponse)
-	code, _, stderr := runPolicies(t, server, store, "", "update", testPolicyID, "--workspace", "Main", "--agent-id", "")
-	if code != 0 {
-		t.Fatalf("exit = %d stderr=%s", code, stderr)
+	fake, server, store = newFakeConsole(t, policyCreatedResponse)
+	code, _, stderr = runPolicies(t, server, store, "", "update", testPolicyID, "--workspace", "Main", "--name", "y", "--agent-id", testAgentID)
+	if code != 0 || !strings.Contains(stderr, warning) {
+		t.Fatalf("update exit = %d stderr=%q, want 0 with %q", code, stderr, warning)
 	}
 	req := fake.only(t)
-	if value, present := req.Body["agent_id"]; !present || value != nil {
-		t.Fatalf("body = %s, want agent_id: null", req.Raw)
+	if _, present := req.Body["agent_id"]; present {
+		t.Fatalf("update body sends agent_id: %s", req.Raw)
 	}
-	if q, _ := url.ParseQuery(req.Query); q.Get("update_mask") != "agent_id" {
-		t.Fatalf("update_mask = %q, want agent_id", q.Get("update_mask"))
+	if q, _ := url.ParseQuery(req.Query); strings.Contains(q.Get("update_mask"), "agent_id") {
+		t.Fatalf("update_mask = %q names agent_id", q.Get("update_mask"))
+	}
+
+	// An update that only passes --agent-id (or clears it) has nothing to send.
+	for _, value := range []string{testAgentID, ""} {
+		fake, server, store = newFakeConsole(t, failOnRequest(t))
+		code, _, stderr = runPolicies(t, server, store, "", "update", testPolicyID, "--workspace", "Main", "--agent-id", value)
+		if code != 2 || !strings.Contains(stderr, "requires at least one field") {
+			t.Fatalf("update --agent-id %q exit = %d stderr=%q, want 2 requires at least one field", value, code, stderr)
+		}
+		if fake.count() != 0 {
+			t.Fatal("an update with only --agent-id reached the console")
+		}
 	}
 }
-
-func TestPoliciesAgentIDMustBeUUID(t *testing.T) {
-	fake, server, store := newFakeConsole(t, failOnRequest(t))
-	cases := map[string][]string{
-		"create": {"create", "--workspace", "Main", "--name", "x", "--src-pattern", "harness:claude", "--dst-pattern", "shell:git", "--effect", "deny", "--agent-id", "pedro"},
-		"update": {"update", testPolicyID, "--workspace", "Main", "--agent-id", "pedro"},
-	}
-	for name, args := range cases {
-		t.Run(name, func(t *testing.T) {
-			code, _, stderr := runPolicies(t, server, store, "", args...)
-			if code != 2 || !strings.Contains(stderr, "--agent-id must be a UUID") {
-				t.Fatalf("exit = %d stderr=%q", code, stderr)
-			}
-		})
-	}
-	if fake.count() != 0 {
-		t.Fatal("an invalid --agent-id reached the console")
-	}
-}
-
-// --- Update ---
 
 func TestPoliciesUpdate(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
