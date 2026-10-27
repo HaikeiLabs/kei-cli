@@ -72,10 +72,13 @@ func TestPolicyGet(t *testing.T) {
 	if req.Method != http.MethodGet || req.Path != "/api/v1/policies/"+testPolicyID || req.Query != "workspace_id="+testWorkspaceID {
 		t.Fatalf("request = %s %s?%s", req.Method, req.Path, req.Query)
 	}
-	for _, want := range []string{testPolicyID, "allow-git", "harness:claude", "shell:git", "permit", "100"} {
+	for _, want := range []string{testPolicyID, "allow-git", "harness:claude", "shell:git", "permit"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("get output missing %q:\n%s", want, stdout)
 		}
+	}
+	if strings.Contains(stdout, "Priority") {
+		t.Errorf("get output still prints a priority (ADR-038 D-1):\n%s", stdout)
 	}
 }
 
