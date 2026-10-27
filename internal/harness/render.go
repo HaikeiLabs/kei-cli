@@ -56,6 +56,16 @@ type nativeSyntax struct {
 	// and argvEntry renders the ones it accepts.
 	argv      func(dst string) ([]string, bool)
 	argvEntry func(argv []string) string
+	// toolEntry, when set, renders tool:<kind>.<name> destinations into a
+	// native token (Cursor: Read/Write/WebFetch); nil otherwise.
+	toolEntry func(name string) string
+	// mcpEntry, when set, renders mcp:<server>.<tool> destinations into a
+	// native token; nil otherwise.
+	mcpEntry func(server, tool string) string
+	// enforceAll reports every applicable policy whose dst compiles to no
+	// native entry as not enforceable (Cursor's permission model fails
+	// closed, HAI-882) instead of letting the harness ask about them.
+	enforceAll bool
 }
 
 func rawShellEntry(prefix string) string { return prefix }
@@ -208,6 +218,9 @@ func nativePermissionEntries(s nativeSyntax, harnessID string, harness *policybu
 		}
 		entry := nativeEntry(s, kind, dst, string(e.Effect))
 		if entry == "" {
+			if s.enforceAll {
+				out.Unenforceable = append(out.Unenforceable, policyDisplayName(p)+" ("+dst+")")
+			}
 			continue
 		}
 		if string(e.Effect) == "permit" && strings.HasPrefix(dst, "shell:") && len(strings.Fields(strings.TrimPrefix(dst, "shell:"))) == 0 {
@@ -276,6 +289,14 @@ func nativeEntry(s nativeSyntax, kind, dst, effect string) string {
 				return s.shellEntry("*")
 			}
 			return ""
+		}
+		if s.toolEntry != nil {
+			return s.toolEntry(name)
+		}
+	case strings.HasPrefix(dst, "mcp:"):
+		if s.mcpEntry != nil {
+			server, tool, _ := strings.Cut(strings.TrimPrefix(dst, "mcp:"), ".")
+			return s.mcpEntry(server, tool)
 		}
 	case strings.HasPrefix(dst, "path:"):
 		if !s.paths {

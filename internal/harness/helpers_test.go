@@ -15,7 +15,7 @@ type renderedHarness struct {
 	OtherHarness  otherHarnessScope
 }
 
-var syntaxes = map[string]nativeSyntax{"claude_code": claudeSyntax, "codex": codexSyntax, "opencode": openCodeSyntax}
+var syntaxes = map[string]nativeSyntax{"claude_code": claudeSyntax, "codex": codexSyntax, "opencode": openCodeSyntax, "cursor": cursorSyntax}
 
 // syntaxFor returns the native syntax of kind; a kind with no native store
 // renders shell prefixes as is and has no skill or path form.

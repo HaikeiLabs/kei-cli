@@ -1095,7 +1095,7 @@ func createConnectorGroupAllows(connectorSession *connectorSession, groupNames [
 				selector.Source = source
 				selector.Capability = capability
 			}
-			request := createPolicyRequest{Name: policyName, SrcPattern: "group:" + groupName, DstPattern: dstPattern, Effect: "permit", Action: "permit", Priority: 100, Enabled: true, SelectorV2: selector}
+			request := createPolicyRequest{Name: policyName, SrcPattern: "group:" + groupName, DstPattern: dstPattern, Effect: "permit", Action: "permit", Enabled: true, SelectorV2: selector}
 			if _, err := policies.do(http.MethodPost, "", request, nil); err != nil {
 				return nil, err
 			}

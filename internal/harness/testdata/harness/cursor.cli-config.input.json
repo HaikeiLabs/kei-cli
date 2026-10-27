@@ -1,0 +1,7 @@
+{
+  "model": "composer-1",
+  "permissions": {
+    "allow": ["Read(docs/**)"],
+    "deny": ["Shell(rm:*)"]
+  }
+}

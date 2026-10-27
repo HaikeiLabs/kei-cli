@@ -46,6 +46,9 @@ func TestPoliciesList(t *testing.T) {
 			t.Errorf("list output missing %q:\n%s", want, stdout)
 		}
 	}
+	if strings.Contains(stdout, "PRIORITY") {
+		t.Errorf("list output still has a PRIORITY column (ADR-038 D-1):\n%s", stdout)
+	}
 }
 
 func TestPoliciesListJSON(t *testing.T) {
@@ -144,10 +147,13 @@ func TestPoliciesGet(t *testing.T) {
 	if req.Method != http.MethodGet || req.Path != "/api/v1/policies/"+testPolicyID || req.Query != "workspace_id="+testWorkspaceID {
 		t.Fatalf("request = %s %s?%s", req.Method, req.Path, req.Query)
 	}
-	for _, want := range []string{testPolicyID, "allow-git", "harness:claude", "shell:git", "permit", "100"} {
+	for _, want := range []string{testPolicyID, "allow-git", "harness:claude", "shell:git", "permit"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("get output missing %q:\n%s", want, stdout)
 		}
+	}
+	if strings.Contains(stdout, "Priority") {
+		t.Errorf("get output still prints a priority (ADR-038 D-1):\n%s", stdout)
 	}
 }
 
@@ -219,7 +225,7 @@ func TestPoliciesCreate(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","org_id":"org-1","workspace_id":"` + testWorkspaceID + `","name":"allow-git","src_pattern":"harness:claude","dst_pattern":"shell:git","effect":"permit","priority":100,"enabled":true,"approval_required":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}`))
 	})
 	code, stdout, stderr := runPolicies(t, server, store, "", "create", "--workspace", "Main",
-		"--name", "allow-git", "--src-pattern", "harness:claude", "--dst-pattern", "shell:git", "--effect", "permit", "--priority", "100")
+		"--name", "allow-git", "--src-pattern", "harness:claude", "--dst-pattern", "shell:git", "--effect", "permit")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
@@ -230,11 +236,28 @@ func TestPoliciesCreate(t *testing.T) {
 	if req.Body["name"] != "allow-git" || req.Body["src_pattern"] != "harness:claude" || req.Body["dst_pattern"] != "shell:git" || req.Body["effect"] != "permit" || req.Body["action"] != "permit" {
 		t.Fatalf("body = %v", req.Body)
 	}
-	if req.Body["priority"] != float64(100) {
-		t.Fatalf("priority = %v, want 100", req.Body["priority"])
+	if _, present := req.Body["priority"]; present {
+		t.Fatalf("body sends priority, which the catalog ignores (ADR-038 D-1): %v", req.Body)
 	}
 	if !strings.Contains(stdout, testPolicyID) {
 		t.Fatalf("create output missing policy id: %q", stdout)
+	}
+}
+
+// --priority is deprecated and ignored (ADR-038 D-1: deny wins, no priority):
+// it still parses, warns on stderr and is not sent.
+func TestPoliciesCreateIgnoresDeprecatedPriorityFlag(t *testing.T) {
+	fake, server, store := newFakeConsole(t, policyCreatedResponse)
+	code, _, stderr := runPolicies(t, server, store, "", "create", "--workspace", "Main",
+		"--name", "x", "--src-pattern", "harness:claude", "--dst-pattern", "shell:git", "--effect", "deny", "--priority", "100")
+	if code != 0 {
+		t.Fatalf("exit = %d stderr=%s", code, stderr)
+	}
+	if !strings.Contains(stderr, "--priority is deprecated and ignored") {
+		t.Fatalf("stderr = %q, want the --priority deprecation warning", stderr)
+	}
+	if _, present := fake.only(t).Body["priority"]; present {
+		t.Fatal("body sends priority")
 	}
 }
 
@@ -304,7 +327,7 @@ func TestPoliciesRequestBodiesMatchCatalogSchema(t *testing.T) {
 	fake, server, store := newFakeConsole(t, policyCreatedResponse)
 	code, _, stderr := runPolicies(t, server, store, "", "create", "--workspace", "Main",
 		"--name", "x", "--src-pattern", "harness:claude", "--dst-pattern", "shell:git", "--effect", "deny",
-		"--priority", "10", "--description", "d", "--agent-id", testAgentID)
+		"--description", "d", "--agent-id", testAgentID)
 	if code != 0 {
 		t.Fatalf("create exit = %d stderr=%s", code, stderr)
 	}
@@ -316,7 +339,7 @@ func TestPoliciesRequestBodiesMatchCatalogSchema(t *testing.T) {
 	fake, server, store = newFakeConsole(t, policyCreatedResponse)
 	code, _, stderr = runPolicies(t, server, store, "", "update", testPolicyID, "--workspace", "Main",
 		"--name", "y", "--src-pattern", "harness:codex", "--dst-pattern", "shell:rm", "--effect", "permit",
-		"--priority", "5", "--enabled=false", "--description", "e", "--agent-id", testAgentID)
+		"--enabled=false", "--description", "e", "--agent-id", testAgentID)
 	if code != 0 {
 		t.Fatalf("update exit = %d stderr=%s", code, stderr)
 	}
@@ -326,7 +349,7 @@ func TestPoliciesRequestBodiesMatchCatalogSchema(t *testing.T) {
 		t.Fatalf("update agent_id = %v, want %s", updated.AgentID, testAgentID)
 	}
 	q, _ := url.ParseQuery(req.Query)
-	if q.Get("update_mask") != "name,description,src_pattern,dst_pattern,effect,priority,enabled,agent_id" {
+	if q.Get("update_mask") != "name,description,src_pattern,dst_pattern,effect,enabled,agent_id" {
 		t.Fatalf("update_mask = %q", q.Get("update_mask"))
 	}
 }
@@ -416,18 +439,31 @@ func TestPoliciesUpdateSendsOnlySetFlags(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
 		_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","name":"x","effect":"permit","priority":50,"enabled":true,"approval_required":false}`))
 	})
-	_, _, stderr := runPolicies(t, server, store, "", "update", testPolicyID, "--workspace", "Main", "--priority", "50")
+	_, _, stderr := runPolicies(t, server, store, "", "update", testPolicyID, "--workspace", "Main", "--enabled=false", "--priority", "50")
 	if !strings.Contains(stderr, "Deprecated: use `kei policy`") {
 		t.Fatalf("stderr = %q, want the deprecation notice", stderr)
 	}
-	req := fake.only(t)
-	if req.Body["priority"] != float64(50) {
-		t.Fatalf("priority = %v, want 50", req.Body["priority"])
+	if !strings.Contains(stderr, "--priority is deprecated and ignored") {
+		t.Fatalf("stderr = %q, want the --priority deprecation warning", stderr)
 	}
-	for _, field := range []string{"name", "src_pattern", "dst_pattern", "effect", "action", "enabled", "description"} {
+	req := fake.only(t)
+	for _, field := range []string{"priority", "name", "src_pattern", "dst_pattern", "effect", "action", "description"} {
 		if _, present := req.Body[field]; present {
-			t.Fatalf("body contains %q, but only --priority was set", field)
+			t.Fatalf("body contains %q, but only --enabled was set", field)
 		}
+	}
+	q, _ := url.ParseQuery(req.Query)
+	if q.Get("update_mask") != "enabled" {
+		t.Fatalf("update_mask = %q, want enabled", q.Get("update_mask"))
+	}
+}
+
+// --priority alone no longer updates anything.
+func TestPoliciesUpdatePriorityAloneIsNotAnUpdate(t *testing.T) {
+	fake, server, store := newFakeConsole(t, failOnRequest(t))
+	code, _, stderr := runPolicies(t, server, store, "", "update", testPolicyID, "--workspace", "Main", "--priority", "50")
+	if code != 2 || fake.count() != 0 || !strings.Contains(stderr, "requires at least one field") {
+		t.Fatalf("exit = %d requests=%d stderr=%q", code, fake.count(), stderr)
 	}
 }
 
