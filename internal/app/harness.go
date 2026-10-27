@@ -95,7 +95,7 @@ func harnessRequest(ctx context.Context, client *http.Client, baseURL, token, me
 }
 
 func runHarnessAdd(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore, registry *harness.Registry) int {
-	lc := newCommandFlags("harness", "add", "Register a custom (SDK) harness on a runtime installation. Desktop harnesses (Claude Code, Codex, OpenCode) are sessions of the installation and are configured by 'kei harness sync'; they do not need 'kei harness add'.", stdout, stderr)
+	lc := newCommandFlags("harness", "add", "Register a custom (SDK) harness on a runtime installation. Desktop harnesses (Claude Code, Codex, OpenCode, Cursor) are sessions of the installation and are configured by 'kei harness sync'; they do not need 'kei harness add'.", stdout, stderr)
 	installation := lc.fs.String("installation", "", "runtime installation ID")
 	kind := lc.fs.String("kind", "", harness.JoinOr(registry.Kinds()))
 	agentID := lc.fs.String("agent", "", "assigned agent ID")
@@ -956,6 +956,8 @@ func harnessDisplayName(kind string) string {
 		return "Codex"
 	case "opencode":
 		return "OpenCode"
+	case "cursor":
+		return "Cursor"
 	default:
 		return kind
 	}
