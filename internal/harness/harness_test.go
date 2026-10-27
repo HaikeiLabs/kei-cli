@@ -18,10 +18,10 @@ func hermeticEnv(home string, vars map[string]string) Env {
 }
 
 func TestDefaultRegistryOrderAndLookup(t *testing.T) {
-	if got := strings.Join(Default.Kinds(), ","); got != "claude_code,codex,opencode,custom,openwebui" {
+	if got := strings.Join(Default.Kinds(), ","); got != "claude_code,codex,opencode,cursor,custom,openwebui" {
 		t.Fatalf("kinds = %s", got)
 	}
-	if got := JoinOr(Default.Kinds()); got != "claude_code, codex, opencode, custom, or openwebui" {
+	if got := JoinOr(Default.Kinds()); got != "claude_code, codex, opencode, cursor, custom, or openwebui" {
 		t.Fatalf("JoinOr(kinds) = %q", got)
 	}
 	if got := strings.Join(Default.ImportNames(), "|"); got != "claude|codex|opencode" {

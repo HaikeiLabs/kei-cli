@@ -72,13 +72,13 @@ func runConnectCommand(args []string, stdout, stderr io.Writer, stdin io.Reader,
 	}
 	positional, err := parsePositionals(lc.fs, args, 1)
 	if err != nil {
-		fmt.Fprintln(stderr, "connect requires exactly one harness: claude-code|codex|opencode|pi")
+		fmt.Fprintln(stderr, "connect requires exactly one harness: claude-code|codex|opencode|cursor|pi")
 		return 2
 	}
 	harnessName := positional[0]
 	kind, addHarness, ok := connectHarnessKind(harnessName)
 	if !ok {
-		fmt.Fprintf(stderr, "connect: unknown harness %q; expected claude-code|codex|opencode|pi\n", harnessName)
+		fmt.Fprintf(stderr, "connect: unknown harness %q; expected claude-code|codex|opencode|cursor|pi\n", harnessName)
 		return 2
 	}
 
@@ -192,8 +192,8 @@ func runConnectCommand(args []string, stdout, stderr io.Writer, stdin io.Reader,
 
 // connectHarnessKind maps a user-facing harness name to the harness kind the
 // control plane knows and whether it needs `kei harness add`. Desktop harnesses
-// (Claude Code, Codex, OpenCode) are sessions of the installation and are
-// configured by sync alone; pi is a custom (SDK) harness and is registered.
+// (Claude Code, Codex, OpenCode, Cursor) are sessions of the installation and
+// are configured by sync alone; pi is a custom (SDK) harness and is registered.
 func connectHarnessKind(harnessName string) (kind string, addHarness bool, ok bool) {
 	switch harnessName {
 	case "claude-code":
@@ -202,6 +202,8 @@ func connectHarnessKind(harnessName string) (kind string, addHarness bool, ok bo
 		return "codex", false, true
 	case "opencode":
 		return "opencode", false, true
+	case "cursor":
+		return "cursor", false, true
 	case "pi":
 		return "custom", true, true
 	}
