@@ -308,6 +308,44 @@ func TestFetchHarnessBundleUsesV2HarnessPolicies(t *testing.T) {
 	}
 }
 
+// TestFetchHarnessBundleV2PolicySetJSONIsStable locks the exact bytes of the
+// policy set that fetchHarnessBundle builds from v2 harness_policies: key set,
+// key order, the always-true enabled flag, the scope object, and no priority.
+func TestFetchHarnessBundleV2PolicySetJSONIsStable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/runtime/whoami" {
+			_, _ = w.Write([]byte(`{"id":"runtime-id","org_id":"org-id","platform":"cli"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"schema":"kei.policy-bundle/v2","bundle_id":"b","bundle_version":1,"policy_revision":1,"audience":{"installation_id":"runtime-id","org_id":"org-id","workspace_id":"workspace-id"},"not_after":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","harness_match_semantics":"kei.harness-match/v1","harnesses":[],"policy_set":{"harness_policies":[{"policy_id":"p1","name":"Allow Git","priority":100,"src_pattern":"user:123","dst_pattern":"shell:git","action":"permit"},{"policy_id":"p2","name":"Deny rm","src_pattern":"*","dst_pattern":"shell:rm","action":"deny","scope":{"agent_id":"agent-1"}}]}}`))
+	}))
+	defer server.Close()
+	bundle, _, err := fetchHarnessBundle(t.Context(), runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: "runtime-secret"}, server.Client())
+	if err != nil {
+		t.Fatalf("fetchHarnessBundle: %v", err)
+	}
+	const want = `{"policies":[` +
+		`{"dst_pattern":"shell:git","effect":"permit","enabled":true,"id":"p1","name":"Allow Git","scope":{"agent_id":null},"src_pattern":"user:123"},` +
+		`{"dst_pattern":"shell:rm","effect":"deny","enabled":true,"id":"p2","name":"Deny rm","scope":{"agent_id":"agent-1"},"src_pattern":"*"}]}`
+	if string(bundle.PolicySet) != want {
+		t.Fatalf("policy set JSON changed:\n got %s\nwant %s", bundle.PolicySet, want)
+	}
+}
+
+// TestHarnessSetPolicyMarshalsLegacyKeys pins the named wire struct to the
+// keys the former map[string]any carried.
+func TestHarnessSetPolicyMarshalsLegacyKeys(t *testing.T) {
+	agent := "agent-1"
+	got, err := json.Marshal(harnessSetPolicy{ID: "p", Name: "n", SrcPattern: "s", DstPattern: "d", Effect: "deny", Enabled: true, Scope: harnessPolicyScope{AgentID: &agent}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"dst_pattern":"d","effect":"deny","enabled":true,"id":"p","name":"n","scope":{"agent_id":"agent-1"},"src_pattern":"s"}`
+	if string(got) != want {
+		t.Fatalf("got %s want %s", got, want)
+	}
+}
+
 func TestFetchHarnessBundleCarriesV2Subject(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/runtime/whoami" {

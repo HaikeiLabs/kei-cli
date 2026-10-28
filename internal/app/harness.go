@@ -689,6 +689,24 @@ func checkHarnessDrift(ctx context.Context, config runtimeConfig, kindFilter str
 	return 0
 }
 
+// harnessSetPolicy is one policy in the policy set handed to the harness
+// renderer. Fields are declared in alphabetical order of their JSON keys so the
+// output matches the map it replaced byte for byte.
+type harnessSetPolicy struct {
+	DstPattern string             `json:"dst_pattern"`
+	Effect     string             `json:"effect"`
+	Enabled    bool               `json:"enabled"`
+	ID         string             `json:"id"`
+	Name       string             `json:"name"`
+	Scope      harnessPolicyScope `json:"scope"`
+	SrcPattern string             `json:"src_pattern"`
+}
+
+// harnessPolicyScope is the scope object of a harnessSetPolicy.
+type harnessPolicyScope struct {
+	AgentID *string `json:"agent_id"`
+}
+
 // fetchHarnessBundle verifies the runtime token and fetches the current
 // policy bundle, checking that it is addressed to this installation.
 func fetchHarnessBundle(ctx context.Context, config runtimeConfig, client *http.Client) (harness.Bundle, []byte, error) {
@@ -763,9 +781,17 @@ func fetchHarnessBundle(ctx context.Context, config runtimeConfig, client *http.
 		if err := json.Unmarshal(payload, &v2); err != nil {
 			return harness.Bundle{}, nil, errors.New("invalid v2 harness policies")
 		}
-		policies := make([]map[string]any, 0, len(v2.PolicySet.HarnessPolicies))
+		policies := make([]harnessSetPolicy, 0, len(v2.PolicySet.HarnessPolicies))
 		for _, p := range v2.PolicySet.HarnessPolicies {
-			policies = append(policies, map[string]any{"id": p.PolicyID, "name": p.Name, "src_pattern": p.SrcPattern, "dst_pattern": p.DstPattern, "effect": p.Action, "enabled": true, "scope": p.Scope})
+			policies = append(policies, harnessSetPolicy{
+				DstPattern: p.DstPattern,
+				Effect:     p.Action,
+				Enabled:    true,
+				ID:         p.PolicyID,
+				Name:       p.Name,
+				Scope:      harnessPolicyScope{AgentID: p.Scope.AgentID},
+				SrcPattern: p.SrcPattern,
+			})
 		}
 		set := map[string]any{"policies": policies}
 		if len(v2.PolicySet.Connectors) > 0 {
