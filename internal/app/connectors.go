@@ -734,11 +734,13 @@ func runConnectorsTest(args []string, stdout, stderr io.Writer, client *http.Cli
 		fmt.Fprintln(stdout, "Decision: deny\nReason: organization is unavailable in the login token")
 		return 0
 	}
-	testRequest := map[string]string{"as": principal, "target": "connector:" + target.Name}
+	testRequest := map[string]string{"as": principal, "target": "connector:" + resolved}
 	api := &apiSession{client: session.client, baseURL: session.baseURL, token: session.token, orgID: orgID}
 	var result struct {
-		Decision  string `json:"decision"`
-		DecidedBy string `json:"decided_by"`
+		Decision   string  `json:"decision"`
+		DecidedBy  string  `json:"decided_by"`
+		ReasonCode *string `json:"reason_code"`
+		Hint       *string `json:"hint"`
 	}
 	_, body, err := api.do(http.MethodPost, "/api/v1/organizations/"+url.PathEscape(orgID)+"/workspaces/"+url.PathEscape(session.workspaceID)+"/policies:test", nil, testRequest)
 	if err != nil {
@@ -750,7 +752,12 @@ func runConnectorsTest(args []string, stdout, stderr io.Writer, client *http.Cli
 		return 0
 	}
 	reason := "no matching policy"
-	if result.DecidedBy != "" {
+	switch {
+	case result.ReasonCode != nil && *result.ReasonCode != "":
+		reason = *result.ReasonCode
+	case result.Hint != nil && *result.Hint != "":
+		reason = *result.Hint
+	case result.DecidedBy != "":
 		reason = "decided by policy " + result.DecidedBy
 	}
 	fmt.Fprintf(stdout, "Capability: %s\nDecision: %s\nReason: %s\n", target.Capabilities[0].Name, result.Decision, reason)

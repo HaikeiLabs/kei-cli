@@ -1469,7 +1469,48 @@ func TestConnectorsTestUsesPoliciesTestAndPrintsDecision(t *testing.T) {
 			break
 		}
 	}
-	if req == nil || req.Method != http.MethodPost || req.Body["as"] != "user:"+userID || req.Body["target"] != "connector:team-mail" {
+	if req == nil || req.Method != http.MethodPost || req.Body["as"] != "user:"+userID || req.Body["target"] != "connector:"+testConnectorID {
+		t.Fatalf("policies:test request = %#v", req)
+	}
+}
+
+func TestConnectorsTestPrintsServerReasonOnDeny(t *testing.T) {
+	const userID = "bob"
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		switch {
+		case r.Method == http.MethodGet && r.Path == "/api/v1/data-connectors":
+			_, _ = w.Write([]byte(`[{"id":"` + testConnectorID + `","name":"linear-bugs","capabilities":[{"name":"issues.list"}]}]`))
+		case r.Method == http.MethodGet && r.Path == "/api/v1/data-connectors/"+testConnectorID:
+			_, _ = w.Write([]byte(`{"id":"` + testConnectorID + `","name":"linear-bugs","capabilities":[{"name":"issues.list"}]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.Path, "/policies:test"):
+			_, _ = w.Write([]byte(`{"decision":"deny","reason_code":"no_match","outranked":[]}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.Path)
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	store.token = testUserToken(userID)
+	code, stdout, stderr := runConnectors(t, server, store, "", "test", "linear-bugs", "--workspace", "Main")
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, "Decision: deny") {
+		t.Fatalf("test output = %q", stdout)
+	}
+	if !strings.Contains(stdout, "Reason: no_match") {
+		t.Fatalf("test output = %q, want the server reason code", stdout)
+	}
+	if strings.Contains(stdout, "no matching policy") {
+		t.Fatalf("test output = %q, must not print the fixed fallback", stdout)
+	}
+	var req *consoleRequest
+	for i := range fake.requests {
+		if strings.HasSuffix(fake.requests[i].Path, "/policies:test") {
+			req = &fake.requests[i]
+			break
+		}
+	}
+	if req == nil || req.Body["target"] != "connector:"+testConnectorID {
 		t.Fatalf("policies:test request = %#v", req)
 	}
 }
