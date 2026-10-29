@@ -44,9 +44,6 @@ type createPolicyRequest struct {
 	Action      string                  `json:"action,omitempty"`
 	Enabled     bool                    `json:"enabled"`
 	SelectorV2  *createPolicySelectorV2 `json:"selector_v2,omitempty"`
-	// AgentID scopes the policy to one agent; omitted, it applies to every
-	// agent in the workspace.
-	AgentID *string `json:"agent_id,omitempty"`
 }
 
 type createPolicySelectorV2 struct {
@@ -63,9 +60,6 @@ type updatePolicyRequest struct {
 	Effect      *string `json:"effect,omitempty"`
 	Action      *string `json:"action,omitempty"`
 	Enabled     *bool   `json:"enabled,omitempty"`
-	// AgentID is the JSON for agent_id: a quoted UUID, or null to clear the
-	// agent. Nil leaves it out of the body.
-	AgentID json.RawMessage `json:"agent_id,omitempty"`
 }
 
 type migrationReportResponse struct {
@@ -503,7 +497,7 @@ func runPoliciesCreate(args []string, stdout, stderr io.Writer, client *http.Cli
 	effect := lc.fs.String("effect", "", "effect: permit or deny")
 	lc.fs.Int("priority", 0, "deprecated and ignored: deny always wins")
 	description := lc.fs.String("description", "", "policy description")
-	agentID := lc.fs.String("agent-id", "", "agent ID to scope the policy to (default: every agent in the workspace)")
+	lc.fs.String("agent-id", "", "deprecated and ignored: add the agent to a group instead")
 	jsonOutput := jsonFlag(lc.fs)
 	rc, ok := parseLeaf(lc, args)
 	if !ok {
@@ -512,6 +506,7 @@ func runPoliciesCreate(args []string, stdout, stderr io.Writer, client *http.Cli
 	createSet := make(map[string]bool)
 	lc.fs.Visit(func(f *flag.Flag) { createSet[f.Name] = true })
 	warnPriorityIgnored(createSet, stderr)
+	warnAgentIDIgnored(createSet, stderr)
 	if lc.fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "policies create accepts no positional arguments")
 		return 2
@@ -528,14 +523,6 @@ func runPoliciesCreate(args []string, stdout, stderr io.Writer, client *http.Cli
 	if !ok {
 		return 2
 	}
-	var agent *string
-	if *agentID != "" {
-		if _, err := uuid.Parse(*agentID); err != nil {
-			fmt.Fprintln(stderr, "policies create: --agent-id must be a UUID")
-			return 2
-		}
-		agent = agentID
-	}
 	session, ok := openPolicySession("create", ws, stderr, client, store)
 	if !ok {
 		return 1
@@ -548,7 +535,6 @@ func runPoliciesCreate(args []string, stdout, stderr io.Writer, client *http.Cli
 		Effect:      *effect,
 		Action:      *effect,
 		Enabled:     true,
-		AgentID:     agent,
 	}
 	payload, err := session.do(http.MethodPost, "", request, nil)
 	if err != nil {
@@ -787,7 +773,7 @@ func runPoliciesUpdate(args []string, stdout, stderr io.Writer, client *http.Cli
 	lc.fs.Int("priority", 0, "deprecated and ignored: deny always wins")
 	enabled := lc.fs.Bool("enabled", false, "enabled")
 	description := lc.fs.String("description", "", "policy description")
-	agentID := lc.fs.String("agent-id", "", "agent ID to scope the policy to; an empty value clears it")
+	lc.fs.String("agent-id", "", "deprecated and ignored: add the agent to a group instead")
 	jsonOutput := jsonFlag(lc.fs)
 	// Intercept -h/--help before parsePositionals.
 	for _, a := range args {
@@ -813,6 +799,7 @@ func runPoliciesUpdate(args []string, stdout, stderr io.Writer, client *http.Cli
 	set := make(map[string]bool)
 	lc.fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 	warnPriorityIgnored(set, stderr)
+	warnAgentIDIgnored(set, stderr)
 	request := updatePolicyRequest{}
 	if set["name"] {
 		request.Name = name
@@ -833,18 +820,8 @@ func runPoliciesUpdate(args []string, stdout, stderr io.Writer, client *http.Cli
 	if set["description"] {
 		request.Description = description
 	}
-	if set["agent-id"] {
-		request.AgentID = json.RawMessage("null")
-		if *agentID != "" {
-			if _, err := uuid.Parse(*agentID); err != nil {
-				fmt.Fprintln(stderr, "policies update: --agent-id must be a UUID (or empty to clear it)")
-				return 2
-			}
-			request.AgentID, _ = json.Marshal(*agentID)
-		}
-	}
-	if request.Name == nil && request.Description == nil && request.SrcPattern == nil && request.DstPattern == nil && request.Effect == nil && request.Enabled == nil && request.AgentID == nil {
-		fmt.Fprintln(stderr, "policies update requires at least one field to update: --name, --src-pattern, --dst-pattern, --effect, --enabled, --description, or --agent-id")
+	if request.Name == nil && request.Description == nil && request.SrcPattern == nil && request.DstPattern == nil && request.Effect == nil && request.Enabled == nil {
+		fmt.Fprintln(stderr, "policies update requires at least one field to update: --name, --src-pattern, --dst-pattern, --effect, --enabled, or --description")
 		return 2
 	}
 	session, ok := openPolicySession("update", ws, stderr, client, store)
@@ -874,9 +851,6 @@ func runPoliciesUpdate(args []string, stdout, stderr io.Writer, client *http.Cli
 	}
 	if set["enabled"] {
 		maskFields = append(maskFields, "enabled")
-	}
-	if set["agent-id"] {
-		maskFields = append(maskFields, "agent_id")
 	}
 	extraQuery := url.Values{}
 	if len(maskFields) > 0 {
@@ -1083,5 +1057,14 @@ func importPolicies(h harness.Harness, fileOverride, srcPattern string, stderr i
 func warnPriorityIgnored(set map[string]bool, stderr io.Writer) {
 	if set["priority"] {
 		fmt.Fprintln(stderr, "warning: --priority is deprecated and ignored: a matching deny always wins")
+	}
+}
+
+// warnAgentIDIgnored tells a script that still passes --agent-id that it has
+// no effect: the catalog rejects agent_id (HAI-673), and an agent gets access
+// through group membership.
+func warnAgentIDIgnored(set map[string]bool, stderr io.Writer) {
+	if set["agent-id"] {
+		fmt.Fprintln(stderr, "warning: --agent-id is deprecated and ignored: add the agent to a group instead")
 	}
 }

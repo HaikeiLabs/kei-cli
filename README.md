@@ -445,10 +445,8 @@ kei policy test --workspace Main --as group:Engineering 'path:*.env'
 kei policy delete deny-env --workspace Main --yes        # ID or name
 kei policy migration-report --workspace Main               # read-only dry run (ADR-038)
 
-# Scope a policy to one agent, move it to another, or clear it.
-kei policies create --workspace Main --name deny-env-bot --src-pattern 'harness:claude' --dst-pattern 'path:*.env' --effect deny --agent-id AGENT_ID
-kei policies update deny-env-bot --workspace Main --agent-id OTHER_AGENT_ID
-kei policies update deny-env-bot --workspace Main --agent-id ''   # back to every agent
+# An agent gets access through group membership (kei policy create --group), not a per-policy scope.
+# --agent-id is deprecated and ignored.
 ```
 
 `kei policies` remains a deprecated alias for `kei policy` and still carries
