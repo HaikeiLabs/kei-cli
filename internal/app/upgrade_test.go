@@ -252,6 +252,240 @@ func TestUpgradeDoesNotRestartServiceWhenNotInstalled(t *testing.T) {
 	}
 }
 
+// TestUpgradeRestartsServeAgentWhenInstalled proves a real upgrade restarts
+// the kei-proxy serve agent (through the sysCommand seam) after the binaries
+// are replaced, the same way it restarts the runtime service.
+func TestUpgradeRestartsServeAgentWhenInstalled(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	agentPath := serveAgentDefinitionPathFor(runtime.GOOS)
+	if agentPath == "" {
+		t.Skip("unsupported platform")
+	}
+	if err := os.MkdirAll(filepath.Dir(agentPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(agentPath, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var calls [][]string
+	oldSysCommand := sysCommand
+	sysCommand = func(name string, args ...string) *exec.Cmd {
+		calls = append(calls, append([]string{name}, args...))
+		return exec.Command("true")
+	}
+	defer func() { sysCommand = oldSysCommand }()
+
+	current, _ := installedPair(t, "0.1.0", "0.2.4")
+	cliArchive, cliSum := releaseTestBundle(t, "kei", "new-binary", "kei-proxy", versionScriptBody("kei-proxy", "0.2.5"))
+	var requested []string
+	var stdout, stderr bytes.Buffer
+	code := runUpgradeCommand(nil, &stdout, &stderr, releaseTestClient(releaseTestHandler("0.2.0", cliArchive, cliSum, &requested)), func() (string, error) { return current, nil }, func(string) string { return "https://release.test" })
+	if code != 0 {
+		t.Fatalf("upgrade exit = %d, stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Restarted the kei-proxy serve agent") {
+		t.Fatalf("upgrade output = %q", stdout.String())
+	}
+	var want []string
+	switch runtime.GOOS {
+	case "darwin":
+		want = []string{"launchctl", "kickstart", "-k", "gui/" + execUserID() + "/com.haikeilabs.kei-proxy-serve"}
+	case "linux":
+		want = []string{"systemctl", "--user", "restart", "kei-proxy-serve"}
+	default:
+		t.Skip("unsupported platform")
+	}
+	// The runtime service is not installed in this home, so the serve agent
+	// restart is the only service-manager call the upgrade makes.
+	if len(calls) != 1 || strings.Join(calls[0], "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("called %v, want exactly %v", calls, want)
+	}
+}
+
+// TestUpgradeDoesNotRestartServeAgentWhenNotInstalled proves an upgrade that
+// replaces the binaries does not install or touch an uninstalled serve agent.
+func TestUpgradeDoesNotRestartServeAgentWhenNotInstalled(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	called := false
+	oldSysCommand := sysCommand
+	sysCommand = func(name string, args ...string) *exec.Cmd {
+		called = true
+		return exec.Command("true")
+	}
+	defer func() { sysCommand = oldSysCommand }()
+
+	current, _ := installedPair(t, "0.1.0", "0.2.4")
+	cliArchive, cliSum := releaseTestBundle(t, "kei", "new-binary", "kei-proxy", versionScriptBody("kei-proxy", "0.2.5"))
+	var requested []string
+	var stdout, stderr bytes.Buffer
+	code := runUpgradeCommand(nil, &stdout, &stderr, releaseTestClient(releaseTestHandler("0.2.0", cliArchive, cliSum, &requested)), func() (string, error) { return current, nil }, func(string) string { return "https://release.test" })
+	if code != 0 {
+		t.Fatalf("upgrade exit = %d, stderr=%s", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "Restarted the kei-proxy serve agent") {
+		t.Fatalf("upgrade output = %q", stdout.String())
+	}
+	if called {
+		t.Fatalf("sysCommand must not run when the serve agent is not installed")
+	}
+}
+
+// TestUpgradeServeAgentRestartFailureWarns proves a failed serve-agent restart
+// does not fail the upgrade; it prints a warning instead.
+func TestUpgradeServeAgentRestartFailureWarns(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	agentPath := serveAgentDefinitionPathFor(runtime.GOOS)
+	if agentPath == "" {
+		t.Skip("unsupported platform")
+	}
+	if err := os.MkdirAll(filepath.Dir(agentPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(agentPath, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldSysCommand := sysCommand
+	sysCommand = func(name string, args ...string) *exec.Cmd {
+		return exec.Command("false")
+	}
+	defer func() { sysCommand = oldSysCommand }()
+
+	current, _ := installedPair(t, "0.1.0", "0.2.4")
+	cliArchive, cliSum := releaseTestBundle(t, "kei", "new-binary", "kei-proxy", versionScriptBody("kei-proxy", "0.2.5"))
+	var requested []string
+	var stdout, stderr bytes.Buffer
+	code := runUpgradeCommand(nil, &stdout, &stderr, releaseTestClient(releaseTestHandler("0.2.0", cliArchive, cliSum, &requested)), func() (string, error) { return current, nil }, func(string) string { return "https://release.test" })
+	if code != 0 {
+		t.Fatalf("upgrade exit = %d, want 0 despite the restart failure", code)
+	}
+	if !strings.Contains(stderr.String(), "could not restart the kei-proxy serve agent") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+// TestUpgradePrintsPiUpdateHint proves kei upgrade prints the exact pi update
+// command for a configured Pi extension and never executes pi, git, or ssh.
+// Both services are installed so the restarts really go through sysCommand,
+// making the no-pi/git/ssh assertion meaningful.
+func TestUpgradePrintsPiUpdateHint(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for _, path := range []string{serviceDefinitionPath(), serveAgentDefinitionPathFor(runtime.GOOS)} {
+		if path == "" {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var calls [][]string
+	oldSysCommand := sysCommand
+	sysCommand = func(name string, args ...string) *exec.Cmd {
+		calls = append(calls, append([]string{name}, args...))
+		return exec.Command("true")
+	}
+	defer func() { sysCommand = oldSysCommand }()
+	oldPi := piExtensionInstalled
+	piExtensionInstalled = func() bool { return true }
+	defer func() { piExtensionInstalled = oldPi }()
+
+	current, _ := installedPair(t, "0.1.0", "0.2.4")
+	cliArchive, cliSum := releaseTestBundle(t, "kei", "new-binary", "kei-proxy", versionScriptBody("kei-proxy", "0.2.5"))
+	var requested []string
+	var stdout, stderr bytes.Buffer
+	code := runUpgradeCommand(nil, &stdout, &stderr, releaseTestClient(releaseTestHandler("0.2.0", cliArchive, cliSum, &requested)), func() (string, error) { return current, nil }, func(string) string { return "https://release.test" })
+	if code != 0 {
+		t.Fatalf("upgrade exit = %d, stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "pi update git:github.com/HaikeiLabs/kei-lime-pi") {
+		t.Fatalf("upgrade output = %q", stdout.String())
+	}
+	for _, call := range calls {
+		joined := strings.Join(call, " ")
+		if strings.Contains(joined, "pi ") || strings.Contains(joined, "git ") || strings.Contains(joined, "ssh") {
+			t.Fatalf("upgrade must not shell out to pi, git, or ssh, got %v", call)
+		}
+	}
+}
+
+// TestUpgradeSkipsPiHintWhenPiNotConfigured proves the hint only appears when
+// the Pi extension is installed.
+func TestUpgradeSkipsPiHintWhenPiNotConfigured(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	oldPi := piExtensionInstalled
+	piExtensionInstalled = func() bool { return false }
+	defer func() { piExtensionInstalled = oldPi }()
+
+	current, _ := installedPair(t, "0.1.0", "0.2.4")
+	cliArchive, cliSum := releaseTestBundle(t, "kei", "new-binary", "kei-proxy", versionScriptBody("kei-proxy", "0.2.5"))
+	var requested []string
+	code, stdout, stderr := runTestUpgrade(t, nil, current, releaseTestClient(releaseTestHandler("0.2.0", cliArchive, cliSum, &requested)))
+	if code != 0 {
+		t.Fatalf("upgrade exit = %d, stderr=%s", code, stderr)
+	}
+	if strings.Contains(stdout, "pi update") {
+		t.Fatalf("upgrade output = %q", stdout)
+	}
+}
+
+// TestUpgradeAlreadyLatestPrintsPiHint proves even a no-op upgrade tells a Pi
+// user how to update the extension.
+func TestUpgradeAlreadyLatestPrintsPiHint(t *testing.T) {
+	oldPi := piExtensionInstalled
+	piExtensionInstalled = func() bool { return true }
+	defer func() { piExtensionInstalled = oldPi }()
+
+	current, _ := installedPair(t, "0.2.0", "0.2.4")
+	cliArchive, cliSum := releaseTestBundle(t, "kei", "new-binary", "kei-proxy", versionScriptBody("kei-proxy", "0.2.5"))
+	var requested []string
+	code, stdout, stderr := runTestUpgrade(t, nil, current, releaseTestClient(releaseTestHandler("0.2.0", cliArchive, cliSum, &requested)))
+	if code != 0 {
+		t.Fatalf("upgrade exit = %d, stderr=%s", code, stderr)
+	}
+	if !strings.Contains(stdout, "pi update git:github.com/HaikeiLabs/kei-lime-pi") {
+		t.Fatalf("no-op upgrade output = %q", stdout)
+	}
+}
+
+// TestPiExtensionInstalled proves the detector reads Pi's user settings and
+// recognizes both the string and object package forms, without executing pi.
+func TestPiExtensionInstalled(t *testing.T) {
+	home := t.TempDir()
+	oldHome := userHomeDirFn
+	userHomeDirFn = func() (string, error) { return home, nil }
+	defer func() { userHomeDirFn = oldHome }()
+
+	if piExtensionInstalled() {
+		t.Fatalf("no settings file: must report not installed")
+	}
+	path := filepath.Join(home, ".pi", "agent", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settings := []string{
+		`{"packages":["git:github.com/HaikeiLabs/skills","git:github.com/HaikeiLabs/kei-lime-pi@main"],"theme":"dark"}`,
+		`{"packages":[{"source":"git:github.com/HaikeiLabs/kei-lime-pi"}],"theme":"dark"}`,
+	}
+	for _, body := range settings {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if !piExtensionInstalled() {
+			t.Fatalf("settings list the extension (%s): must report installed", body)
+		}
+	}
+	if err := os.WriteFile(path, []byte(`{"packages":["git:github.com/HaikeiLabs/skills"],"theme":"dark"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if piExtensionInstalled() {
+		t.Fatalf("other packages only: must report not installed")
+	}
+}
+
 func TestUpgradePinnedProxyWins(t *testing.T) {
 	current, proxy := installedPair(t, "0.1.0", "0.2.4")
 	// The latest kei-proxy is 0.9.9 and the published pin file says 0.8.8,

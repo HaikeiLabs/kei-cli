@@ -239,6 +239,117 @@ func TestRestartRuntimeServiceNotInstalled(t *testing.T) {
 	}
 }
 
+func TestServeAgentDefinitionPath(t *testing.T) {
+	t.Setenv("HOME", "/testhome")
+	agentPath := serveAgentDefinitionPathFor(runtime.GOOS)
+	switch runtime.GOOS {
+	case "darwin":
+		want := "/testhome/Library/LaunchAgents/com.haikeilabs.kei-proxy-serve.plist"
+		if agentPath != want {
+			t.Fatalf("serveAgentDefinitionPathFor = %q, want %q", agentPath, want)
+		}
+	case "linux":
+		want := "/testhome/.config/systemd/user/kei-proxy-serve.service"
+		if agentPath != want {
+			t.Fatalf("serveAgentDefinitionPathFor = %q, want %q", agentPath, want)
+		}
+	default:
+		if agentPath != "" {
+			t.Fatalf("serveAgentDefinitionPathFor = %q, want empty string on %s", agentPath, runtime.GOOS)
+		}
+	}
+}
+
+func TestServeAgentName(t *testing.T) {
+	name := serveAgentNameFor(runtime.GOOS)
+	switch runtime.GOOS {
+	case "darwin":
+		if name != "com.haikeilabs.kei-proxy-serve" {
+			t.Fatalf("serveAgentNameFor = %q, want com.haikeilabs.kei-proxy-serve", name)
+		}
+	case "linux":
+		if name != "kei-proxy-serve" {
+			t.Fatalf("serveAgentNameFor = %q, want kei-proxy-serve", name)
+		}
+	default:
+		if name != "kei-proxy-serve" {
+			t.Fatalf("serveAgentNameFor = %q, want kei-proxy-serve", name)
+		}
+	}
+}
+
+// TestRestartServeAgentNotInstalled proves an upgrade/install never touches
+// the service manager for the serve agent when it is not installed.
+func TestRestartServeAgentNotInstalled(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	called := false
+	oldSysCommand := sysCommand
+	sysCommand = func(name string, args ...string) *exec.Cmd {
+		called = true
+		return exec.Command("true")
+	}
+	defer func() { sysCommand = oldSysCommand }()
+
+	restarted, err := restartServeAgent()
+	if err != nil {
+		t.Fatalf("restart error: %v", err)
+	}
+	if restarted {
+		t.Fatalf("expected no restart when the serve agent is not installed")
+	}
+	if called {
+		t.Fatalf("sysCommand must not run when the serve agent is not installed")
+	}
+}
+
+// TestRestartServeAgentInstalled proves the restart goes through the
+// sysCommand seam with the platform's restart command and never execs the real
+// service manager.
+func TestRestartServeAgentInstalled(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	agentPath := serveAgentDefinitionPathFor(runtime.GOOS)
+	if agentPath == "" {
+		t.Skip("unsupported platform")
+	}
+	if err := os.MkdirAll(filepath.Dir(agentPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(agentPath, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var gotName string
+	var gotArgs []string
+	oldSysCommand := sysCommand
+	sysCommand = func(name string, args ...string) *exec.Cmd {
+		gotName, gotArgs = name, args
+		return exec.Command("true")
+	}
+	defer func() { sysCommand = oldSysCommand }()
+
+	restarted, err := restartServeAgent()
+	if err != nil {
+		t.Fatalf("restart error: %v", err)
+	}
+	if !restarted {
+		t.Fatalf("expected a restart when the serve agent is installed")
+	}
+	var wantName string
+	var wantArgs []string
+	switch runtime.GOOS {
+	case "darwin":
+		wantName = "launchctl"
+		wantArgs = []string{"kickstart", "-k", "gui/" + execUserID() + "/com.haikeilabs.kei-proxy-serve"}
+	case "linux":
+		wantName = "systemctl"
+		wantArgs = []string{"--user", "restart", "kei-proxy-serve"}
+	default:
+		t.Skip("unsupported platform")
+	}
+	if gotName != wantName || strings.Join(gotArgs, "\x00") != strings.Join(wantArgs, "\x00") {
+		t.Fatalf("called %s %v, want %s %v", gotName, gotArgs, wantName, wantArgs)
+	}
+}
+
 // TestRestartRuntimeServiceInstalled proves the restart goes through the
 // sysCommand seam with the platform's restart command and never execs the real
 // service manager.

@@ -79,6 +79,9 @@ func fakeDoctorProbes(t *testing.T, files map[string][]byte) doctorProbes {
 		heartbeatProcessStart: func() (time.Time, bool) {
 			return time.Time{}, false
 		},
+		serveProcessStart: func() (time.Time, bool) {
+			return time.Time{}, false
+		},
 		configPath:          "/home/test/.config/kei/config.yaml",
 		registry:            harness.NewRegistry(),
 		heartbeatFromServer: func(config runtimeConfig) (*time.Time, error) { return nil, errHeartbeatNotAvailable },
@@ -284,6 +287,73 @@ func TestCheckStaleProcess(t *testing.T) {
 				t.Fatalf("fix = %q", got.Fix)
 			}
 		})
+	}
+}
+
+func TestCheckStaleServeProcess(t *testing.T) {
+	start := doctorNow
+	newer := doctorNow.Add(30 * time.Minute)
+	older := doctorNow.Add(-1 * time.Hour)
+	fix := serveAgentRestartCommand("darwin")
+	tests := []struct {
+		name      string
+		procStart time.Time
+		procFound bool
+		proxyMod  time.Time
+		proxyOK   bool
+		want      string
+		detail    string
+	}{
+		{name: "no process", procFound: false, want: doctorPass, detail: "no running serve process"},
+		{name: "matches binary", procStart: start, procFound: true, proxyMod: older, proxyOK: true, want: doctorPass, detail: "matches the installed binary"},
+		{name: "proxy newer", procStart: start, procFound: true, proxyMod: newer, proxyOK: true, want: doctorWarn, detail: "started before kei-proxy was last modified"},
+		{name: "binary stat fails", procStart: start, procFound: true, proxyOK: false, want: doctorPass, detail: "matches the installed binary"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := fakeDoctorProbes(t, nil)
+			p.serveProcessStart = func() (time.Time, bool) { return tt.procStart, tt.procFound }
+			p.fileModTime = func(path string) (time.Time, bool) {
+				if path == "/opt/kei-proxy" {
+					return tt.proxyMod, tt.proxyOK
+				}
+				return time.Time{}, false
+			}
+			got := checkStaleServeProcess(p)
+			if got.Status != tt.want || !strings.Contains(got.Detail, tt.detail) {
+				t.Fatalf("got %s %q, want %s containing %q", got.Status, got.Detail, tt.want, tt.detail)
+			}
+			if got.Name != "stale serve process" {
+				t.Fatalf("name = %q", got.Name)
+			}
+			if got.Status == doctorWarn && got.Fix != fix {
+				t.Fatalf("fix = %q, want %q", got.Fix, fix)
+			}
+		})
+	}
+}
+
+// TestServeProcessStartFromPS proves the serve probe reads the etime of the
+// "kei-proxy serve" process and never the "kei-proxy runtime heartbeat"
+// process in the same ps output.
+func TestServeProcessStartFromPS(t *testing.T) {
+	now := doctorNow
+	out := strings.Join([]string{
+		"  ELAPSED COMMAND",
+		"  1-02:03:04 /sbin/launchd",
+		"  00:10:00 /Users/x/.local/bin/kei-proxy runtime heartbeat --config /Users/x/.config/kei/config.yaml",
+		"  01:05:00 /opt/homebrew/bin/kei-proxy serve",
+	}, "\n")
+	got, ok := serveProcessStartFromPS(out, now)
+	if !ok {
+		t.Fatalf("expected the serve process to be found in %q", out)
+	}
+	want := now.Add(-1*time.Hour - 5*time.Minute)
+	if !got.Equal(want) {
+		t.Fatalf("start = %v, want %v", got, want)
+	}
+	if _, ok := serveProcessStartFromPS("", now); ok {
+		t.Fatalf("empty ps output must not report a serve process")
 	}
 }
 

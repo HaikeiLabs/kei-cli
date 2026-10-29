@@ -59,11 +59,13 @@ type doctorProbes struct {
 	defaultProxy func() string
 	// executable is the running kei binary; fileModTime reports a binary's
 	// last-modified time; heartbeatProcessStart reports when the running
-	// heartbeat process started. Together they let the stale-process check
-	// compare the running process against the installed binaries.
+	// heartbeat process started; serveProcessStart reports when the running
+	// kei-proxy serve process started. Together they let the stale-process
+	// checks compare the running processes against the installed binaries.
 	executable            func() (string, error)
 	fileModTime           func(path string) (time.Time, bool)
 	heartbeatProcessStart func() (time.Time, bool)
+	serveProcessStart     func() (time.Time, bool)
 	// heartbeatFromServer reports the last heartbeat time from the Kei API.
 	// Returns errHeartbeatNotAvailable when the installation cannot be
 	// resolved or the user is not logged in (silent skip, keeps WARN).
@@ -94,6 +96,9 @@ func defaultDoctorProbes() (doctorProbes, error) {
 		fileModTime:    probeFileModTime,
 		heartbeatProcessStart: func() (time.Time, bool) {
 			return probeHeartbeatProcessStart(time.Now())
+		},
+		serveProcessStart: func() (time.Time, bool) {
+			return probeServeProcessStart(time.Now())
 		},
 		configPath: configPath,
 		harnessEnv: harness.OSEnv(),
@@ -165,6 +170,38 @@ func parsePSElapsed(s string) (time.Duration, bool) {
 		time.Duration(m)*time.Minute + time.Duration(sec)*time.Second, true
 }
 
+// probeServeProcessStart finds the running "kei-proxy serve" process and
+// returns when it started, the same way probeHeartbeatProcessStart reads ps's
+// elapsed time. It reports ok=false when no such process is running or ps is
+// unavailable.
+func probeServeProcessStart(now time.Time) (time.Time, bool) {
+	out, err := exec.Command("ps", "-ww", "-eo", "etime,command").Output()
+	if err != nil {
+		return time.Time{}, false
+	}
+	return serveProcessStartFromPS(string(out), now)
+}
+
+// serveProcessStartFromPS picks the "kei-proxy serve" line out of ps output
+// and returns when that process started.
+func serveProcessStartFromPS(out string, now time.Time) (time.Time, bool) {
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] == "ELAPSED" {
+			continue
+		}
+		if !strings.Contains(line, "kei-proxy serve") {
+			continue
+		}
+		elapsed, ok := parsePSElapsed(fields[0])
+		if !ok {
+			continue
+		}
+		return now.Add(-elapsed), true
+	}
+	return time.Time{}, false
+}
+
 func probeServiceLoaded(goos, name string) bool {
 	if goos == "darwin" {
 		return isLaunchdServiceLoaded(name)
@@ -210,6 +247,7 @@ func runDoctor(p doctorProbes, stdout io.Writer) int {
 	results = append(results, service)
 	results = append(results, checkHeartbeat(p, service))
 	results = append(results, checkStaleProcess(p))
+	results = append(results, checkStaleServeProcess(p))
 	results = append(results, checkHarnessHooks(p)...)
 	results = append(results, checkPolicyBundle(p))
 	code := 0
@@ -407,6 +445,33 @@ func checkStaleProcess(p doctorProbes) doctorResult {
 	r.Status = doctorWarn
 	r.Detail = "running process started before " + strings.Join(stale, " and ") + " was last modified; restart the service to pick up the new binaries"
 	r.Fix = "kei runtime service install"
+	return r
+}
+
+// checkStaleServeProcess warns when the running kei-proxy serve process
+// started before the installed kei-proxy binary was last modified: the serve
+// agent was not restarted after the binaries were replaced, so it still runs
+// the old code. It passes when no serve process is running or when the
+// process is at least as new as the binary.
+func checkStaleServeProcess(p doctorProbes) doctorResult {
+	r := doctorResult{Name: "stale serve process", Status: doctorPass, Detail: "running serve process matches the installed binary"}
+	start, ok := p.serveProcessStart()
+	if !ok {
+		r.Detail = "no running serve process to compare"
+		return r
+	}
+	proxyPath := ""
+	if config, err := p.loadConfig(p.configPath); err == nil && config.ProxyPath != "" {
+		proxyPath = config.ProxyPath
+	}
+	if proxyPath == "" {
+		proxyPath = p.defaultProxy()
+	}
+	if mod, ok := p.fileModTime(proxyPath); ok && start.Before(mod) {
+		r.Status = doctorWarn
+		r.Detail = "running serve process started before kei-proxy was last modified; restart the kei-proxy serve agent to pick up the new binaries"
+		r.Fix = serveAgentRestartCommand(p.goos)
+	}
 	return r
 }
 
