@@ -175,6 +175,88 @@ func TestUpgradeLatestNewer(t *testing.T) {
 	}
 }
 
+// TestUpgradeReportsUnmanagedServeProcesses proves kei upgrade reports the
+// kei-proxy serve processes it did not restart: with the serve agent restarted
+// the output is silent about them, with no agent restart every running pid is
+// reported with a kill command, and with none running the output is silent.
+func TestUpgradeReportsUnmanagedServeProcesses(t *testing.T) {
+	run := func(t *testing.T, servePIDs []string, managed bool) string {
+		t.Helper()
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		if managed {
+			agentPath := serveAgentDefinitionPathFor(runtime.GOOS)
+			if agentPath == "" {
+				t.Skip("unsupported platform")
+			}
+			if err := os.MkdirAll(filepath.Dir(agentPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(agentPath, []byte("x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			oldSysCommand := sysCommand
+			sysCommand = func(name string, args ...string) *exec.Cmd { return exec.Command("true") }
+			defer func() { sysCommand = oldSysCommand }()
+		}
+		current, _ := installedPair(t, "0.1.0", "0.2.4")
+		cliArchive, cliSum := releaseTestBundle(t, "kei", "new-binary", "kei-proxy", versionScriptBody("kei-proxy", "0.2.5"))
+		var requested []string
+		oldServeProcesses := serveProcesses
+		serveProcesses = func() []string { return servePIDs }
+		defer func() { serveProcesses = oldServeProcesses }()
+		var stdout, stderr bytes.Buffer
+		code := runUpgradeCommand(nil, &stdout, &stderr, releaseTestClient(releaseTestHandler("0.2.0", cliArchive, cliSum, &requested)), func() (string, error) { return current, nil }, func(string) string { return "https://release.test" })
+		if code != 0 {
+			t.Fatalf("upgrade exit = %d, stderr=%s", code, stderr.String())
+		}
+		return stdout.String()
+	}
+	t.Run("managed restart is silent", func(t *testing.T) {
+		out := run(t, []string{"4242"}, true)
+		if strings.Contains(out, "not managed by a service") {
+			t.Fatalf("restarted agent must not be reported:\n%s", out)
+		}
+		if !strings.Contains(out, "Restarted the kei-proxy serve agent") {
+			t.Fatalf("agent restart not reported:\n%s", out)
+		}
+	})
+	t.Run("unmanaged process is reported with its pid", func(t *testing.T) {
+		out := run(t, []string{"4242", "5150"}, false)
+		want := "2 kei-proxy serve process(es) are running the previous binary (not managed by a service). Restart the app that started them (your harness) or run: kill 4242 5150; they pick up the new binary on next start."
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %q:\n%s", want, out)
+		}
+	})
+	t.Run("no serve process is silent", func(t *testing.T) {
+		out := run(t, nil, false)
+		if strings.Contains(out, "not managed by a service") {
+			t.Fatalf("no process must stay silent:\n%s", out)
+		}
+	})
+}
+
+// TestServeProcessPIDsFromPS proves the pid probe reads the pids of the
+// "kei-proxy serve" lines in pid,etime,command ps output and never the
+// heartbeat process, the header, or lines with an unparsable elapsed time.
+func TestServeProcessPIDsFromPS(t *testing.T) {
+	out := strings.Join([]string{
+		"  PID ELAPSED COMMAND",
+		"    1 1-02:03:04 /sbin/launchd",
+		"  4242 00:10:00 /Users/x/.local/bin/kei-proxy runtime heartbeat --config x",
+		"  5150 01:05:00 /opt/homebrew/bin/kei-proxy serve",
+		"  6161 01:06:00 /opt/homebrew/bin/kei-proxy serve",
+		"  7171 badtime /opt/homebrew/bin/kei-proxy serve",
+	}, "\n")
+	got := serveProcessPIDsFromPS(out)
+	if len(got) != 2 || got[0] != "5150" || got[1] != "6161" {
+		t.Fatalf("pids = %v, want [5150 6161]", got)
+	}
+	if pids := serveProcessPIDsFromPS(""); len(pids) != 0 {
+		t.Fatalf("empty ps output must report no pids, got %v", pids)
+	}
+}
+
 // TestUpgradeRestartsServiceWhenInstalled proves a real upgrade restarts the
 // runtime service (through the sysCommand seam) and reports the new versions.
 func TestUpgradeRestartsServiceWhenInstalled(t *testing.T) {

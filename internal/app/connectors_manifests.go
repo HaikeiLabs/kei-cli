@@ -169,10 +169,10 @@ func runConnectorsManifestsShow(args []string, stdout, stderr io.Writer, client 
 		return 1
 	}
 	var (
-		err      error
-		payload  []byte
-		shown    toolManifest
-		all      []toolManifest
+		err     error
+		payload []byte
+		shown   toolManifest
+		all     []toolManifest
 	)
 	if manifestID != "" {
 		if payload, err = session.do(http.MethodGet, "/"+url.PathEscape(connectorID)+"/tool-manifests/"+url.PathEscape(manifestID), nil); err != nil {

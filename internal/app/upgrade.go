@@ -198,13 +198,70 @@ func runUpgradeCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 	// binary until it is restarted; do that now, the same way the runtime
 	// service is restarted. A failure is a warning: the upgrade itself
 	// succeeded.
+	serveAgentRestarted := false
 	if restarted, err := restartServeAgent(); err != nil {
 		fmt.Fprintf(stderr, "warning: could not restart the kei-proxy serve agent: %v\n", err)
 	} else if restarted {
+		serveAgentRestarted = true
 		fmt.Fprintf(stdout, "Restarted the kei-proxy serve agent (%s).\n", serveAgentNameFor(runtime.GOOS))
 	}
+	// A serve process started by a harness or by hand is not managed by a
+	// service, so the restart above never touched it and it still runs the
+	// pre-upgrade binary. Report it; kei never kills it.
+	reportUnrestartedServeProcesses(stdout, serveAgentRestarted)
 	printPiUpdateHint(stdout)
 	return 0
+}
+
+// serveProcesses lists the pids of the running kei-proxy serve processes.
+// Tests override it; the default reads ps.
+var serveProcesses = probeServeProcesses
+
+// probeServeProcesses lists the pids of the running "kei-proxy serve"
+// processes, or nothing when ps is unavailable.
+func probeServeProcesses() []string {
+	out, err := exec.Command("ps", "-ww", "-eo", "pid,etime,command").Output()
+	if err != nil {
+		return nil
+	}
+	return serveProcessPIDsFromPS(string(out))
+}
+
+// serveProcessPIDsFromPS returns the pids of every "kei-proxy serve" line in
+// ps output with "pid,etime,command" columns, skipping the header and lines
+// whose elapsed time does not parse. doctor.go's serveProcessStartFromPS reads
+// the same processes without their pids.
+func serveProcessPIDsFromPS(out string) []string {
+	var pids []string
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 || fields[0] == "PID" {
+			continue
+		}
+		if !strings.Contains(line, "kei-proxy serve") {
+			continue
+		}
+		if _, ok := parsePSElapsed(fields[1]); !ok {
+			continue
+		}
+		pids = append(pids, fields[0])
+	}
+	return pids
+}
+
+// reportUnrestartedServeProcesses warns when kei-proxy serve processes are
+// still running the previous binary after an upgrade: the serve agent restart
+// did not happen, so every serve process found was started by a harness or by
+// hand and is not managed by a service. It never kills anything.
+func reportUnrestartedServeProcesses(stdout io.Writer, serveAgentRestarted bool) {
+	if serveAgentRestarted {
+		return
+	}
+	pids := serveProcesses()
+	if len(pids) == 0 {
+		return
+	}
+	fmt.Fprintf(stdout, "%d kei-proxy serve process(es) are running the previous binary (not managed by a service). Restart the app that started them (your harness) or run: kill %s; they pick up the new binary on next start.\n", len(pids), strings.Join(pids, " "))
 }
 
 func releasePlatform(goos, goarch string) (string, string, error) {
@@ -239,6 +296,32 @@ func resolveReleaseVersion(client *http.Client, base, project string) (string, e
 		return "", errors.New("release endpoint returned an invalid version")
 	}
 	return strings.TrimPrefix(version, "v"), nil
+}
+
+// probeUpgradeRelease resolves the latest published kei-cli release and the
+// kei-proxy version that release pins, with a short timeout so `kei doctor`
+// never hangs on a slow or absent network.
+func probeUpgradeRelease() (string, string, error) {
+	client := &http.Client{Timeout: 3 * time.Second}
+	return upgradeReleaseInfo(client, defaultReleaseBase)
+}
+
+// upgradeReleaseInfo fetches <base>/kei-cli/latest.txt through
+// resolveReleaseVersion and, best effort, the KEI_PROXY_VERSION file pinning
+// the kei-proxy version for that release. proxy is empty when the pin cannot
+// be read or does not parse.
+func upgradeReleaseInfo(client *http.Client, base string) (string, string, error) {
+	latest, err := resolveReleaseVersion(client, base, "kei-cli")
+	if err != nil {
+		return "", "", err
+	}
+	proxy := ""
+	if data, err := fetchRelease(client, base+"/kei-cli/KEI_PROXY_VERSION", 4096); err == nil {
+		if v := strings.TrimPrefix(strings.TrimSpace(string(data)), "v"); releaseVersionPattern.MatchString(v) {
+			proxy = v
+		}
+	}
+	return latest, proxy, nil
 }
 
 // binaryVersion reports the version a built binary prints for --version,

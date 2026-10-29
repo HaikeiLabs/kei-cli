@@ -27,6 +27,10 @@ const (
 	doctorFail = "FAIL"
 )
 
+// doctorStaleFixHint is how the stale-process checks tell the user the one
+// command that fixes a process still running the previous binary.
+const doctorStaleFixHint = "run kei upgrade (it restarts installed services) or restart the process"
+
 // doctorResult is one line of `kei doctor` output. Fix is printed only when
 // the check did not pass.
 type doctorResult struct {
@@ -66,6 +70,13 @@ type doctorProbes struct {
 	fileModTime           func(path string) (time.Time, bool)
 	heartbeatProcessStart func() (time.Time, bool)
 	serveProcessStart     func() (time.Time, bool)
+	// upgradeRelease resolves the latest published kei-cli release and the
+	// kei-proxy version that release pins; an error means the release could
+	// not be fetched or parsed. binaryVersion reports the release version a
+	// built binary prints for --version. Together they let the upgrade check
+	// compare the running kei against the latest release.
+	upgradeRelease func() (latest, proxy string, err error)
+	binaryVersion  func(path, name string) (string, bool)
 	// heartbeatFromServer reports the last heartbeat time from the Kei API.
 	// Returns errHeartbeatNotAvailable when the installation cannot be
 	// resolved or the user is not logged in (silent skip, keeps WARN).
@@ -100,9 +111,11 @@ func defaultDoctorProbes() (doctorProbes, error) {
 		serveProcessStart: func() (time.Time, bool) {
 			return probeServeProcessStart(time.Now())
 		},
-		configPath: configPath,
-		harnessEnv: harness.OSEnv(),
-		registry:   harness.Default,
+		upgradeRelease:      probeUpgradeRelease,
+		binaryVersion:       binaryVersion,
+		configPath:          configPath,
+		harnessEnv:          harness.OSEnv(),
+		registry:            harness.Default,
 		heartbeatFromServer: defaultHeartbeatFromServer,
 	}, nil
 }
@@ -248,6 +261,7 @@ func runDoctor(p doctorProbes, stdout io.Writer) int {
 	results = append(results, checkHeartbeat(p, service))
 	results = append(results, checkStaleProcess(p))
 	results = append(results, checkStaleServeProcess(p))
+	results = append(results, checkUpgradeAvailable(p))
 	results = append(results, checkHarnessHooks(p)...)
 	results = append(results, checkPolicyBundle(p))
 	code := 0
@@ -411,6 +425,15 @@ func checkHeartbeat(p doctorProbes, service doctorResult) doctorResult {
 	return r
 }
 
+// doctorProxyPath locates the installed kei-proxy binary the way the checks
+// do: the configured proxy path, else the default lookup.
+func doctorProxyPath(p doctorProbes) string {
+	if config, err := p.loadConfig(p.configPath); err == nil && config.ProxyPath != "" {
+		return config.ProxyPath
+	}
+	return p.defaultProxy()
+}
+
 // checkStaleProcess warns when the running heartbeat process started before
 // the installed kei or kei-proxy binary was last modified: an upgrade replaced
 // the binaries but the service was never restarted, so the old code is still
@@ -429,13 +452,7 @@ func checkStaleProcess(p doctorProbes) doctorResult {
 			stale = append(stale, "kei")
 		}
 	}
-	proxyPath := ""
-	if config, err := p.loadConfig(p.configPath); err == nil && config.ProxyPath != "" {
-		proxyPath = config.ProxyPath
-	}
-	if proxyPath == "" {
-		proxyPath = p.defaultProxy()
-	}
+	proxyPath := doctorProxyPath(p)
 	if mod, ok := p.fileModTime(proxyPath); ok && start.Before(mod) {
 		stale = append(stale, "kei-proxy")
 	}
@@ -443,7 +460,7 @@ func checkStaleProcess(p doctorProbes) doctorResult {
 		return r
 	}
 	r.Status = doctorWarn
-	r.Detail = "running process started before " + strings.Join(stale, " and ") + " was last modified; restart the service to pick up the new binaries"
+	r.Detail = "running process started before " + strings.Join(stale, " and ") + " was last modified; " + doctorStaleFixHint
 	r.Fix = "kei runtime service install"
 	return r
 }
@@ -469,9 +486,45 @@ func checkStaleServeProcess(p doctorProbes) doctorResult {
 	}
 	if mod, ok := p.fileModTime(proxyPath); ok && start.Before(mod) {
 		r.Status = doctorWarn
-		r.Detail = "running serve process started before kei-proxy was last modified; restart the kei-proxy serve agent to pick up the new binaries"
+		r.Detail = "running serve process started before kei-proxy was last modified; " + doctorStaleFixHint
 		r.Fix = serveAgentRestartCommand(p.goos)
 	}
+	return r
+}
+
+// checkUpgradeAvailable reports when a newer kei-cli release is published, so
+// `kei doctor` nudges the user to upgrade. It never fails the run and never
+// upgrades: when the release endpoint cannot be reached or parsed, it passes
+// with a quiet note.
+func checkUpgradeAvailable(p doctorProbes) doctorResult {
+	r := doctorResult{Name: "upgrade available", Status: doctorPass}
+	latest, pinnedProxy, err := p.upgradeRelease()
+	if err != nil {
+		r.Detail = "could not check for a newer release (offline?)"
+		return r
+	}
+	keiPath, err := p.executable()
+	if err != nil {
+		r.Detail = "could not check for a newer release (offline?)"
+		return r
+	}
+	running, ok := p.binaryVersion(keiPath, "kei")
+	if !ok {
+		r.Detail = "could not check for a newer release (unknown running version)"
+		return r
+	}
+	if compareVersions(running, latest) >= 0 {
+		r.Detail = "kei " + running + " is the latest release"
+		return r
+	}
+	r.Status = doctorWarn
+	r.Detail = "kei " + running + " is installed, " + latest + " is available"
+	// Report the kei-proxy transition only when both ends are known; the
+	// upgrade command prints the real transition anyway.
+	if installedProxy, ok := p.binaryVersion(doctorProxyPath(p), "kei-proxy"); ok && pinnedProxy != "" {
+		r.Detail += fmt.Sprintf(" (kei-proxy %s -> %s)", installedProxy, pinnedProxy)
+	}
+	r.Detail += ". Run: kei upgrade"
 	return r
 }
 

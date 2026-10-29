@@ -61,7 +61,7 @@ func loadCLIWebToken(store credentialStore, stderr io.Writer) (string, string, b
 func runBotAgentsList(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	lc := newCommandFlags("bot", "agents list", "List bot agents", stdout, stderr)
 	installationID := lc.fs.String("installation", "", "Kei installation ID")
-	lc.fs.String("agent", "", "Kei agent ID")  // accepted but unused by list; validated when passed
+	lc.fs.String("agent", "", "Kei agent ID") // accepted but unused by list; validated when passed
 	lc.fs.Bool("default", false, "make this the default agent")
 	if rc, ok := parseLeaf(lc, args); !ok {
 		return rc

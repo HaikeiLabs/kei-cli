@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -82,6 +83,10 @@ func fakeDoctorProbes(t *testing.T, files map[string][]byte) doctorProbes {
 		serveProcessStart: func() (time.Time, bool) {
 			return time.Time{}, false
 		},
+		upgradeRelease: func() (string, string, error) {
+			return "", "", errors.New("offline")
+		},
+		binaryVersion:       func(string, string) (string, bool) { return "", false },
 		configPath:          "/home/test/.config/kei/config.yaml",
 		registry:            harness.NewRegistry(),
 		heartbeatFromServer: func(config runtimeConfig) (*time.Time, error) { return nil, errHeartbeatNotAvailable },
@@ -283,6 +288,9 @@ func TestCheckStaleProcess(t *testing.T) {
 			if got.Status != tt.want || !strings.Contains(got.Detail, tt.detail) {
 				t.Fatalf("got %s %q, want %s containing %q", got.Status, got.Detail, tt.want, tt.detail)
 			}
+			if got.Status == doctorWarn && !strings.HasSuffix(got.Detail, doctorStaleFixHint) {
+				t.Fatalf("detail = %q, want it to end with %q", got.Detail, doctorStaleFixHint)
+			}
 			if got.Status == doctorWarn && got.Fix != "kei runtime service install" {
 				t.Fatalf("fix = %q", got.Fix)
 			}
@@ -323,6 +331,9 @@ func TestCheckStaleServeProcess(t *testing.T) {
 			if got.Status != tt.want || !strings.Contains(got.Detail, tt.detail) {
 				t.Fatalf("got %s %q, want %s containing %q", got.Status, got.Detail, tt.want, tt.detail)
 			}
+			if got.Status == doctorWarn && !strings.HasSuffix(got.Detail, doctorStaleFixHint) {
+				t.Fatalf("detail = %q, want it to end with %q", got.Detail, doctorStaleFixHint)
+			}
 			if got.Name != "stale serve process" {
 				t.Fatalf("name = %q", got.Name)
 			}
@@ -330,6 +341,101 @@ func TestCheckStaleServeProcess(t *testing.T) {
 				t.Fatalf("fix = %q, want %q", got.Fix, fix)
 			}
 		})
+	}
+}
+
+func TestCheckUpgradeAvailable(t *testing.T) {
+	tests := []struct {
+		name       string
+		latest     string
+		pinned     string
+		relErr     error
+		keiVer     string
+		keiOK      bool
+		proxyVer   string
+		proxyOK    bool
+		want       string
+		wantDetail string
+	}{
+		{name: "newer release", latest: "0.3.0", pinned: "0.2.5", keiVer: "0.2.0", keiOK: true, proxyVer: "0.2.4", proxyOK: true,
+			want: doctorWarn, wantDetail: "kei 0.2.0 is installed, 0.3.0 is available (kei-proxy 0.2.4 -> 0.2.5). Run: kei upgrade"},
+		{name: "newer release, pinned kei-proxy unreadable", latest: "0.3.0", keiVer: "0.2.0", keiOK: true, proxyVer: "0.2.4", proxyOK: true,
+			want: doctorWarn, wantDetail: "kei 0.2.0 is installed, 0.3.0 is available. Run: kei upgrade"},
+		{name: "newer release, installed kei-proxy unknown", latest: "0.3.0", pinned: "0.2.5", keiVer: "0.2.0", keiOK: true,
+			want: doctorWarn, wantDetail: "kei 0.2.0 is installed, 0.3.0 is available. Run: kei upgrade"},
+		{name: "up to date", latest: "0.2.0", keiVer: "0.2.0", keiOK: true,
+			want: doctorPass, wantDetail: "kei 0.2.0 is the latest release"},
+		{name: "running newer than latest", latest: "0.2.0", keiVer: "9.9.9", keiOK: true,
+			want: doctorPass, wantDetail: "kei 9.9.9 is the latest release"},
+		{name: "offline", relErr: errors.New("connection refused"),
+			want: doctorPass, wantDetail: "could not check for a newer release (offline?)"},
+		{name: "running version unknown", latest: "0.3.0", keiOK: false,
+			want: doctorPass, wantDetail: "could not check for a newer release (unknown running version)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := fakeDoctorProbes(t, nil)
+			p.upgradeRelease = func() (string, string, error) { return tt.latest, tt.pinned, tt.relErr }
+			p.binaryVersion = func(path, name string) (string, bool) {
+				switch name {
+				case "kei":
+					return tt.keiVer, tt.keiOK
+				case "kei-proxy":
+					return tt.proxyVer, tt.proxyOK
+				}
+				return "", false
+			}
+			got := checkUpgradeAvailable(p)
+			if got.Status != tt.want || got.Detail != tt.wantDetail {
+				t.Fatalf("got %s %q, want %s %q", got.Status, got.Detail, tt.want, tt.wantDetail)
+			}
+			if got.Name != "upgrade available" {
+				t.Fatalf("name = %q", got.Name)
+			}
+			if got.Fix != "" {
+				t.Fatalf("fix = %q, want none: doctor never runs upgrade", got.Fix)
+			}
+		})
+	}
+}
+
+// TestUpgradeReleaseInfo proves the default release probe parses latest.txt
+// with resolveReleaseVersion, reads the release's pinned KEI_PROXY_VERSION
+// best effort, and treats a garbage or unreachable latest.txt as an error.
+func TestUpgradeReleaseInfo(t *testing.T) {
+	client := releaseTestClient(func(url string) (int, []byte) {
+		switch {
+		case strings.HasSuffix(url, "/kei-cli/latest.txt"):
+			return 200, []byte("v0.3.0\n")
+		case strings.HasSuffix(url, "/kei-cli/KEI_PROXY_VERSION"):
+			return 200, []byte("v0.8.8\n")
+		}
+		return http.StatusNotFound, nil
+	})
+	latest, proxy, err := upgradeReleaseInfo(client, "https://release.test")
+	if err != nil || latest != "0.3.0" || proxy != "0.8.8" {
+		t.Fatalf("got %q, %q, %v; want 0.3.0, 0.8.8, nil", latest, proxy, err)
+	}
+
+	client = releaseTestClient(func(url string) (int, []byte) {
+		if strings.HasSuffix(url, "/kei-cli/latest.txt") {
+			return 200, []byte("not-a-version")
+		}
+		return http.StatusNotFound, nil
+	})
+	if _, _, err := upgradeReleaseInfo(client, "https://release.test"); err == nil {
+		t.Fatalf("garbage latest.txt must be an error")
+	}
+
+	client = releaseTestClient(func(url string) (int, []byte) {
+		if strings.HasSuffix(url, "/kei-cli/latest.txt") {
+			return 200, []byte("0.3.0")
+		}
+		return http.StatusNotFound, nil
+	})
+	latest, proxy, err = upgradeReleaseInfo(client, "https://release.test")
+	if err != nil || latest != "0.3.0" || proxy != "" {
+		t.Fatalf("got %q, %q, %v; want 0.3.0, \"\", nil when the pin is unreadable", latest, proxy, err)
 	}
 }
 
@@ -496,6 +602,23 @@ func TestRunDoctor(t *testing.T) {
 			t.Fatalf("exit %d, want 1", code)
 		}
 		if !strings.Contains(out.String(), "FAIL  runtime service:") || !strings.Contains(out.String(), "fix: kei runtime service install") {
+			t.Fatalf("output:\n%s", out.String())
+		}
+	})
+	t.Run("upgrade available warns but exits 0", func(t *testing.T) {
+		var out bytes.Buffer
+		p := fakeDoctorProbes(t, nil)
+		p.upgradeRelease = func() (string, string, error) { return "9.9.9", "", nil }
+		p.binaryVersion = func(path, name string) (string, bool) {
+			if name == "kei" {
+				return "0.2.0", true
+			}
+			return "", false
+		}
+		if code := runDoctor(p, &out); code != 0 {
+			t.Fatalf("exit %d, output:\n%s", code, out.String())
+		}
+		if !strings.Contains(out.String(), "WARN  upgrade available: kei 0.2.0 is installed, 9.9.9 is available") {
 			t.Fatalf("output:\n%s", out.String())
 		}
 	})

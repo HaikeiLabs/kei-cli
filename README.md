@@ -84,6 +84,14 @@ endpoint, set `AWS_S3_RELEASES_URL_BASE`; otherwise `https://kei-cli-releases.s3
 is used. GPG signature verification is not performed by this command; checksum
 verification follows the official installer's required SHA-256 check.
 
+After the binaries are replaced, `kei upgrade` restarts the installed runtime
+service and kei-proxy serve agent, and reports any `kei-proxy serve` process
+still running the previous binary (started by a harness or by hand, so no
+service restart covered it) with the pid to kill. `kei doctor` nudges the same
+way: an `upgrade available` check compares the running kei against the latest
+release, and the stale-process checks end with `run kei upgrade (it restarts
+installed services) or restart the process`.
+
 ### Building from source
 
 ```sh
