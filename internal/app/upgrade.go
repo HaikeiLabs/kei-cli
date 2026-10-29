@@ -22,6 +22,44 @@ import (
 
 const defaultReleaseBase = "https://kei-cli-releases.s3.us-east-1.amazonaws.com"
 
+// piUpdateCommand is the exact command that updates the kei-lime-pi Pi
+// extension. kei upgrade prints it and never runs it: pi update shells out to
+// git over SSH and can prompt for signing, which would hang an unattended
+// upgrade.
+const piUpdateCommand = "pi update git:github.com/HaikeiLabs/kei-lime-pi"
+
+// piExtensionInstalled reports whether the kei-lime-pi Pi extension is
+// configured at user scope. Tests override it; the default reads Pi's user
+// settings and never executes pi, git, or ssh.
+var piExtensionInstalled = probePiExtensionInstalled
+
+// probePiExtensionInstalled looks for the extension's package reference in
+// Pi's user settings (~/.pi/agent/settings.json). Package entries are either
+// source strings or objects with a source field, so it checks for the
+// repository path anywhere in the file. Project-local installs
+// (pi install -l) live in the project's .pi/settings.json and are not
+// detected.
+func probePiExtensionInstalled() bool {
+	home, err := userHomeDirFn()
+	if err != nil {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".pi", "agent", "settings.json"))
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(data), "github.com/HaikeiLabs/kei-lime-pi")
+}
+
+// printPiUpdateHint reminds a Pi user that kei upgrade never runs pi update
+// and prints the exact command to update the extension instead.
+func printPiUpdateHint(stdout io.Writer) {
+	if !piExtensionInstalled() {
+		return
+	}
+	fmt.Fprintf(stdout, "kei upgrade does not run pi update; to update the Pi extension run: %s\n", piUpdateCommand)
+}
+
 var releaseVersionPattern = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[A-Za-z0-9._-]+)?$`)
 
 // runUpgradeCommand installs the published platform binary directly from S3.
@@ -93,6 +131,7 @@ func runUpgradeCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 		case 0:
 			if !*force {
 				fmt.Fprintf(stdout, "kei %s is already the latest release\n", version)
+				printPiUpdateHint(stdout)
 				return 0
 			}
 		case -1:
@@ -155,6 +194,16 @@ func runUpgradeCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 	} else if restarted {
 		fmt.Fprintf(stdout, "Restarted the Kei runtime service; it now runs kei %s / kei-proxy %s.\n", version, newProxyVersion)
 	}
+	// The kei-proxy serve agent (if installed) also still runs the pre-upgrade
+	// binary until it is restarted; do that now, the same way the runtime
+	// service is restarted. A failure is a warning: the upgrade itself
+	// succeeded.
+	if restarted, err := restartServeAgent(); err != nil {
+		fmt.Fprintf(stderr, "warning: could not restart the kei-proxy serve agent: %v\n", err)
+	} else if restarted {
+		fmt.Fprintf(stdout, "Restarted the kei-proxy serve agent (%s).\n", serveAgentNameFor(runtime.GOOS))
+	}
+	printPiUpdateHint(stdout)
 	return 0
 }
 

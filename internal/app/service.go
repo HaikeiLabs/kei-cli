@@ -188,6 +188,80 @@ func isLaunchdServiceLoaded(name string) bool {
 	return cmd.Run() == nil
 }
 
+// serveAgentDefinitionPathFor returns the kei-proxy serve agent definition
+// file path for goos, or "" when goos has no supported service manager. The
+// agent is installed by the kei-proxy standalone setup, not by kei: the
+// launchd label is com.haikeilabs.kei-proxy-serve and the systemd user unit
+// is kei-proxy-serve.service.
+func serveAgentDefinitionPathFor(goos string) string {
+	home, err := userHomeDirFn()
+	if err != nil {
+		return ""
+	}
+	switch goos {
+	case "darwin":
+		return filepath.Join(home, "Library", "LaunchAgents", "com.haikeilabs.kei-proxy-serve.plist")
+	case "linux":
+		return filepath.Join(home, ".config", "systemd", "user", "kei-proxy-serve.service")
+	default:
+		return ""
+	}
+}
+
+// serveAgentNameFor returns the kei-proxy serve agent name for goos: the
+// launchd label on darwin, the systemd user unit name on linux.
+func serveAgentNameFor(goos string) string {
+	switch goos {
+	case "darwin":
+		return "com.haikeilabs.kei-proxy-serve"
+	case "linux":
+		return "kei-proxy-serve"
+	default:
+		return "kei-proxy-serve"
+	}
+}
+
+// serveAgentRestartCommand returns the user-facing command that restarts the
+// kei-proxy serve agent on goos, for doctor fix lines.
+func serveAgentRestartCommand(goos string) string {
+	switch goos {
+	case "darwin":
+		return "launchctl kickstart -k gui/$(id -u)/" + serveAgentNameFor(goos)
+	case "linux":
+		return "systemctl --user restart " + serveAgentNameFor(goos)
+	default:
+		return ""
+	}
+}
+
+// restartServeAgent restarts the kei-proxy serve agent if it is installed, so
+// it picks up a freshly replaced kei-proxy binary. It reports whether it
+// restarted (the agent was installed) and leaves an uninstalled agent alone:
+// an upgrade never installs the agent on the user's behalf.
+func restartServeAgent() (bool, error) {
+	agentPath := serveAgentDefinitionPathFor(runtime.GOOS)
+	if agentPath == "" {
+		return false, nil
+	}
+	if _, err := os.Stat(agentPath); err != nil {
+		return false, nil
+	}
+	name := serveAgentNameFor(runtime.GOOS)
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = sysCommand("launchctl", "kickstart", "-k", "gui/"+execUserID()+"/"+name)
+	case "linux":
+		cmd = sysCommand("systemctl", "--user", "restart", name)
+	default:
+		return false, nil
+	}
+	if err := cmd.Run(); err != nil {
+		return false, fmt.Errorf("restart %s: %w", name, err)
+	}
+	return true, nil
+}
+
 // launchdLogPath is where the LaunchAgent writes the runtime's stdout and
 // stderr.
 func launchdLogPath(home string) string {
