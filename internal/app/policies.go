@@ -1054,17 +1054,17 @@ func importPolicies(h harness.Harness, fileOverride, srcPattern string, stderr i
 
 // warnPriorityIgnored tells a caller that still passes --priority that the
 // catalog no longer uses it (ADR-038 D-1: deny wins, no priority).
+func warnPriorityIgnored(set map[string]bool, stderr io.Writer) {
+	if set["priority"] {
+		fmt.Fprintln(stderr, "warning: --priority is deprecated and ignored: a matching deny always wins")
+	}
+}
+
 // warnAgentIDIgnored tells a script that still passes --agent-id that it has
 // no effect: the catalog rejects agent_id (HAI-673), and an agent gets access
 // through group membership.
 func warnAgentIDIgnored(set map[string]bool, stderr io.Writer) {
 	if set["agent-id"] {
 		fmt.Fprintln(stderr, "warning: --agent-id is deprecated and ignored: add the agent to a group instead")
-	}
-}
-
-func warnPriorityIgnored(set map[string]bool, stderr io.Writer) {
-	if set["priority"] {
-		fmt.Fprintln(stderr, "warning: --priority is deprecated and ignored: a matching deny always wins")
 	}
 }

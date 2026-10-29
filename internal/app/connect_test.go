@@ -373,3 +373,15 @@ func TestConnectFallsBackToOrgIDWhenOrgAPIFails(t *testing.T) {
 		t.Fatalf("expected org ID fallback in stdout, got: %q", stdout.String())
 	}
 }
+
+// TestConnectHarnessKindCursor pins the cursor mapping: a desktop harness
+// configured by sync alone, like claude-code/codex/opencode.
+func TestConnectHarnessKindCursor(t *testing.T) {
+	kind, addHarness, ok := connectHarnessKind("cursor")
+	if !ok || kind != "cursor" || addHarness {
+		t.Fatalf("connectHarnessKind(cursor) = %q, %v, %v; want cursor, false, true", kind, addHarness, ok)
+	}
+	if _, _, ok := connectHarnessKind("cursor-code"); ok {
+		t.Fatal("cursor-code must not resolve")
+	}
+}

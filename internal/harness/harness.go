@@ -216,7 +216,7 @@ func NewRegistry(hs ...Harness) *Registry {
 
 // Default is the registry of built-in harnesses. A new harness kind is one
 // file plus one entry here.
-var Default = NewRegistry(claudeCode{}, codex{}, openCode{}, custom{}, OpenWebUI{})
+var Default = NewRegistry(claudeCode{}, codex{}, openCode{}, cursor{}, custom{}, OpenWebUI{})
 
 // Register adds h, replacing any harness of the same kind. A Registry is not
 // safe for concurrent registration; register at startup.
