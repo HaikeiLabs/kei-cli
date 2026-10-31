@@ -1085,7 +1085,7 @@ type connectorAllowPolicy struct {
 }
 
 func createConnectorGroupAllows(connectorSession *connectorSession, groupNames []string, connectorID, connectorName, source string, capabilityNames []string) ([]connectorAllowPolicy, error) {
-	policies := &policySession{client: connectorSession.client, baseURL: connectorSession.baseURL, token: connectorSession.token, workspaceID: connectorSession.workspaceID}
+	policies := &policySession{client: connectorSession.client, baseURL: connectorSession.baseURL, token: connectorSession.token, orgID: connectorSession.orgID, workspaceID: connectorSession.workspaceID}
 	created := make([]connectorAllowPolicy, 0, len(groupNames)*max(1, len(capabilityNames)))
 	for _, groupName := range groupNames {
 		targets := capabilityNames
@@ -1102,7 +1102,7 @@ func createConnectorGroupAllows(connectorSession *connectorSession, groupNames [
 				selector.Source = source
 				selector.Capability = capability
 			}
-			request := createPolicyRequest{Name: policyName, SrcPattern: "group:" + groupName, DstPattern: dstPattern, Effect: "permit", Action: "permit", Enabled: true, SelectorV2: selector}
+			request := createPolicyRequest{Name: policyName, Principal: typedPrincipal("group:" + groupName), Target: typedTarget(dstPattern), Effect: "permit", Action: "permit", Enabled: true, SelectorV2: selector}
 			if _, err := policies.do(http.MethodPost, "", request, nil); err != nil {
 				return nil, err
 			}

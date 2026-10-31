@@ -197,7 +197,7 @@ func TestGroupsDeleteByIDNoPolicies(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/groups":
 			_, _ = w.Write([]byte(testGroupsJSON()))
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/policies":
+		case r.Method == http.MethodGet && r.URL.Path == typedPoliciesPath():
 			_, _ = w.Write([]byte(`{"policies":[],"next_page_token":""}`))
 		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/groups/"+testGroupID:
 			w.WriteHeader(http.StatusNoContent)
@@ -220,7 +220,7 @@ func TestGroupsDeleteByNameNoPolicies(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/groups":
 			_, _ = w.Write([]byte(testGroupsJSON()))
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/policies":
+		case r.Method == http.MethodGet && r.URL.Path == typedPoliciesPath():
 			_, _ = w.Write([]byte(`{"policies":[],"next_page_token":""}`))
 		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/groups/"+testGroupID:
 			w.WriteHeader(http.StatusNoContent)
@@ -243,8 +243,8 @@ func TestGroupsDeleteRefusesWithPolicyReferences(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/groups":
 			_, _ = w.Write([]byte(testGroupsJSON()))
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/policies":
-			_, _ = w.Write([]byte(`{"policies":[{"id":"` + testPolicyID + `","name":"allow-policy","src_pattern":"group:engineers","dst_pattern":"shell:git","effect":"permit","priority":100,"enabled":true,"approval_required":false}],"next_page_token":""}`))
+		case r.Method == http.MethodGet && r.URL.Path == typedPoliciesPath():
+			_, _ = w.Write([]byte(`{"policies":[{"id":"` + testPolicyID + `","name":"allow-policy","principal":{"kind":"group","value":"engineers"},"target":{"kind":"shell","value":"git"},"action":"permit","priority":100,"enabled":true,"approval_required":false}],"next_page_token":""}`))
 		default:
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}

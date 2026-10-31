@@ -22,8 +22,8 @@ func runPolicy(t *testing.T, server *httptest.Server, store credentialStore, std
 func TestPolicyList(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
 		_, _ = w.Write([]byte(`{"policies":[
-			{"id":"` + testPolicyID + `","org_id":"org-1","workspace_id":"` + testWorkspaceID + `","name":"allow-git","src_pattern":"harness:claude","dst_pattern":"shell:git","effect":"permit","priority":100,"enabled":true,"approval_required":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"},
-			{"id":"55555555-5555-5555-5555-555555555555","org_id":"org-1","workspace_id":"` + testWorkspaceID + `","name":"deny-rm","src_pattern":"harness:claude","dst_pattern":"shell:rm","effect":"deny","priority":200,"enabled":true,"approval_required":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}
+			{"id":"` + testPolicyID + `","org_id":"org-1","workspace_id":"` + testWorkspaceID + `","name":"allow-git","principal":{"kind":"harness","value":"claude"},"target":{"kind":"shell","value":"git"},"action":"permit","priority":100,"enabled":true,"approval_required":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"},
+			{"id":"55555555-5555-5555-5555-555555555555","org_id":"org-1","workspace_id":"` + testWorkspaceID + `","name":"deny-rm","principal":{"kind":"harness","value":"claude"},"target":{"kind":"shell","value":"rm"},"action":"deny","priority":200,"enabled":true,"approval_required":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}
 		],"next_page_token":""}`))
 	})
 	code, stdout, stderr := runPolicy(t, server, store, "", "list", "--workspace", "Main")
@@ -31,7 +31,7 @@ func TestPolicyList(t *testing.T) {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
 	req := fake.only(t)
-	if req.Method != http.MethodGet || req.Path != "/api/v1/policies" || !strings.Contains(req.Query, "workspace_id="+testWorkspaceID) {
+	if req.Method != http.MethodGet || req.Path != typedPoliciesPath() || strings.Contains(req.Query, "workspace_id=") {
 		t.Fatalf("request = %s %s?%s", req.Method, req.Path, req.Query)
 	}
 	if req.Auth != "Bearer "+workspaceTestToken() {
@@ -62,14 +62,14 @@ func TestPolicyListJSON(t *testing.T) {
 
 func TestPolicyGet(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","org_id":"org-1","workspace_id":"` + testWorkspaceID + `","name":"allow-git","description":"Allow git","src_pattern":"harness:claude","dst_pattern":"shell:git","effect":"permit","priority":100,"enabled":true,"approval_required":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}`))
+		_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","org_id":"org-1","workspace_id":"` + testWorkspaceID + `","name":"allow-git","description":"Allow git","principal":{"kind":"harness","value":"claude"},"target":{"kind":"shell","value":"git"},"action":"permit","priority":100,"enabled":true,"approval_required":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}`))
 	})
 	code, stdout, stderr := runPolicy(t, server, store, "", "get", testPolicyID, "--workspace", "Main")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
 	req := fake.only(t)
-	if req.Method != http.MethodGet || req.Path != "/api/v1/policies/"+testPolicyID || req.Query != "workspace_id="+testWorkspaceID {
+	if req.Method != http.MethodGet || req.Path != typedPoliciesPath()+"/"+testPolicyID || req.Query != "" {
 		t.Fatalf("request = %s %s?%s", req.Method, req.Path, req.Query)
 	}
 	for _, want := range []string{testPolicyID, "allow-git", "harness:claude", "shell:git", "permit"} {
@@ -87,7 +87,7 @@ func TestPolicyGet(t *testing.T) {
 func TestPolicyCreate(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
 		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","org_id":"org-1","workspace_id":"` + testWorkspaceID + `","name":"shell:git / group:Engineering","src_pattern":"group:Engineering","dst_pattern":"shell:git","effect":"permit","priority":100,"enabled":true,"approval_required":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}`))
+		_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","org_id":"org-1","workspace_id":"` + testWorkspaceID + `","name":"shell:git / group:Engineering","principal":{"kind":"group","value":"Engineering"},"target":{"kind":"shell","value":"git"},"action":"permit","priority":100,"enabled":true,"approval_required":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}`))
 	})
 	code, stdout, stderr := runPolicy(t, server, store, "", "create", "--workspace", "Main",
 		"--group", "Engineering", "--allow", "shell:git")
@@ -95,20 +95,20 @@ func TestPolicyCreate(t *testing.T) {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
 	req := fake.only(t)
-	if req.Method != http.MethodPost || req.Path != "/api/v1/policies" || req.Query != "workspace_id="+testWorkspaceID {
+	if req.Method != http.MethodPost || req.Path != typedPoliciesPath() || req.Query != "" {
 		t.Fatalf("request = %s %s?%s", req.Method, req.Path, req.Query)
 	}
-	if req.Body["src_pattern"] != "group:Engineering" {
-		t.Errorf("src_pattern = %q, want group:Engineering", req.Body["src_pattern"])
+	assertNoLegacyPolicyFields(t, req.Body, "policy create")
+	principal, _ := req.Body["principal"].(map[string]any)
+	if principal["kind"] != "group" || principal["value"] != "Engineering" {
+		t.Errorf("principal = %v, want {kind:group value:Engineering}", req.Body["principal"])
 	}
-	if req.Body["dst_pattern"] != "shell:git" {
-		t.Errorf("dst_pattern = %q, want shell:git", req.Body["dst_pattern"])
+	target, _ := req.Body["target"].(map[string]any)
+	if target["kind"] != "shell" || target["value"] != "git" {
+		t.Errorf("target = %v, want {kind:shell value:git}", req.Body["target"])
 	}
-	if req.Body["effect"] != "permit" {
-		t.Errorf("effect = %q, want permit", req.Body["effect"])
-	}
-	if _, present := req.Body["action"]; present {
-		t.Errorf("body contains action, want effect alone: %#v", req.Body)
+	if req.Body["action"] != "permit" {
+		t.Errorf("action = %q, want permit", req.Body["action"])
 	}
 	if !strings.Contains(stdout, testPolicyID) {
 		t.Fatalf("create output missing policy id: %q", stdout)
@@ -118,7 +118,7 @@ func TestPolicyCreate(t *testing.T) {
 func TestPolicyCreateDeny(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
 		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","org_id":"org-1","workspace_id":"` + testWorkspaceID + `","name":"shell:rm / group:Engineering","src_pattern":"group:Engineering","dst_pattern":"shell:rm","effect":"deny","priority":100,"enabled":true,"approval_required":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}`))
+		_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","org_id":"org-1","workspace_id":"` + testWorkspaceID + `","name":"shell:rm / group:Engineering","principal":{"kind":"group","value":"Engineering"},"target":{"kind":"shell","value":"rm"},"action":"deny","priority":100,"enabled":true,"approval_required":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}`))
 	})
 	code, stdout, stderr := runPolicy(t, server, store, "", "create", "--workspace", "Main",
 		"--group", "Engineering", "--deny", "shell:rm")
@@ -126,11 +126,13 @@ func TestPolicyCreateDeny(t *testing.T) {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
 	req := fake.only(t)
-	if req.Body["effect"] != "deny" {
-		t.Errorf("effect = %q, want deny", req.Body["effect"])
+	assertNoLegacyPolicyFields(t, req.Body, "policy create deny")
+	if req.Body["action"] != "deny" {
+		t.Errorf("action = %q, want deny", req.Body["action"])
 	}
-	if req.Body["dst_pattern"] != "shell:rm" {
-		t.Errorf("dst_pattern = %q, want shell:rm", req.Body["dst_pattern"])
+	target, _ := req.Body["target"].(map[string]any)
+	if target["kind"] != "shell" || target["value"] != "rm" {
+		t.Errorf("target = %v, want {kind:shell value:rm}", req.Body["target"])
 	}
 	if !strings.Contains(stdout, testPolicyID) {
 		t.Fatalf("create output missing policy id: %q", stdout)
@@ -198,11 +200,11 @@ func TestPolicyDelete(t *testing.T) {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
 	req := fake.only(t)
-	if req.Method != http.MethodDelete || req.Path != "/api/v1/policies/"+testPolicyID {
+	if req.Method != http.MethodDelete || req.Path != typedPoliciesPath()+"/"+testPolicyID {
 		t.Fatalf("request = %s %s", req.Method, req.Path)
 	}
-	if !strings.Contains(req.Query, "workspace_id="+testWorkspaceID) {
-		t.Fatalf("query = %q, want workspace_id", req.Query)
+	if strings.Contains(req.Query, "workspace_id=") {
+		t.Fatalf("query = %q; the typed workspace path already carries the workspace", req.Query)
 	}
 	if !strings.Contains(stdout, "deleted") {
 		t.Fatalf("delete output = %q", stdout)
@@ -473,11 +475,11 @@ func TestPoliciesAliasShowsDeprecation(t *testing.T) {
 func TestPoliciesImportPartialFailure(t *testing.T) {
 	attempts := 0
 	_, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		if r.Method == http.MethodPost && r.Path == "/api/v1/policies" {
+		if r.Method == http.MethodPost && r.Path == typedPoliciesPath() {
 			attempts++
 			if attempts == 1 {
 				w.WriteHeader(http.StatusCreated)
-				_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","name":"allow-x","effect":"permit","src_pattern":"harness:test","dst_pattern":"shell:x","approval_required":false}`))
+				_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","name":"allow-x","principal":{"kind":"harness","value":"test"},"target":{"kind":"shell","value":"x"},"action":"permit","approval_required":false}`))
 				return
 			}
 			// Second policy fails

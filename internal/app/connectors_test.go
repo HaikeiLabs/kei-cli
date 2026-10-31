@@ -948,7 +948,7 @@ func TestConnectorsCreateDefaultsToAdminsAllowPolicy(t *testing.T) {
 			_, _ = w.Write([]byte(`[{"id":"` + adminGroupID + `","name":"admins"}]`))
 		case r.Method == http.MethodPost && r.Path == "/api/v1/data-connectors":
 			createdResponse(w, r)
-		case r.Method == http.MethodPost && r.Path == "/api/v1/policies":
+		case r.Method == http.MethodPost && r.Path == typedPoliciesPath():
 			_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `"}`))
 		case r.Method == http.MethodGet && r.Path == "/api/v1/data-connectors/"+testConnectorID:
 			_, _ = w.Write([]byte(`{"id":"` + testConnectorID + `","name":"team-mail","status":"active"}`))
@@ -963,15 +963,18 @@ func TestConnectorsCreateDefaultsToAdminsAllowPolicy(t *testing.T) {
 	}
 	var policy *consoleRequest
 	for i := range fake.requests {
-		if fake.requests[i].Method == http.MethodPost && fake.requests[i].Path == "/api/v1/policies" {
+		if fake.requests[i].Method == http.MethodPost && fake.requests[i].Path == typedPoliciesPath() {
 			policy = &fake.requests[i]
 		}
 	}
 	if policy == nil {
 		t.Fatal("default allow policy was not created")
 	}
+	assertNoLegacyPolicyFields(t, policy.Body, "default allow policy")
 	selector, _ := policy.Body["selector_v2"].(map[string]any)
-	if policy.Body["src_pattern"] != "group:admins" || policy.Body["dst_pattern"] != "capability:"+fmt.Sprint(selector["capability"]) || policy.Body["effect"] != "permit" {
+	principal, _ := policy.Body["principal"].(map[string]any)
+	target, _ := policy.Body["target"].(map[string]any)
+	if principal["kind"] != "group" || principal["value"] != "admins" || target["kind"] != "capability" || target["value"] != fmt.Sprint(selector["capability"]) || policy.Body["action"] != "permit" {
 		t.Fatalf("default policy = %#v", policy)
 	}
 	if selector["connector_id"] != testConnectorID || selector["source"] != "gmail" {
@@ -1016,7 +1019,7 @@ func TestConnectorsCreateNoDefaultAccessSkipsPolicyAndWarns(t *testing.T) {
 		t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout, stderr)
 	}
 	for _, req := range fake.requests {
-		if req.Method == http.MethodPost && req.Path == "/api/v1/policies" {
+		if req.Method == http.MethodPost && req.Path == typedPoliciesPath() {
 			t.Fatal("unexpected allow policy")
 		}
 	}
@@ -1354,7 +1357,7 @@ func TestConnectorsCreateAllowGroupsCreatesGroupCapabilityPolicies(t *testing.T)
 			_, _ = w.Write([]byte(`[{"id":"` + groupID + `","name":"Engineering"},{"id":"` + groupID2 + `","name":"Operations"},{"id":"` + adminGroupID + `","name":"admins"}]`))
 		case r.Method == http.MethodPost && r.Path == "/api/v1/data-connectors":
 			createdResponse(w, r)
-		case r.Method == http.MethodPost && r.Path == "/api/v1/policies":
+		case r.Method == http.MethodPost && r.Path == typedPoliciesPath():
 			_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `"}`))
 		case r.Method == http.MethodGet && r.Path == "/api/v1/data-connectors/"+testConnectorID:
 			_, _ = w.Write([]byte(`{"id":"` + testConnectorID + `","name":"team-mail","status":"active"}`))
@@ -1369,7 +1372,7 @@ func TestConnectorsCreateAllowGroupsCreatesGroupCapabilityPolicies(t *testing.T)
 	}
 	var policies []consoleRequest
 	for _, req := range fake.requests {
-		if req.Method == http.MethodPost && req.Path == "/api/v1/policies" {
+		if req.Method == http.MethodPost && req.Path == typedPoliciesPath() {
 			policies = append(policies, req)
 		}
 	}
@@ -1380,7 +1383,10 @@ func TestConnectorsCreateAllowGroupsCreatesGroupCapabilityPolicies(t *testing.T)
 		body := policies[i].Body
 		selector, _ := body["selector_v2"].(map[string]any)
 		capability := []string{"message.search", "message.get", "message.search", "message.get"}[i]
-		if body["src_pattern"] != "group:"+group || body["dst_pattern"] != "capability:"+capability || body["effect"] != "permit" {
+		assertNoLegacyPolicyFields(t, body, "group capability policy")
+		principal, _ := body["principal"].(map[string]any)
+		target, _ := body["target"].(map[string]any)
+		if principal["kind"] != "group" || principal["value"] != group || target["kind"] != "capability" || target["value"] != capability || body["action"] != "permit" {
 			t.Errorf("policy body = %#v", body)
 		}
 		if selector["connector_id"] != testConnectorID || selector["source"] != "gmail" || selector["capability"] != capability {

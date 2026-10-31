@@ -35,8 +35,11 @@ func TestPoliciesList(t *testing.T) {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
 	req := fake.only(t)
-	if req.Method != http.MethodGet || req.Path != "/api/v1/policies" || !strings.Contains(req.Query, "workspace_id="+testWorkspaceID) {
+	if req.Method != http.MethodGet || req.Path != typedPoliciesPath() || !strings.Contains(req.Query, "page_size=") {
 		t.Fatalf("request = %s %s?%s", req.Method, req.Path, req.Query)
+	}
+	if strings.Contains(req.Query, "workspace_id=") {
+		t.Fatalf("query = %q; the typed workspace path already carries the workspace", req.Query)
 	}
 	if req.Auth != "Bearer "+workspaceTestToken() {
 		t.Fatalf("Authorization = %q", req.Auth)
@@ -86,7 +89,7 @@ func TestPoliciesListPagination(t *testing.T) {
 	if calls != 2 {
 		t.Fatalf("expected 2 requests, got %d", calls)
 	}
-	if !strings.Contains(fake.requests[0].Query, "workspace_id="+testWorkspaceID) || !strings.Contains(fake.requests[0].Query, "page_size=1") {
+	if fake.requests[0].Query != "page_size=1" {
 		t.Fatalf("page 1 query = %q", fake.requests[0].Query)
 	}
 	if !strings.Contains(fake.requests[1].Query, "page_token=cursor2") {
@@ -123,7 +126,7 @@ func TestPoliciesListBareArray(t *testing.T) {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
 	req := fake.only(t)
-	if req.Method != http.MethodGet || req.Path != "/api/v1/policies" {
+	if req.Method != http.MethodGet || req.Path != typedPoliciesPath() {
 		t.Fatalf("request = %s %s", req.Method, req.Path)
 	}
 	for _, want := range []string{testPolicyID, "allow-git", "deny-rm"} {
@@ -144,7 +147,7 @@ func TestPoliciesGet(t *testing.T) {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
 	req := fake.only(t)
-	if req.Method != http.MethodGet || req.Path != "/api/v1/policies/"+testPolicyID || req.Query != "workspace_id="+testWorkspaceID {
+	if req.Method != http.MethodGet || req.Path != typedPoliciesPath()+"/"+testPolicyID || req.Query != "" {
 		t.Fatalf("request = %s %s?%s", req.Method, req.Path, req.Query)
 	}
 	for _, want := range []string{testPolicyID, "allow-git", "harness:claude", "shell:git", "permit"} {
@@ -173,7 +176,7 @@ func TestPoliciesGetJSON(t *testing.T) {
 
 func TestPoliciesGetByName(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		if r.Path == "/api/v1/policies" && r.Method == http.MethodGet {
+		if r.Path == typedPoliciesPath() && r.Method == http.MethodGet {
 			_, _ = w.Write([]byte(`{"policies":[{"id":"` + testPolicyID + `","name":"allow-git","effect":"permit","approval_required":false}],"next_page_token":""}`))
 			return
 		}
@@ -230,11 +233,24 @@ func TestPoliciesCreate(t *testing.T) {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
 	req := fake.only(t)
-	if req.Method != http.MethodPost || req.Path != "/api/v1/policies" || req.Query != "workspace_id="+testWorkspaceID {
+	if req.Method != http.MethodPost || req.Path != typedPoliciesPath() || req.Query != "" {
 		t.Fatalf("request = %s %s?%s", req.Method, req.Path, req.Query)
 	}
-	if req.Body["name"] != "allow-git" || req.Body["src_pattern"] != "harness:claude" || req.Body["dst_pattern"] != "shell:git" || req.Body["effect"] != "permit" || req.Body["action"] != "permit" {
+	if req.Body["name"] != "allow-git" || req.Body["action"] != "permit" {
 		t.Fatalf("body = %v", req.Body)
+	}
+	principal, ok := req.Body["principal"].(map[string]any)
+	if !ok || principal["kind"] != "harness" || principal["value"] != "claude" {
+		t.Fatalf("principal = %v; want {kind:harness value:claude}", req.Body["principal"])
+	}
+	target, ok := req.Body["target"].(map[string]any)
+	if !ok || target["kind"] != "shell" || target["value"] != "git" {
+		t.Fatalf("target = %v; want {kind:shell value:git}", req.Body["target"])
+	}
+	for _, legacy := range []string{"src_pattern", "dst_pattern", "effect"} {
+		if _, present := req.Body[legacy]; present {
+			t.Fatalf("body sends legacy field %q: %v", legacy, req.Body)
+		}
 	}
 	if _, present := req.Body["priority"]; present {
 		t.Fatalf("body sends priority, which the catalog ignores (ADR-038 D-1): %v", req.Body)
@@ -284,25 +300,25 @@ func TestPoliciesCreateRequiresFields(t *testing.T) {
 	}
 }
 
-// catalogPolicyBody mirrors the catalog's AIP create/update body
-// (kei-policy-catalog internal/policies/aip.go, policyBody, as of
-// HaikeiLabs/kei-policy-catalog#260). The catalog decodes it with
-// DisallowUnknownFields, so a field the CLI sends that is not here is a 400
-// "invalid request body". agent_id is deliberately absent: the catalog rejects
-// it (HAI-673), so a CLI that sent it would fail.
+// catalogPolicyBody mirrors the catalog's typed AIP create/update body
+// (kei-policy-catalog internal/openapi/openapi.json, PolicyWriteRequest, as of
+// HAI-621: the typed principal/target objects instead of src_pattern and
+// dst_pattern). The catalog decodes it with DisallowUnknownFields, so a field
+// the CLI sends that is not here is a 400 "invalid request body".
+// agent_id is deliberately absent: the catalog rejects it on these paths
+// (HAI-673), so a CLI that sent it would fail.
 // selector_v2 and update_mask are accepted by the catalog but the CLI does
-// not send them.
+// not send them on create.
 type catalogPolicyBody struct {
-	Name        *string         `json:"name"`
-	Description *string         `json:"description"`
-	SrcPattern  *string         `json:"src_pattern"`
-	DstPattern  *string         `json:"dst_pattern"`
-	Effect      *string         `json:"effect"`
-	Action      *string         `json:"action"`
-	Priority    *int            `json:"priority"`
-	Enabled     *bool           `json:"enabled"`
-	SelectorV2  json.RawMessage `json:"selector_v2"`
-	UpdateMask  json.RawMessage `json:"update_mask"`
+	Name        *string            `json:"name"`
+	Description *string            `json:"description"`
+	Principal   *map[string]string `json:"principal"`
+	Target      *map[string]any    `json:"target"`
+	Action      *string            `json:"action"`
+	Priority    *int               `json:"priority"`
+	Enabled     *bool              `json:"enabled"`
+	SelectorV2  json.RawMessage    `json:"selector_v2"`
+	UpdateMask  json.RawMessage    `json:"update_mask"`
 }
 
 func decodeCatalogPolicyBody(t *testing.T, raw string) catalogPolicyBody {
@@ -343,7 +359,7 @@ func TestPoliciesRequestBodiesMatchCatalogSchema(t *testing.T) {
 	req := fake.only(t)
 	decodeCatalogPolicyBody(t, req.Raw)
 	q, _ := url.ParseQuery(req.Query)
-	if q.Get("update_mask") != "name,description,src_pattern,dst_pattern,effect,enabled" {
+	if q.Get("update_mask") != "name,description,principal,target,action,enabled" {
 		t.Fatalf("update_mask = %q", q.Get("update_mask"))
 	}
 }
@@ -398,24 +414,20 @@ func TestPoliciesUpdate(t *testing.T) {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
 	req := fake.only(t)
-	if req.Method != http.MethodPatch || req.Path != "/api/v1/policies/"+testPolicyID {
+	if req.Method != http.MethodPatch || req.Path != typedPoliciesPath()+"/"+testPolicyID {
 		t.Fatalf("request = %s %s", req.Method, req.Path)
 	}
-	if !strings.Contains(req.Query, "workspace_id="+testWorkspaceID) {
-		t.Fatalf("query = %q, want workspace_id", req.Query)
-	}
 	q, _ := url.ParseQuery(req.Query)
-	if q.Get("update_mask") != "name,effect" {
-		t.Fatalf("query = %q, want update_mask=name,effect", req.Query)
+	if q.Get("update_mask") != "name,action" {
+		t.Fatalf("query = %q, want update_mask=name,action", req.Query)
 	}
-	if req.Body["name"] != "renamed" || req.Body["effect"] != "deny" || req.Body["action"] != "deny" {
+	if req.Body["name"] != "renamed" || req.Body["action"] != "deny" {
 		t.Fatalf("body = %v", req.Body)
 	}
-	if _, present := req.Body["src_pattern"]; present {
-		t.Fatal("body contains src_pattern, but it was not set")
-	}
-	if _, present := req.Body["dst_pattern"]; present {
-		t.Fatal("body contains dst_pattern, but it was not set")
+	for _, legacy := range []string{"src_pattern", "dst_pattern", "effect"} {
+		if _, present := req.Body[legacy]; present {
+			t.Fatalf("body contains legacy field %q, but --src-pattern/--dst-pattern were not set", legacy)
+		}
 	}
 	if !strings.Contains(stdout, "renamed") {
 		t.Fatalf("update output missing new name: %q", stdout)
@@ -434,7 +446,7 @@ func TestPoliciesUpdateSendsOnlySetFlags(t *testing.T) {
 		t.Fatalf("stderr = %q, want the --priority deprecation warning", stderr)
 	}
 	req := fake.only(t)
-	for _, field := range []string{"priority", "name", "src_pattern", "dst_pattern", "effect", "action", "description"} {
+	for _, field := range []string{"priority", "name", "principal", "target", "action", "description"} {
 		if _, present := req.Body[field]; present {
 			t.Fatalf("body contains %q, but only --enabled was set", field)
 		}
@@ -464,7 +476,7 @@ func TestPoliciesUpdateRequiresAtLeastOneField(t *testing.T) {
 
 func TestPoliciesUpdateByName(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		if r.Path == "/api/v1/policies" && r.Method == http.MethodGet {
+		if r.Path == typedPoliciesPath() && r.Method == http.MethodGet {
 			_, _ = w.Write([]byte(`{"policies":[{"id":"` + testPolicyID + `","name":"allow-git","effect":"permit","approval_required":false}],"next_page_token":""}`))
 			return
 		}
@@ -501,11 +513,8 @@ func TestPoliciesDelete(t *testing.T) {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
 	req := fake.only(t)
-	if req.Method != http.MethodDelete || req.Path != "/api/v1/policies/"+testPolicyID {
+	if req.Method != http.MethodDelete || req.Path != typedPoliciesPath()+"/"+testPolicyID {
 		t.Fatalf("request = %s %s", req.Method, req.Path)
-	}
-	if !strings.Contains(req.Query, "workspace_id="+testWorkspaceID) {
-		t.Fatalf("query = %q, want workspace_id", req.Query)
 	}
 	if !strings.Contains(stdout, "deleted") {
 		t.Fatalf("delete output = %q", stdout)
@@ -514,7 +523,7 @@ func TestPoliciesDelete(t *testing.T) {
 
 func TestPoliciesDeleteByName(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		if r.Path == "/api/v1/policies" && r.Method == http.MethodGet {
+		if r.Path == typedPoliciesPath() && r.Method == http.MethodGet {
 			_, _ = w.Write([]byte(`{"policies":[{"id":"` + testPolicyID + `","name":"allow-git","effect":"permit","approval_required":false}],"next_page_token":""}`))
 			return
 		}
@@ -564,7 +573,7 @@ func TestPoliciesResolveWorkspaceByName(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
-	if fake.count() != 1 || !strings.Contains(fake.requests[0].Query, "workspace_id="+testWorkspaceID) {
+	if fake.count() != 1 || fake.requests[0].Path != typedPoliciesPath() || strings.Contains(fake.requests[0].Query, "workspace_id=") {
 		t.Fatalf("requests = %#v", fake.requests)
 	}
 	if !strings.Contains(stdout, "No policies") {
@@ -758,18 +767,27 @@ func TestPoliciesImportSrcOverride(t *testing.T) {
 func TestPoliciesImportApplyCreatesPolicies(t *testing.T) {
 	created := 0
 	_, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		if r.Method == http.MethodPost && r.Path == "/api/v1/policies" {
+		if r.Method == http.MethodPost && r.Path == typedPoliciesPath() {
 			created++
-			name, _ := r.Body["name"].(string)
-			eff, _ := r.Body["effect"].(string)
 			act, _ := r.Body["action"].(string)
-			if act != eff {
-				t.Errorf("action = %q, want %q", act, eff)
+			principal, _ := r.Body["principal"].(map[string]any)
+			target, _ := r.Body["target"].(map[string]any)
+			if act != "deny" && act != "permit" {
+				t.Errorf("action = %q", act)
 			}
-			src, _ := r.Body["src_pattern"].(string)
-			dst, _ := r.Body["dst_pattern"].(string)
+			if principal["kind"] != "harness" || principal["value"] != "claude_code" {
+				t.Errorf("principal = %v; want {kind:harness value:claude_code}", principal)
+			}
+			if _, ok := target["kind"]; !ok {
+				t.Errorf("target missing kind: %v", target)
+			}
+			for _, legacy := range []string{"src_pattern", "dst_pattern", "effect"} {
+				if _, present := r.Body[legacy]; present {
+					t.Errorf("body sends legacy field %q: %v", legacy, r.Body)
+				}
+			}
 			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","name":"` + name + `","effect":"` + eff + `","src_pattern":"` + src + `","dst_pattern":"` + dst + `","approval_required":false}`))
+			_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","status":"ok"}`))
 			return
 		}
 		t.Errorf("unexpected request %s %s", r.Method, r.Path)
@@ -868,25 +886,30 @@ func TestPolicyMarshalUsesEffect(t *testing.T) {
 }
 
 func TestPoliciesCreateSendsActionField(t *testing.T) {
-	// The CLI includes the effect and its action alias in policy writes.
+	// The typed write body carries the decision in `action` (the typed API has
+	// no separate `effect` field) and never the legacy pattern fields.
 	var gotBody map[string]any
 	_, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		if r.Body["action"] == nil || r.Body["action"] != r.Body["effect"] {
+		act, _ := r.Body["action"].(string)
+		if act != "permit" && act != "deny" {
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"reason":"invalid_argument","message":"action must be 'permit' or 'deny'"}`))
 			return
 		}
 		gotBody = r.Body
 		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","name":"test","effect":"permit","approval_required":false}`))
+		_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","status":"ok"}`))
 	})
 	code, stdout, stderr := runPolicies(t, server, store, "", "create", "--workspace", "Main",
 		"--name", "test", "--src-pattern", "harness:claude", "--dst-pattern", "shell:git", "--effect", "permit")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
-	if gotBody == nil || gotBody["action"] != "permit" || gotBody["effect"] != "permit" {
-		t.Fatalf("body missing action or effect fields: %v", gotBody)
+	if gotBody == nil || gotBody["action"] != "permit" {
+		t.Fatalf("body missing action field: %v", gotBody)
+	}
+	if _, present := gotBody["effect"]; present {
+		t.Fatalf("body sends legacy effect field: %v", gotBody)
 	}
 	if !strings.Contains(stdout, testPolicyID) {
 		t.Fatalf("create output missing policy id: %q", stdout)
@@ -896,20 +919,24 @@ func TestPoliciesCreateSendsActionField(t *testing.T) {
 func TestPoliciesUpdateSendsActionField(t *testing.T) {
 	var gotBody map[string]any
 	_, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		if r.Body["action"] == nil || r.Body["action"] != r.Body["effect"] {
+		act, _ := r.Body["action"].(string)
+		if act != "deny" {
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"reason":"invalid_argument","message":"action must be 'permit' or 'deny'"}`))
 			return
 		}
 		gotBody = r.Body
-		_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","name":"test","effect":"deny","approval_required":false}`))
+		_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `","name":"test","action":"deny","enabled":true}`))
 	})
 	code, _, stderr := runPolicies(t, server, store, "", "update", testPolicyID, "--workspace", "Main", "--effect", "deny")
 	if code != 0 {
 		t.Fatalf("exit = %d stderr=%s", code, stderr)
 	}
-	if gotBody == nil || gotBody["action"] != "deny" || gotBody["effect"] != "deny" {
-		t.Fatalf("body missing action or effect fields: %v", gotBody)
+	if gotBody == nil || gotBody["action"] != "deny" {
+		t.Fatalf("body missing action field: %v", gotBody)
+	}
+	if _, present := gotBody["effect"]; present {
+		t.Fatalf("body sends legacy effect field: %v", gotBody)
 	}
 }
 
