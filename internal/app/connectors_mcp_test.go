@@ -410,7 +410,7 @@ func TestConnectorsCreateTemplateAllowsGroup(t *testing.T) {
 			_, _ = w.Write([]byte(`[{"id":"` + groupID + `","name":"Engineering"}]`))
 		case r.Method == http.MethodPost && r.Path == "/api/v1/data-connectors":
 			_, _ = w.Write([]byte(`{"id":"` + testConnectorID + `","name":"Grafana","status":"pending","slug":"grafana","mcp_url":"https://mcp.example.com"}`))
-		case r.Method == http.MethodPost && r.Path == "/api/v1/policies":
+		case r.Method == http.MethodPost && r.Path == typedPoliciesPath():
 			_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `"}`))
 		case r.Method == http.MethodGet && r.Path == "/api/v1/data-connectors/"+testConnectorID:
 			_, _ = w.Write([]byte(`{"id":"` + testConnectorID + `","name":"Grafana","status":"active"}`))
@@ -425,9 +425,12 @@ func TestConnectorsCreateTemplateAllowsGroup(t *testing.T) {
 	}
 	var gotPolicy bool
 	for _, req := range fake.requests {
-		if req.Method == http.MethodPost && req.Path == "/api/v1/policies" {
+		if req.Method == http.MethodPost && req.Path == typedPoliciesPath() {
+			assertNoLegacyPolicyFields(t, req.Body, "template group policy")
 			selector, _ := req.Body["selector_v2"].(map[string]any)
-			gotPolicy = req.Body["src_pattern"] == "group:Engineering" && req.Body["dst_pattern"] == "connector:"+testConnectorID && selector["connector_id"] == testConnectorID
+			principal, _ := req.Body["principal"].(map[string]any)
+			target, _ := req.Body["target"].(map[string]any)
+			gotPolicy = principal["kind"] == "group" && principal["value"] == "Engineering" && target["kind"] == "connector" && target["value"] == testConnectorID && selector["connector_id"] == testConnectorID
 		}
 	}
 	if !gotPolicy {

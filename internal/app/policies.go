@@ -19,28 +19,103 @@ import (
 	"github.com/google/uuid"
 )
 
+// policyPrincipal and policyTarget are the typed forms of the legacy
+// src_pattern/dst_pattern strings (HAI-621): objects that name a kind and a
+// value instead of a raw "kind:value" pattern.
+type policyPrincipal struct {
+	Kind  string `json:"kind"`
+	Value string `json:"value"`
+}
+
+type policyTarget struct {
+	Kind  string   `json:"kind"`
+	Value string   `json:"value,omitempty"`
+	Caps  []string `json:"caps,omitempty"`
+}
+
+// parseTypedPattern splits a "prefix:rest" pattern into its typed kind/value
+// form, the encoding the typed policy API documents for principal and target.
+// A pattern without a colon keeps its whole value as the kind.
+func parseTypedPattern(pattern string) (string, string) {
+	if i := strings.Index(pattern, ":"); i >= 0 {
+		return pattern[:i], pattern[i+1:]
+	}
+	return pattern, ""
+}
+
+func typedPrincipal(pattern string) *policyPrincipal {
+	if pattern == "" {
+		return nil
+	}
+	kind, value := parseTypedPattern(pattern)
+	return &policyPrincipal{Kind: kind, Value: value}
+}
+
+func typedTarget(pattern string) *policyTarget {
+	if pattern == "" {
+		return nil
+	}
+	kind, value := parseTypedPattern(pattern)
+	return &policyTarget{Kind: kind, Value: value}
+}
+
 type policy struct {
-	ID               string  `json:"id"`
-	OrgID            string  `json:"org_id"`
-	WorkspaceID      string  `json:"workspace_id"`
-	AgentID          *string `json:"agent_id,omitempty"`
-	Name             string  `json:"name"`
-	Description      string  `json:"description,omitempty"`
-	SrcPattern       string  `json:"src_pattern"`
-	DstPattern       string  `json:"dst_pattern"`
-	Effect           string  `json:"effect"`
-	Enabled          bool    `json:"enabled"`
-	ApprovalRequired bool    `json:"approval_required"`
-	CreatedAt        string  `json:"created_at"`
-	UpdatedAt        string  `json:"updated_at"`
+	ID               string           `json:"id"`
+	OrgID            string           `json:"org_id"`
+	WorkspaceID      string           `json:"workspace_id,omitempty"`
+	AgentID          *string          `json:"agent_id,omitempty"`
+	Name             string           `json:"name,omitempty"`
+	Description      string           `json:"description,omitempty"`
+	Principal        *policyPrincipal `json:"principal,omitempty"`
+	SrcPattern       string           `json:"src_pattern,omitempty"`
+	Target           *policyTarget    `json:"target,omitempty"`
+	DstPattern       string           `json:"dst_pattern,omitempty"`
+	Effect           string           `json:"effect,omitempty"`
+	Action           string           `json:"action,omitempty"`
+	Enabled          bool             `json:"enabled"`
+	ApprovalRequired bool             `json:"approval_required,omitempty"`
+	CreatedAt        string           `json:"created_at,omitempty"`
+	UpdatedAt        string           `json:"updated_at,omitempty"`
+}
+
+// srcDisplay returns the user-visible source: the typed principal rendered
+// back as "kind:value", or the legacy src_pattern for rows the server still
+// sends in the old shape.
+func (p *policy) srcDisplay() string {
+	if p.Principal != nil {
+		if p.Principal.Value != "" && p.Principal.Value != "*" {
+			return p.Principal.Kind + ":" + p.Principal.Value
+		}
+		return p.Principal.Kind
+	}
+	return p.SrcPattern
+}
+
+// dstDisplay returns the user-visible target (see srcDisplay).
+func (p *policy) dstDisplay() string {
+	if p.Target != nil {
+		if p.Target.Value != "" && p.Target.Value != "*" {
+			return p.Target.Kind + ":" + p.Target.Value
+		}
+		return p.Target.Kind
+	}
+	return p.DstPattern
+}
+
+// effectDisplay prefers Action (the typed response) and falls back to Effect.
+func (p *policy) effectDisplay() string {
+	if p.Action != "" {
+		return p.Action
+	}
+	return p.Effect
 }
 
 type createPolicyRequest struct {
 	Name        string                  `json:"name"`
 	Description string                  `json:"description,omitempty"`
-	SrcPattern  string                  `json:"src_pattern"`
-	DstPattern  string                  `json:"dst_pattern"`
-	Effect      string                  `json:"effect"`
+	Principal   *policyPrincipal        `json:"principal,omitempty"`
+	Target      *policyTarget           `json:"target,omitempty"`
+	Effect      string                  `json:"-"`
 	Action      string                  `json:"action,omitempty"`
 	Enabled     bool                    `json:"enabled"`
 	SelectorV2  *createPolicySelectorV2 `json:"selector_v2,omitempty"`
@@ -53,13 +128,13 @@ type createPolicySelectorV2 struct {
 }
 
 type updatePolicyRequest struct {
-	Name        *string `json:"name,omitempty"`
-	Description *string `json:"description,omitempty"`
-	SrcPattern  *string `json:"src_pattern,omitempty"`
-	DstPattern  *string `json:"dst_pattern,omitempty"`
-	Effect      *string `json:"effect,omitempty"`
-	Action      *string `json:"action,omitempty"`
-	Enabled     *bool   `json:"enabled,omitempty"`
+	Name        *string          `json:"name,omitempty"`
+	Description *string          `json:"description,omitempty"`
+	Principal   *policyPrincipal `json:"principal,omitempty"`
+	Target      *policyTarget    `json:"target,omitempty"`
+	Effect      *string          `json:"-"`
+	Action      *string          `json:"action,omitempty"`
+	Enabled     *bool            `json:"enabled,omitempty"`
 }
 
 type migrationReportResponse struct {
@@ -118,6 +193,7 @@ type policySession struct {
 	client      *http.Client
 	baseURL     string
 	token       string
+	orgID       string
 	workspaceID string
 }
 
@@ -126,8 +202,12 @@ func openPolicySession(command string, sel workspaceSelection, stderr io.Writer,
 	if !ok {
 		return nil, false
 	}
+	orgID, err := organizationIDFromCLIToken(token)
+	if err != nil {
+		fmt.Fprintf(stderr, "policies %s: %v; run kei login again\n", command, err)
+		return nil, false
+	}
 	var workspaceID string
-	var err error
 	if sel.pickDefault {
 		workspaceID, err = resolveWorkspaceSelection(context.Background(), client, baseURL, token, sel)
 	} else {
@@ -137,17 +217,21 @@ func openPolicySession(command string, sel workspaceSelection, stderr io.Writer,
 		fmt.Fprintf(stderr, "policies %s: %v\n", command, err)
 		return nil, false
 	}
-	return &policySession{client: client, baseURL: baseURL, token: token, workspaceID: workspaceID}, true
+	return &policySession{client: client, baseURL: baseURL, token: token, orgID: orgID, workspaceID: workspaceID}, true
+}
+
+// orgPath returns the typed workspace-path base for policy requests (the
+// canonical form of the legacy flat /api/v1/policies route).
+func (s *policySession) orgPath(extra string) string {
+	return "/api/v1/organizations/" + url.PathEscape(s.orgID) +
+		"/workspaces/" + url.PathEscape(s.workspaceID) + "/policies" + extra
 }
 
 func (s *policySession) do(method, path string, body any, extraQuery url.Values) ([]byte, error) {
-	params := url.Values{"workspace_id": {s.workspaceID}}
-	for k, vs := range extraQuery {
-		for _, v := range vs {
-			params.Add(k, v)
-		}
+	endpoint := s.baseURL + s.orgPath(path)
+	if len(extraQuery) > 0 {
+		endpoint += "?" + extraQuery.Encode()
 	}
-	endpoint := s.baseURL + "/api/v1/policies" + path + "?" + params.Encode()
 	return s.request(method, endpoint, body)
 }
 
@@ -423,7 +507,7 @@ func runPoliciesList(group string, args []string, stdout, stderr io.Writer, clie
 		if p.Enabled {
 			enabled = "yes"
 		}
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\n", p.ID, p.Name, p.SrcPattern, p.DstPattern, p.Effect, enabled)
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\n", p.ID, p.Name, p.srcDisplay(), p.dstDisplay(), p.effectDisplay(), enabled)
 	}
 	_ = table.Flush()
 	return 0
@@ -477,7 +561,7 @@ func runPoliciesGet(group string, args []string, stdout, stderr io.Writer, clien
 	if p.Enabled {
 		enabled = "yes"
 	}
-	fmt.Fprintf(stdout, "ID:          %s\nName:        %s\nSource:      %s\nTarget:      %s\nEffect:      %s\nEnabled:     %s\n", p.ID, p.Name, p.SrcPattern, p.DstPattern, p.Effect, enabled)
+	fmt.Fprintf(stdout, "ID:          %s\nName:        %s\nSource:      %s\nTarget:      %s\nEffect:      %s\nEnabled:     %s\n", p.ID, p.Name, p.srcDisplay(), p.dstDisplay(), p.effectDisplay(), enabled)
 	if p.Description != "" {
 		fmt.Fprintf(stdout, "Description: %s\n", p.Description)
 	}
@@ -530,8 +614,8 @@ func runPoliciesCreate(args []string, stdout, stderr io.Writer, client *http.Cli
 	request := createPolicyRequest{
 		Name:        *name,
 		Description: *description,
-		SrcPattern:  *srcPattern,
-		DstPattern:  *dstPattern,
+		Principal:   typedPrincipal(*srcPattern),
+		Target:      typedTarget(*dstPattern),
 		Effect:      *effect,
 		Action:      *effect,
 		Enabled:     true,
@@ -550,7 +634,7 @@ func runPoliciesCreate(args []string, stdout, stderr io.Writer, client *http.Cli
 		fmt.Fprintf(stderr, "policies create: decode response: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "Created policy %s (%s → %s, %s).\nPolicy ID: %s\n", created.Name, created.SrcPattern, created.DstPattern, created.Effect, created.ID)
+	fmt.Fprintf(stdout, "Created policy %s (%s → %s, %s).\nPolicy ID: %s\n", created.Name, *srcPattern, *dstPattern, *effect, created.ID)
 	return 0
 }
 
@@ -614,11 +698,12 @@ func runPolicyCreate(args []string, stdout, stderr io.Writer, client *http.Clien
 		return 1
 	}
 	request := createPolicyRequest{
-		Name:       target + " / " + src,
-		SrcPattern: src,
-		DstPattern: target,
-		Effect:     effect,
-		Enabled:    true,
+		Name:      target + " / " + src,
+		Principal: typedPrincipal(src),
+		Target:    typedTarget(target),
+		Effect:    effect,
+		Action:    effect,
+		Enabled:   true,
 	}
 	payload, err := session.do(http.MethodPost, "", request, nil)
 	if err != nil {
@@ -630,7 +715,7 @@ func runPolicyCreate(args []string, stdout, stderr io.Writer, client *http.Clien
 		fmt.Fprintf(stderr, "policy create: decode response: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "Created policy %s (%s → %s, %s).\nPolicy ID: %s\n", created.Name, created.SrcPattern, created.DstPattern, created.Effect, created.ID)
+	fmt.Fprintf(stdout, "Created policy %s (%s → %s, %s).\nPolicy ID: %s\n", created.Name, src, target, effect, created.ID)
 	return 0
 }
 
@@ -805,10 +890,10 @@ func runPoliciesUpdate(args []string, stdout, stderr io.Writer, client *http.Cli
 		request.Name = name
 	}
 	if set["src-pattern"] {
-		request.SrcPattern = srcPattern
+		request.Principal = typedPrincipal(*srcPattern)
 	}
 	if set["dst-pattern"] {
-		request.DstPattern = dstPattern
+		request.Target = typedTarget(*dstPattern)
 	}
 	if set["effect"] {
 		request.Effect = effect
@@ -820,7 +905,7 @@ func runPoliciesUpdate(args []string, stdout, stderr io.Writer, client *http.Cli
 	if set["description"] {
 		request.Description = description
 	}
-	if request.Name == nil && request.Description == nil && request.SrcPattern == nil && request.DstPattern == nil && request.Effect == nil && request.Enabled == nil {
+	if request.Name == nil && request.Description == nil && request.Principal == nil && request.Target == nil && request.Effect == nil && request.Enabled == nil {
 		fmt.Fprintln(stderr, "policies update requires at least one field to update: --name, --src-pattern, --dst-pattern, --effect, --enabled, or --description")
 		return 2
 	}
@@ -841,13 +926,13 @@ func runPoliciesUpdate(args []string, stdout, stderr io.Writer, client *http.Cli
 		maskFields = append(maskFields, "description")
 	}
 	if set["src-pattern"] {
-		maskFields = append(maskFields, "src_pattern")
+		maskFields = append(maskFields, "principal")
 	}
 	if set["dst-pattern"] {
-		maskFields = append(maskFields, "dst_pattern")
+		maskFields = append(maskFields, "target")
 	}
 	if set["effect"] {
-		maskFields = append(maskFields, "effect")
+		maskFields = append(maskFields, "action")
 	}
 	if set["enabled"] {
 		maskFields = append(maskFields, "enabled")
@@ -1004,12 +1089,12 @@ func runPoliciesImport(args []string, stdout, stderr io.Writer, stdin io.Reader,
 	created := 0
 	for _, p := range policies {
 		request := createPolicyRequest{
-			Name:       p.Name,
-			SrcPattern: p.SrcPattern,
-			DstPattern: p.DstPattern,
-			Effect:     p.Effect,
-			Action:     p.Effect,
-			Enabled:    true,
+			Name:      p.Name,
+			Principal: typedPrincipal(p.SrcPattern),
+			Target:    typedTarget(p.DstPattern),
+			Effect:    p.Effect,
+			Action:    p.Effect,
+			Enabled:   true,
 		}
 		if _, err := session.do(http.MethodPost, "", request, nil); err != nil {
 			fmt.Fprintf(stderr, "policies import: failed to create %s: %v\n", p.Name, err)

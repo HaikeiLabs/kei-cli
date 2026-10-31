@@ -230,7 +230,7 @@ func runGroupsDelete(args []string, stdout, stderr io.Writer, stdin io.Reader, c
 		if len(refs) > 0 {
 			fmt.Fprintf(stderr, "groups delete: %d policy(s) reference group %q; use --force to delete anyway\n", len(refs), groupName)
 			for _, p := range refs {
-				fmt.Fprintf(stderr, "  %s (%s -> %s)\n", p.Name, p.SrcPattern, p.DstPattern)
+				fmt.Fprintf(stderr, "  %s (%s -> %s)\n", p.Name, p.srcDisplay(), p.dstDisplay())
 			}
 			return 1
 		}
@@ -284,10 +284,14 @@ func resolveGroupByNameOrID(session *apiSession, workspaceID, group string) (id,
 }
 
 // findPoliciesReferencingGroup lists policies in the workspace and returns
-// those whose src_pattern matches "group:<name>".
+// those whose typed principal references "group:<name>". Policies the server
+// still represents with a legacy src_pattern are matched on that too, so a
+// delete is never silently allowed while an old row still references the
+// group.
 func findPoliciesReferencingGroup(session *apiSession, workspaceID, groupName string) ([]policy, error) {
-	query := url.Values{"workspace_id": {workspaceID}, "page_size": {"100"}}
-	_, payload, err := session.do(http.MethodGet, "/api/v1/policies", query, nil)
+	path := "/api/v1/organizations/" + url.PathEscape(session.orgID) +
+		"/workspaces/" + url.PathEscape(workspaceID) + "/policies"
+	_, payload, err := session.do(http.MethodGet, path, url.Values{"page_size": {"100"}}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -298,7 +302,11 @@ func findPoliciesReferencingGroup(session *apiSession, workspaceID, groupName st
 	want := "group:" + groupName
 	var refs []policy
 	for _, p := range page.Policies {
-		if strings.HasPrefix(p.SrcPattern, want) {
+		if p.Principal != nil && p.Principal.Kind == "group" && p.Principal.Value == groupName {
+			refs = append(refs, p)
+			continue
+		}
+		if p.Principal == nil && strings.HasPrefix(p.SrcPattern, want) {
 			refs = append(refs, p)
 		}
 	}
