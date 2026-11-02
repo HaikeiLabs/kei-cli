@@ -28,9 +28,10 @@ import (
 
 // offeredConnectorProviders are the providers Kei has built connectors for,
 // in the setup schema's display order (HAI-222). s3 is not a connector, and
-// notion is not offered yet. http_api is the generic connector a named API
-// such as crm is registered as (HAI-384). skills_repo is the workspace's agent
-// skill source (HAI-431). The console refuses the same set.
+// notion is not offered yet. http_api is the generic connector any named API
+// is registered as; there is no dedicated crm provider (HAI-384). skills_repo
+// is the workspace's agent skill source (HAI-431). The console refuses the
+// same set.
 var offeredConnectorProviders = []contract.Provider{
 	contract.ProviderGmail,
 	contract.ProviderGoogle,
@@ -38,7 +39,6 @@ var offeredConnectorProviders = []contract.Provider{
 	contract.ProviderGitHub,
 	contract.ProviderTito,
 	contract.ProviderSkillsRepo,
-	contract.ProviderCRM,
 	contract.ProviderHTTPAPI,
 }
 
@@ -793,7 +793,7 @@ func (s *repeatedStrings) Set(value string) error {
 func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
 	lc := newCommandFlags("connectors", "create", "Create a data connector", stdout, stderr)
 	workspace := workspaceFlag(lc.fs)
-	providerFlag := lc.fs.String("provider", "", "provider: gmail, google_drive, linear, github, tito, skills_repo, crm, or http_api (or --template for a catalog template such as an MCP server)")
+	providerFlag := lc.fs.String("provider", "", "provider: gmail, google_drive, linear, github, tito, skills_repo, or http_api (or --template for a catalog template such as an MCP server)")
 	name := lc.fs.String("name", "", "connector name (letters, digits, and . _ : / -)")
 	accountModelFlag := lc.fs.String("account-model", "", "OAuth account model: per_user, shared, or domain_delegation (gmail, google_drive); skills_repo takes per_user, or --credential-ref instead; cannot be combined with --template")
 	values := setupValues{}
@@ -1305,7 +1305,7 @@ func buildConnectorCreateRequest(provider contract.Provider, model contract.Acco
 		}
 	}
 
-	capabilities, err := connectorCapabilities(provider, config, httpAPI, capabilityNames)
+	capabilities, err := connectorCapabilities(provider, httpAPI, capabilityNames)
 	if err != nil {
 		return connectorCreateRequest{}, err
 	}
@@ -1348,12 +1348,9 @@ func credentialSourceFor(schema setup.SetupSchema, model contract.AccountModel) 
 }
 
 // connectorCapabilities returns the named capabilities, or by default the
-// provider's read capabilities. A crm connector's defaults are limited to the
-// resources its config allows, because the Worker rejects an assertion that
-// declares a capability for a resource it does not serve. An http_api
-// connector's defaults are the contract's capabilities for its allowed
+// provider's read capabilities. An http_api connector's defaults are the contract's capabilities for its allowed
 // methods, reads and writes alike: the methods are the admin's explicit choice.
-func connectorCapabilities(provider contract.Provider, config map[string]any, httpAPI *contract.HTTPAPI, names []string) ([]contract.Capability, error) {
+func connectorCapabilities(provider contract.Provider, httpAPI *contract.HTTPAPI, names []string) ([]contract.Capability, error) {
 	defined := contract.CapabilitiesFor(provider)
 	if len(names) > 0 {
 		capabilities := make([]contract.Capability, 0, len(names))
@@ -1375,8 +1372,6 @@ func connectorCapabilities(provider contract.Provider, config map[string]any, ht
 			}
 		case capability.Action != contract.ActionRead:
 			continue
-		case provider == contract.ProviderCRM && !crmResourceAllowed(config, capability.Name):
-			continue
 		}
 		capabilities = append(capabilities, capability)
 	}
@@ -1389,17 +1384,6 @@ func connectorCapabilities(provider contract.Provider, config map[string]any, ht
 		}
 	}
 	return capabilities, nil
-}
-
-func crmResourceAllowed(config map[string]any, capability string) bool {
-	family, _, _ := strings.Cut(capability, ".")
-	resources, _ := config["allowed_resources"].([]string)
-	for _, resource := range resources {
-		if strings.TrimSuffix(resource, "/*") == family+"s" {
-			return true
-		}
-	}
-	return false
 }
 
 // readSecretField reads a secret without echo on a terminal, or as one line of

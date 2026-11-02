@@ -343,8 +343,9 @@ development and testing.
 Connector setup renders from the `kei.connector-setup/v1` schema in
 `kei-connector-contracts` v0.3.0, the same definition the console uses. The
 CLI offers the providers Kei has built connectors for: `gmail`,
-`google_drive`, `linear`, `github`, `tito`, `skills_repo`, `crm`, and the
-generic `http_api`.
+`google_drive`, `linear`, `github`, `tito`, `skills_repo`, and the generic
+`http_api`. There is no dedicated CRM provider: register a CRM API as an
+`http_api` connector and name it (for example `crm`).
 
 ```sh
 # OAuth: pick the account model (per_user is the default).

@@ -152,7 +152,7 @@ func createdResponse(w http.ResponseWriter, r consoleRequest) {
 }
 
 func TestConnectorsOfferedProvidersMatchTicketAndHaveSetupSchemas(t *testing.T) {
-	want := []string{"crm", "github", "gmail", "google_drive", "http_api", "linear", "skills_repo", "tito"}
+	want := []string{"github", "gmail", "google_drive", "http_api", "linear", "skills_repo", "tito"}
 	var got []string
 	for _, provider := range offeredConnectorProviders {
 		got = append(got, string(provider))
@@ -188,10 +188,6 @@ func TestConnectorsCreateRequestsPassTheContractCatalogCheck(t *testing.T) {
 						credentialRef = "kei/test/" + string(provider)
 					case field.Name == "account_slug":
 						config[field.Name] = "acme"
-					case field.Name == "base_url":
-						config[field.Name] = "https://crm.example.com"
-					case field.Name == "assertion_audience":
-						config[field.Name] = "kei-crm"
 					case field.Name == "impersonate_email":
 						config[field.Name] = "events@example.com"
 					case field.Name == "repo_url":
@@ -624,6 +620,7 @@ func TestConnectorsCreateDomainDelegationWithCredentialRef(t *testing.T) {
 func TestConnectorsCreateRejectsLocallyBeforeSending(t *testing.T) {
 	cases := map[string][]string{
 		"s3 is not a connector":       {"--provider", "s3", "--name", "x"},
+		"crm is not a provider":       {"--provider", "crm", "--name", "crm", "--set", "base_url=https://crm.example.com", "--set", "assertion_audience=kei-crm", "--credential-ref", "kei/crm"},
 		"http_api without base url":   {"--provider", "http_api", "--name", "crm", "--credential-ref", "kei/crm"},
 		"base url on another":         {"--provider", "tito", "--name", "x", "--set", "account_slug=acme", "--credential-ref", "kei/t", "--base-url", "https://api.example.com"},
 		"methods on another":          {"--provider", "tito", "--name", "x", "--set", "account_slug=acme", "--credential-ref", "kei/t", "--methods", "GET"},
@@ -636,7 +633,6 @@ func TestConnectorsCreateRejectsLocallyBeforeSending(t *testing.T) {
 		"http_api bad auth header":    {"--provider", "http_api", "--name", "crm", "--base-url", "https://api.example.com", "--auth-header", "X Key", "--credential-ref", "kei/crm"},
 		"http_api block via --set":    {"--provider", "http_api", "--name", "crm", "--base-url", "https://api.example.com", "--set", "http_api=x", "--credential-ref", "kei/crm"},
 		"http_api kei:// ref":         {"--provider", "http_api", "--name", "crm", "--base-url", "https://api.example.com", "--credential-ref", "kei://connectors/x/api_key"},
-		"crm base_url must be https":  {"--provider", "crm", "--name", "crm", "--set", "base_url=http://crm.example.com", "--set", "assertion_audience=kei-crm", "--credential-ref", "kei/crm"},
 		"unknown field":               {"--provider", "tito", "--name", "x", "--set", "bogus=1", "--set", "account_slug=acme", "--credential-ref", "kei/t"},
 		"secret field via --set":      {"--provider", "tito", "--name", "x", "--set", "account_slug=acme", "--set", "api_token=abc"},
 		"account model not allowed":   {"--provider", "linear", "--name", "x", "--account-model", "domain_delegation"},
@@ -659,23 +655,6 @@ func TestConnectorsCreateRejectsLocallyBeforeSending(t *testing.T) {
 				t.Fatal("an invalid create reached the console")
 			}
 		})
-	}
-}
-
-func TestConnectorsCreateCRMDefaultsToCapabilitiesItsResourcesAllow(t *testing.T) {
-	fake, server, store := newFakeConsole(t, createdResponse)
-	store.token = workspaceTestToken()
-	code, _, stderr := runConnectorsWithoutDefaultAccess(t, server, store, "", "create", "--workspace", "Main", "--provider", "crm", "--name", "crm", "--set", "base_url=https://crm.example.com", "--set", "assertion_audience=kei-crm", "--credential-ref", "kei/prod/crm/api-key")
-	if code != 0 {
-		t.Fatalf("exit = %d stderr=%s", code, stderr)
-	}
-	caps, _ := fake.only(t).Body["capabilities"].([]any)
-	var names []string
-	for _, c := range caps {
-		names = append(names, c.(map[string]any)["name"].(string))
-	}
-	if strings.Join(names, ",") != "lead.read" {
-		t.Fatalf("crm capabilities = %v, want only lead.read (investor reads need the investors resource)", names)
 	}
 }
 
