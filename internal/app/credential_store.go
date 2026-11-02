@@ -36,11 +36,13 @@ type credentialStoreSummary struct {
 	UpdatedAt        string `json:"updated_at,omitempty"`
 }
 
-type putCredentialStoreRequest struct {
-	SecretBackend    string            `json:"secret_backend"`
-	BackendConfig    map[string]string `json:"backend_config,omitempty"`
-	SecretNamePrefix string            `json:"secret_name_prefix,omitempty"`
-}
+// secretNamePrefixHelp explains --secret-name-prefix: it names generated
+// secrets, it is not the name or value of an existing secret.
+const secretNamePrefixHelp = "prefix Kei appends -<id> to when naming each secret, e.g. my-chat -> my-chat-<uuid> (letters, digits, hyphens; start with a letter); not a secret value"
+
+// olderCatalogHint is appended when PATCH-create is refused in a way an
+// older catalog (before HAI-954) refuses it.
+const olderCatalogHint = "the catalog may predate HAI-954 and cannot create a credential store with PATCH and allow_missing; it needs the HAI-954 update"
 
 // credentialStorePath is the organization's store, or with a workspace
 // session the workspace's override (ADR-036 §10 HAI-489 test 5).
@@ -64,6 +66,9 @@ type patchCredentialStoreRequest struct {
 	SecretNamePrefix *string           `json:"secret_name_prefix,omitempty"`
 	Status           *string           `json:"status,omitempty"`
 	UpdateMask       fieldMask         `json:"update_mask"`
+	// AllowMissing creates the store when none exists (AIP-134). Only put
+	// sets it; update must not create a store by accident.
+	AllowMissing bool `json:"allow_missing,omitempty"`
 }
 
 // The credential store is the organization AIP resource
@@ -75,7 +80,7 @@ var credentialStoreGroup = commandGroup{
 	name: "credential-store",
 	commands: []groupCommand{
 		{name: "get", summary: "Get the credential store configuration"},
-		{name: "put", summary: "Create or replace the credential store"},
+		{name: "put", summary: "Create the credential store, or replace its configuration"},
 		{name: "update", summary: "Update the credential store configuration"},
 	},
 }
@@ -155,14 +160,15 @@ func runCredentialStoreGet(args []string, stdout, stderr io.Writer, client *http
 	return 0
 }
 
-// runCredentialStorePut creates or replaces the credential store with PUT. The
-// catalog marks PUT deprecated in favour of PATCH, but PATCH cannot create a
-// store, so put remains the way to configure one the first time.
+// runCredentialStorePut creates the credential store, or replaces its backend,
+// backend config and name prefix, with PATCH, all three fields in update_mask
+// and allow_missing=true (AIP-134). The catalog answers 201 when it created
+// the store and 200 when it updated one.
 func runCredentialStorePut(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("credential-store", "put", "Create or replace the credential store", stdout, stderr)
+	lc := newCommandFlags("credential-store", "put", "Create the credential store, or replace its configuration", stdout, stderr)
 	secretBackend := lc.fs.String("secret-backend", "", "secret backend (aws-secrets-manager, azure-key-vault, or gcp-secret-manager)")
 	backendConfigRaw := lc.fs.String("backend-config", "{}", "backend configuration as a JSON object of strings")
-	secretNamePrefix := lc.fs.String("secret-name-prefix", "", "prefix for secret names")
+	secretNamePrefix := lc.fs.String("secret-name-prefix", "", secretNamePrefixHelp)
 	rc, ok := parseLeaf(lc, args)
 	if !ok {
 		return rc
@@ -171,7 +177,7 @@ func runCredentialStorePut(args []string, stdout, stderr io.Writer, client *http
 		fmt.Fprintln(stderr, "credential-store put takes no positional arguments")
 		return 2
 	}
-	if !requireFlags(lc.fs, stderr, "secret-backend") {
+	if !requireFlags(lc.fs, stderr, "secret-backend", "secret-name-prefix") {
 		return 2
 	}
 	backendConfig, ok := parseBackendConfig("put", *backendConfigRaw, stderr)
@@ -182,13 +188,24 @@ func runCredentialStorePut(args []string, stdout, stderr io.Writer, client *http
 	if !ok {
 		return 1
 	}
-	_, payload, err := session.do(http.MethodPut, session.orgPath("/credential-store"), nil, putCredentialStoreRequest{
-		SecretBackend:    *secretBackend,
+	req := patchCredentialStoreRequest{
+		SecretBackend:    secretBackend,
 		BackendConfig:    backendConfig,
-		SecretNamePrefix: *secretNamePrefix,
-	})
+		SecretNamePrefix: secretNamePrefix,
+		UpdateMask:       fieldMask{Paths: []string{"secret_backend", "backend_config", "secret_name_prefix"}},
+		AllowMissing:     true,
+	}
+	// allow_missing goes in the query as well as the body so either spelling
+	// of the AIP-134 request field reaches the catalog.
+	query := url.Values{"allow_missing": {"true"}}
+	status, payload, err := session.do(http.MethodPatch, session.orgPath("/credential-store"), query, req)
 	if err != nil {
-		fmt.Fprintf(stderr, "credential-store put: %v\n", err)
+		switch status {
+		case http.StatusBadRequest, http.StatusNotFound, http.StatusMethodNotAllowed:
+			fmt.Fprintf(stderr, "credential-store put: %v; %s\n", err, olderCatalogHint)
+		default:
+			fmt.Fprintf(stderr, "credential-store put: %v\n", err)
+		}
 		return 1
 	}
 	_, _ = stdout.Write(payload)
@@ -201,7 +218,7 @@ func runCredentialStoreUpdate(args []string, stdout, stderr io.Writer, client *h
 	lc := newCommandFlags("credential-store", "update", "Update the credential store configuration", stdout, stderr)
 	lc.fs.String("secret-backend", "", "secret backend (aws-secrets-manager, azure-key-vault, or gcp-secret-manager)")
 	lc.fs.String("backend-config", "", "backend configuration as a JSON object of strings")
-	lc.fs.String("secret-name-prefix", "", "prefix for secret names")
+	lc.fs.String("secret-name-prefix", "", secretNamePrefixHelp)
 	lc.fs.String("status", "", "store status (for example active or disabled)")
 	rc, ok := parseLeaf(lc, args)
 	if !ok {

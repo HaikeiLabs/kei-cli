@@ -77,26 +77,126 @@ func TestCredentialStoreGetHTMLIsNotReportedAsMissing(t *testing.T) {
 	}
 }
 
-func TestCredentialStorePut(t *testing.T) {
+var credentialStorePutArgs = []string{"--secret-backend", "aws-secrets-manager", "--backend-config", `{"region":"us-east-1"}`, "--secret-name-prefix", "my-chat"}
+
+// TestCredentialStorePutUsesPATCHWithAllowMissing checks the HAI-954 wire
+// shape: PATCH, all three fields in update_mask, allow_missing=true, and both
+// 201 (created) and 200 (updated) succeed.
+func TestCredentialStorePutUsesPATCHWithAllowMissing(t *testing.T) {
+	for _, status := range []int{http.StatusCreated, http.StatusOK} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			fake, store := newProfileConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(testCredentialStoreJSON))
+			})
+			var stdout, stderr bytes.Buffer
+			if code := runCredentialStorePut(credentialStorePutArgs, &stdout, &stderr, http.DefaultClient, store); code != 0 {
+				t.Fatalf("put exit = %d, stderr=%s", code, stderr.String())
+			}
+			got := fake.only(t)
+			assertRequest(t, got, http.MethodPatch, credStorePath)
+			if got.Query != "allow_missing=true" {
+				t.Fatalf("put query = %q, want allow_missing=true", got.Query)
+			}
+			if got.Body["allow_missing"] != true {
+				t.Fatalf("put body allow_missing = %#v", got.Body["allow_missing"])
+			}
+			mask, _ := got.Body["update_mask"].(map[string]any)
+			paths, _ := mask["paths"].([]any)
+			if len(paths) != 3 || paths[0] != "secret_backend" || paths[1] != "backend_config" || paths[2] != "secret_name_prefix" {
+				t.Fatalf("update_mask = %#v", got.Body["update_mask"])
+			}
+			if got.Body["secret_backend"] != "aws-secrets-manager" || got.Body["secret_name_prefix"] != "my-chat" {
+				t.Fatalf("put body = %#v", got.Body)
+			}
+			if config, _ := got.Body["backend_config"].(map[string]any); config["region"] != "us-east-1" {
+				t.Fatalf("put backend_config = %#v", got.Body["backend_config"])
+			}
+			if !strings.Contains(stdout.String(), "cs-1") {
+				t.Fatalf("put output = %s", stdout.String())
+			}
+		})
+	}
+}
+
+// TestCredentialStorePutOlderCatalog: a catalog without HAI-954 refuses
+// PATCH-create; the error must say the catalog needs that update.
+func TestCredentialStorePutOlderCatalog(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		body   string
+	}{
+		{http.StatusMethodNotAllowed, `{"error":"method not allowed"}`},
+		{http.StatusNotFound, `{"error":"credential store not found"}`},
+		{http.StatusBadRequest, `{"error":"update_mask is required"}`},
+	} {
+		t.Run(http.StatusText(tc.status), func(t *testing.T) {
+			_, store := newProfileConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			})
+			var stdout, stderr bytes.Buffer
+			if code := runCredentialStorePut(credentialStorePutArgs, &stdout, &stderr, http.DefaultClient, store); code != 1 {
+				t.Fatalf("put exit = %d, want 1", code)
+			}
+			if !strings.Contains(stderr.String(), "HAI-954") || !strings.Contains(stderr.String(), "catalog") {
+				t.Fatalf("put error = %q, want a catalog HAI-954 hint", stderr.String())
+			}
+			if stdout.Len() != 0 {
+				t.Fatalf("put stdout = %q, want empty", stdout.String())
+			}
+		})
+	}
+}
+
+func TestCredentialStorePutOtherErrorHasNoCatalogHint(t *testing.T) {
+	_, store := newProfileConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":"credentials exist"}`))
+	})
+	var stdout, stderr bytes.Buffer
+	if code := runCredentialStorePut(credentialStorePutArgs, &stdout, &stderr, http.DefaultClient, store); code != 1 {
+		t.Fatalf("put exit = %d, want 1", code)
+	}
+	if strings.Contains(stderr.String(), "HAI-954") {
+		t.Fatalf("put error = %q, want no older-catalog hint on 409", stderr.String())
+	}
+}
+
+func TestCredentialStorePutRequiresSecretNamePrefix(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	store := &memoryCredentialStore{token: "cli-session-token"}
+	if code := runCredentialStorePut([]string{"--secret-backend", "aws-secrets-manager"}, &stdout, &stderr, http.DefaultClient, store); code != 2 {
+		t.Fatalf("put exit = %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "--secret-name-prefix") {
+		t.Fatalf("put error = %q", stderr.String())
+	}
+}
+
+func TestCredentialStoreSecretNamePrefixHelp(t *testing.T) {
+	for _, sub := range []string{"put", "update"} {
+		var stdout, stderr bytes.Buffer
+		_ = runCredentialStoreCommand([]string{sub, "--help"}, &stdout, &stderr, http.DefaultClient, &memoryCredentialStore{})
+		help := stdout.String() + stderr.String()
+		if !strings.Contains(help, secretNamePrefixHelp) {
+			t.Fatalf("credential-store %s help does not explain --secret-name-prefix: %s", sub, help)
+		}
+	}
+}
+
+func TestCredentialStoreUpdateDoesNotSendAllowMissing(t *testing.T) {
 	fake, store := newProfileConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(testCredentialStoreJSON))
 	})
 	var stdout, stderr bytes.Buffer
-	args := []string{"--secret-backend", "aws-secrets-manager", "--backend-config", `{"region":"us-east-1"}`, "--secret-name-prefix", "kei/"}
-	if code := runCredentialStorePut(args, &stdout, &stderr, http.DefaultClient, store); code != 0 {
-		t.Fatalf("put exit = %d, stderr=%s", code, stderr.String())
+	if code := runCredentialStoreUpdate([]string{"--status", "disabled"}, &stdout, &stderr, http.DefaultClient, store); code != 0 {
+		t.Fatalf("update exit = %d, stderr=%s", code, stderr.String())
 	}
 	got := fake.only(t)
-	assertRequest(t, got, http.MethodPut, credStorePath)
-	if got.Body["secret_backend"] != "aws-secrets-manager" || got.Body["secret_name_prefix"] != "kei/" {
-		t.Fatalf("put body = %#v", got.Body)
-	}
-	if config, _ := got.Body["backend_config"].(map[string]any); config["region"] != "us-east-1" {
-		t.Fatalf("put backend_config = %#v", got.Body["backend_config"])
-	}
-	if !strings.Contains(stdout.String(), "cs-1") {
-		t.Fatalf("put output = %s", stdout.String())
+	if _, ok := got.Body["allow_missing"]; ok || got.Query != "" {
+		t.Fatalf("update must not create a store: query=%q body=%#v", got.Query, got.Body)
 	}
 }
 
@@ -149,7 +249,7 @@ func TestCredentialStorePutInvalidJSON(t *testing.T) {
 	for _, config := range []string{"not-json", `{"region":1}`} {
 		var stdout, stderr bytes.Buffer
 		store := &memoryCredentialStore{token: "cli-session-token"}
-		if code := runCredentialStorePut([]string{"--secret-backend", "test", "--backend-config", config}, &stdout, &stderr, http.DefaultClient, store); code != 2 {
+		if code := runCredentialStorePut([]string{"--secret-backend", "test", "--secret-name-prefix", "my-chat", "--backend-config", config}, &stdout, &stderr, http.DefaultClient, store); code != 2 {
 			t.Fatalf("put %s exit = %d, want 2", config, code)
 		}
 		if !strings.Contains(stderr.String(), "valid JSON") {

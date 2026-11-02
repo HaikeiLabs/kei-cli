@@ -533,18 +533,35 @@ require an organization admin.
 and metadata. It never prints stored secret values or backend configuration,
 matching `aws secretsmanager describe-secret` and `gcloud secrets describe`.
 
+`kei credential-store put` creates the organization's store, or replaces its
+configuration if one exists. It sends `PATCH
+/api/v1/organizations/{org}/credential-store` with
+`update_mask=secret_backend,backend_config,secret_name_prefix` and
+`allow_missing=true` (AIP-134). The API answers 201 when it created the store
+and 200 when it updated it. The store attaches to the organization's default
+workspace; no `--workspace` flag is needed. `put` requires `--secret-backend`
+and `--secret-name-prefix`. `kei credential-store update` sends PATCH with only
+the fields you pass and never creates a store.
+
+`--secret-name-prefix` is not a secret name or a secret value. It is the start
+of the names Kei generates: Kei appends `-<id>` to it for each secret, so
+`my-chat` gives `my-chat-<uuid>` for a model profile key. Use letters, digits
+and hyphens, starting with a letter. A secret already in the vault under any
+other name is not found.
+
+An older Kei API without this change (HAI-954) returns 404 or 400 for
+PATCH-create, and one without the route returns 405. `put` then says the
+catalog needs the HAI-954 update.
+
 ```sh
-# Configure the credential store once (PUT creates it), then change it (PATCH).
+# Create the credential store (or replace its configuration), then change one field.
 kei credential-store put --secret-backend aws-secrets-manager \
-  --backend-config '{"region":"us-east-1","account_id":"123456789012"}' --secret-name-prefix kei
-kei credential-store update --secret-name-prefix kei-prod
+  --backend-config '{"region":"us-east-1","account_id":"123456789012"}' --secret-name-prefix my-chat
+kei credential-store update --secret-name-prefix my-chat-prod
 kei credential-store get
 
-# A workspace's own store (an override of the organization's): put --workspace
-# creates or replaces it from a full body; get --workspace reads it. Secrets of
-# the workspace's connectors and profiles then live there.
-kei credential-store put --workspace e2e --secret-backend aws-secrets-manager \
-  --backend-config '{"region":"us-east-1","account_id":"123456789012"}' --secret-name-prefix kei/e2e/store
+# A workspace's own store (an override of the organization's): get --workspace
+# reads it; with no override the workspace uses the organization's store.
 kei credential-store get --workspace e2e
 
 # A keyless profile does not require a credential store or runtime.
