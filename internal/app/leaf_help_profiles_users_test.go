@@ -154,7 +154,7 @@ func TestLeafHelpModelProfiles(t *testing.T) {
 			command:  "model-profiles",
 			args:     []string{"unassign", "-h"},
 			wantCode: 0,
-			wantOut:  "Usage: kei model-profiles unassign [flags]",
+			wantOut:  "Usage: kei model-profiles unassign PROFILE [flags]",
 			wantErr:  "",
 		},
 		{
@@ -162,16 +162,16 @@ func TestLeafHelpModelProfiles(t *testing.T) {
 			args:     []string{"unassign", "--definitely-unknown"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "Usage: kei model-profiles unassign [flags]",
+			wantErr:  "Usage: kei model-profiles unassign PROFILE [flags]",
 		},
-		// unassign requires --agent and --workspace; exit 2 before network.
+		// unassign requires a profile and assignment scope; exit 2 before network.
 		{
 			command:  "model-profiles",
 			args:     []string{"unassign"},
 			required: []string{"agent", "workspace"},
 			wantCode: 2,
 			wantOut:  "",
-			wantErr:  "missing required flag --agent",
+			wantErr:  "model-profiles unassign requires PROFILE",
 		},
 
 		// ---- model-profiles assignment ----

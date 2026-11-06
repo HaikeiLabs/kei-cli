@@ -579,13 +579,21 @@ kei model-profiles update openai --workspace Main --default-model gpt-4.1-mini
 kei model-profiles set-default PROFILE                    # organization default (org-level profile)
 kei model-profiles set-default openai --workspace Main    # workspace default
 kei model-profiles assign openai --workspace Main --agent AGENT_ID
-kei model-profiles assignment --workspace Main --agent AGENT_ID
-kei model-profiles unassign --workspace Main --agent AGENT_ID
+kei model-profiles assignment --workspace Main --agent AGENT_ID [--json]
+kei model-profiles set-agent-default openai --workspace Main --agent AGENT_ID
+kei model-profiles unassign openai --workspace Main --agent AGENT_ID
 kei model-profiles readiness openai --workspace Main      # can runtimes reach the provider?
 kei model-profiles test --endpoint https://api.openai.com/v1   # validate an endpoint, offline
 kei model-profiles test openai --workspace Main           # validate a stored profile's endpoint
 kei model-profiles delete openai --workspace Main --yes
 ```
+
+Agent profile assignments are independent of the profile's workspace/org
+`set-default`: `assign` adds an assignment without replacing other profiles,
+`assignment` lists all of an agent's assignments (including the default), and
+`set-agent-default` marks one assigned profile as that agent's default.
+`unassign` requires a PROFILE to avoid accidentally removing an ambiguous
+assignment. Agent operations require both `--workspace` and `--agent`.
 
 `kei model-profiles list` displays NAME, ID, MODEL, AUTH, STATUS, DEFAULT,
 and ENDPOINT in a table. Revoked profiles remain visible and are marked in

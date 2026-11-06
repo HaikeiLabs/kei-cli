@@ -26,7 +26,7 @@ import (
 //	organizations/{org}/model-profiles:setDefault                              org default
 //	organizations/{org}/workspaces/{ws}/model-profiles[/{profile_id}]          workspace profiles
 //	organizations/{org}/workspaces/{ws}/model-profiles/{profile_id}/readiness  provider readiness
-//	organizations/{org}/workspaces/{ws}/agents/{agent_id}/model-profiles       agent assignment
+//	organizations/{org}/workspaces/{ws}/agents/{agent_id}/model-profile-assignments agent assignments
 //	organizations/{org}/credential-store/recipients                            sealing keys
 //
 // The organization comes from the CLI token; --workspace takes a name or ID.
@@ -126,7 +126,8 @@ var modelProfilesGroup = commandGroup{
 		{name: "set-default", summary: "Set the default model profile"},
 		{name: "assign", summary: "Assign a model profile to an agent"},
 		{name: "unassign", summary: "Unassign a model profile from an agent"},
-		{name: "assignment", summary: "Show model profile assignment"},
+		{name: "assignment", summary: "List model profile assignments"},
+		{name: "set-agent-default", summary: "Set an agent's default model profile"},
 		{name: "readiness", summary: "Check model profile readiness"},
 		{name: "test", summary: "Test a model profile"},
 	},
@@ -156,6 +157,8 @@ func runModelProfilesCommand(args []string, stdout, stderr io.Writer, stdin io.R
 		return runModelProfilesUnassign(rest, stdout, stderr, client, store)
 	case "assignment":
 		return runModelProfilesAssignment(rest, stdout, stderr, client, store)
+	case "set-agent-default":
+		return runModelProfilesSetAgentDefault(rest, stdout, stderr, client, store)
 	case "readiness":
 		return runModelProfilesReadiness(rest, stdout, stderr, client, store)
 	case "test":
@@ -234,7 +237,11 @@ func (s *orgSession) profilePath(profileID string) string {
 }
 
 func (s *orgSession) agentProfilePath(agentID string) string {
-	return s.orgPath("/workspaces/" + url.PathEscape(s.workspaceID) + "/agents/" + url.PathEscape(agentID) + "/model-profiles")
+	return s.orgPath("/workspaces/" + url.PathEscape(s.workspaceID) + "/agents/" + url.PathEscape(agentID) + "/model-profile-assignments")
+}
+
+func (s *orgSession) agentProfileAssignmentPath(agentID, profileID string) string {
+	return s.agentProfilePath(agentID) + "/" + url.PathEscape(profileID)
 }
 
 // do sends one request and returns the status and body of a 2xx response, or
@@ -760,20 +767,27 @@ func runModelProfilesAssign(args []string, stdout, stderr io.Writer, client *htt
 		fmt.Fprintf(stderr, "model-profiles assign: %v\n", err)
 		return 1
 	}
-	_, payload, err := session.do(http.MethodPut, session.agentProfilePath(*agentID), nil, profileIDRequest{ProfileID: profileID})
+	_, payload, err := session.do(http.MethodPost, session.agentProfilePath(*agentID), nil, map[string]string{"model_profile_id": profileID})
 	return writeProfileResult("assign", stdout, stderr, payload, err)
 }
 
 func runModelProfilesUnassign(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("model-profiles", "unassign", "Unassign a model profile from an agent", stdout, stderr)
+	lc := newCommandFlags("model-profiles", "unassign", "Unassign a model profile from an agent", stdout, stderr).WithArgs("PROFILE")
 	workspace := workspaceFlagHelp(lc.fs, "workspace name; omit for organization-level profiles")
 	agentID := lc.fs.String("agent", "", "agent ID whose profile assignment to remove")
-	rc, ok := parseLeaf(lc, args)
-	if !ok {
-		return rc
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			lc.printUsage(lc.stdout)
+			return 0
+		}
 	}
-	if lc.fs.NArg() != 0 {
-		fmt.Fprintln(stderr, "model-profiles unassign takes no positional arguments")
+	profileArg, err := parsePolicyFlags(lc.fs, args)
+	if err != nil {
+		fmt.Fprintf(stderr, "model-profiles unassign: %v\n", err)
+		return 2
+	}
+	if profileArg == "" {
+		fmt.Fprintln(stderr, "model-profiles unassign requires PROFILE to avoid removing an ambiguous assignment")
 		return 2
 	}
 	if !requireFlags(lc.fs, stderr, "agent", "workspace") {
@@ -795,7 +809,12 @@ func runModelProfilesUnassign(args []string, stdout, stderr io.Writer, client *h
 	if !ok {
 		return 1
 	}
-	if _, _, err := session.do(http.MethodDelete, session.agentProfilePath(*agentID), nil, nil); err != nil {
+	profileID, err := session.resolveProfileID(profileArg)
+	if err != nil {
+		fmt.Fprintf(stderr, "model-profiles unassign: %v\n", err)
+		return 1
+	}
+	if _, _, err := session.do(http.MethodDelete, session.agentProfileAssignmentPath(*agentID, profileID), nil, nil); err != nil {
 		fmt.Fprintf(stderr, "model-profiles unassign: %v\n", err)
 		return 1
 	}
@@ -836,6 +855,44 @@ func runModelProfilesAssignment(args []string, stdout, stderr io.Writer, client 
 	}
 	_, payload, err := session.do(http.MethodGet, session.agentProfilePath(*agentID), nil, nil)
 	return writeProfileResult("assignment", stdout, stderr, payload, err)
+}
+
+func runModelProfilesSetAgentDefault(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
+	lc := newCommandFlags("model-profiles", "set-agent-default", "Set an agent's default model profile", stdout, stderr).WithArgs("PROFILE")
+	workspace := workspaceFlagHelp(lc.fs, "workspace name; required for agent assignments")
+	agentID := lc.fs.String("agent", "", "agent ID")
+	id, err := parsePolicyFlags(lc.fs, args)
+	if err != nil {
+		fmt.Fprintf(stderr, "model-profiles set-agent-default: %v\n", err)
+		return 2
+	}
+	if id == "" {
+		fmt.Fprintln(stderr, "model-profiles set-agent-default requires PROFILE")
+		return 2
+	}
+	if !requireFlags(lc.fs, stderr, "agent", "workspace") {
+		return 2
+	}
+	if _, err := uuid.Parse(*agentID); err != nil {
+		fmt.Fprintln(stderr, "agent ID must be a UUID")
+		return 2
+	}
+	ws, err := selectWorkspace(*workspace, keiWebURL())
+	if err != nil {
+		fmt.Fprintf(stderr, "model-profiles set-agent-default: %v\n", err)
+		return 2
+	}
+	session, ok := openOrgSession("model-profiles set-agent-default", ws, stderr, client, store)
+	if !ok {
+		return 1
+	}
+	profileID, err := session.resolveProfileID(id)
+	if err != nil {
+		fmt.Fprintf(stderr, "model-profiles set-agent-default: %v\n", err)
+		return 1
+	}
+	_, payload, err := session.do(http.MethodPost, session.agentProfileAssignmentPath(*agentID, profileID)+":setDefault", nil, nil)
+	return writeProfileResult("set-agent-default", stdout, stderr, payload, err)
 }
 
 func runModelProfilesReadiness(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {

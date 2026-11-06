@@ -21,7 +21,7 @@ const (
 const (
 	orgProfilesPath = "/api/v1/organizations/" + testProfileOrgID + "/model-profiles"
 	wsProfilesPath  = "/api/v1/organizations/" + testProfileOrgID + "/workspaces/" + testWorkspaceID + "/model-profiles"
-	agentAssignPath = "/api/v1/organizations/" + testProfileOrgID + "/workspaces/" + testWorkspaceID + "/agents/" + testAgentID + "/model-profiles"
+	agentAssignPath = "/api/v1/organizations/" + testProfileOrgID + "/workspaces/" + testWorkspaceID + "/agents/" + testAgentID + "/model-profile-assignments"
 	recipientsPath  = "/api/v1/organizations/" + testProfileOrgID + "/credential-store/recipients"
 	credStorePath   = "/api/v1/organizations/" + testProfileOrgID + "/credential-store"
 )
@@ -422,19 +422,19 @@ func TestModelProfilesAssignUnassignAssignment(t *testing.T) {
 	if code := runModelProfilesAssignment([]string{"--workspace", "Main", "--agent", testAgentID}, &stdout, &stderr, http.DefaultClient, store); code != 0 {
 		t.Fatalf("assignment exit = %d, stderr=%s", code, stderr.String())
 	}
-	if code := runModelProfilesUnassign([]string{"--workspace", "Main", "--agent", testAgentID}, &stdout, &stderr, http.DefaultClient, store); code != 0 {
+	if code := runModelProfilesUnassign([]string{testProfileID, "--workspace", "Main", "--agent", testAgentID}, &stdout, &stderr, http.DefaultClient, store); code != 0 {
 		t.Fatalf("unassign exit = %d, stderr=%s", code, stderr.String())
 	}
 	requests := fake.all()
 	if len(requests) != 3 {
 		t.Fatalf("requests = %#v", requests)
 	}
-	assertRequest(t, requests[0], http.MethodPut, agentAssignPath)
-	if len(requests[0].Body) != 1 || requests[0].Body["profile_id"] != testProfileID {
+	assertRequest(t, requests[0], http.MethodPost, agentAssignPath)
+	if len(requests[0].Body) != 1 || requests[0].Body["model_profile_id"] != testProfileID {
 		t.Fatalf("assign body = %#v", requests[0].Body)
 	}
 	assertRequest(t, requests[1], http.MethodGet, agentAssignPath)
-	assertRequest(t, requests[2], http.MethodDelete, agentAssignPath)
+	assertRequest(t, requests[2], http.MethodDelete, agentAssignPath+"/"+testProfileID)
 	if !strings.Contains(stdout.String(), "assignment removed") {
 		t.Fatalf("stdout = %q", stdout.String())
 	}
