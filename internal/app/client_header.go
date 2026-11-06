@@ -27,7 +27,7 @@ var cliSubcommands = map[string]map[string]bool{
 	"groups":                  {"list": true, "create": true, "members": true},
 	"groups.members":          {"list": true, "add": true, "remove": true},
 	"harness":                 {"add": true, "list": true, "remove": true, "sync": true},
-	"model-profiles":          {"list": true, "get": true, "create": true, "update": true, "delete": true, "set-default": true, "assign": true, "unassign": true, "assignment": true, "readiness": true, "test": true},
+	"model-profiles":          {"list": true, "get": true, "create": true, "update": true, "delete": true, "set-default": true, "assign": true, "unassign": true, "assignment": true, "set-agent-default": true, "readiness": true, "test": true},
 	"policies":                {"list": true, "get": true, "create": true, "update": true, "delete": true, "import": true},
 	"runtime":                 {"bootstrap": true, "heartbeat": true, "service": true},
 	"runtime.service":         {"install": true, "uninstall": true, "status": true},
