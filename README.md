@@ -1,9 +1,8 @@
 # Kei CLI
 
-The Kei CLI manages Kei bot installation metadata. It authenticates operators,
-creates an installation for a bot platform, assigns agents, and reports the
-installation status. Runtime deployment and credentials are managed outside
-this CLI.
+The `kei` CLI from [Haikei Labs](https://haikeilabs.com) signs you in to Kei, sets up a runtime, manages groups, policies and connectors, and connects coding agents such as Claude Code and Codex.
+
+[Docs](https://docs.haikeilabs.com) · [Discord](https://discord.gg/g6QaTYWXDa)
 
 ## Install
 
