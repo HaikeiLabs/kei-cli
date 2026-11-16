@@ -375,6 +375,15 @@ kei connectors create --workspace Main --provider skills_repo --name org-skills 
   --base-url https://crm.example.com --methods GET,HEAD,POST,PATCH \
   --paths '/api/investors,/api/investors/*' --query limit,cursor --auth-header X-KEI-API-Key
 
+# Databases (postgres, mysql, mssql): read from the catalog's connector
+# providers, not built into the CLI. One shared account only (per_user is
+# rejected) and one secret field, the DSN of a read-only role. The DSN is read
+# without echo, from stdin, or from --secret-file; it is never a flag, and it is
+# sealed to the workspace's runtimes before anything is sent. Capability: query.run.
+kei connectors create --workspace Main --provider postgres --name warehouse
+<secret-manager read> | kei connectors create --workspace Main --provider mysql --name orders-db
+kei connectors create --workspace Main --provider mssql --name finance-db --secret-file ./mssql.dsn
+
 # Remote MCP server, from a catalog connector template. The template's kind
 # (read from the catalog) picks the path; --kind mcp only checks it. The slug
 # defaults to one derived from --label and cannot be changed later. Pass

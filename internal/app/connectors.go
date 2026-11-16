@@ -226,22 +226,12 @@ func openConnectorSession(command string, sel workspaceSelection, stderr io.Writ
 	if !ok {
 		return nil, false
 	}
-	orgID, err := organizationIDFromCLIToken(token)
-	if err != nil {
-		fmt.Fprintf(stderr, "connectors %s: %v; run kei login again\n", command, err)
-		return nil, false
-	}
-	var workspaceID string
-	if sel.pickDefault {
-		workspaceID, err = resolveWorkspaceSelection(context.Background(), client, baseURL, token, sel)
-	} else {
-		workspaceID, err = resolveScopedWorkspace(context.Background(), client, baseURL, token, sel)
-	}
+	session, err := newConnectorSession(client, baseURL, token, sel)
 	if err != nil {
 		fmt.Fprintf(stderr, "connectors %s: %v\n", command, err)
 		return nil, false
 	}
-	return &connectorSession{client: client, baseURL: baseURL, token: token, orgID: orgID, workspaceID: workspaceID}, true
+	return session, true
 }
 
 // do sends one request to /api/v1/data-connectors<path>.
@@ -793,12 +783,13 @@ func (s *repeatedStrings) Set(value string) error {
 func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
 	lc := newCommandFlags("connectors", "create", "Create a data connector", stdout, stderr)
 	workspace := workspaceFlag(lc.fs)
-	providerFlag := lc.fs.String("provider", "", "provider: gmail, google_drive, linear, github, tito, skills_repo, or http_api (or --template for a catalog template such as an MCP server)")
+	providerFlag := lc.fs.String("provider", "", "provider: gmail, google_drive, linear, github, tito, skills_repo, http_api, or a database provider the catalog lists: postgres, mysql, mssql (or --template for a catalog template such as an MCP server)")
 	name := lc.fs.String("name", "", "connector name (letters, digits, and . _ : / -)")
-	accountModelFlag := lc.fs.String("account-model", "", "OAuth account model: per_user, shared, or domain_delegation (gmail, google_drive); skills_repo takes per_user, or --credential-ref instead; cannot be combined with --template")
+	accountModelFlag := lc.fs.String("account-model", "", "OAuth account model: per_user, shared, or domain_delegation (gmail, google_drive); skills_repo takes per_user, or --credential-ref instead; database providers (postgres, mysql, mssql) take shared only; cannot be combined with --template")
 	values := setupValues{}
 	lc.fs.Var(values, "set", "non-secret setup field as name=value (repeatable)")
 	credentialRef := lc.fs.String("credential-ref", "", "existing secret-manager reference for the provider's secret field")
+	secretFile := lc.fs.String("secret-file", "", "read the provider's secret field (a database provider's read-only DSN) from this file instead of the prompt or stdin; never pass a secret as a flag")
 	capabilitiesFlag := lc.fs.String("capabilities", "", "comma-separated capabilities (default: the provider's read capabilities)")
 	var allowGroups repeatedStrings
 	lc.fs.Var(&allowGroups, "allow-group", "group name to allow (repeatable; defaults to admins)")
@@ -831,8 +822,19 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	}
 	provider := contract.Provider(*providerFlag)
 	if !slices.Contains(offeredConnectorProviders, provider) {
-		fmt.Fprintf(stderr, "connectors create: --provider must be one of %s\n", offeredProviderNames())
-		return 2
+		if provider == "" {
+			fmt.Fprintf(stderr, "connectors create: --provider must be one of %s\n", offeredProviderNames())
+			return 2
+		}
+		// Any other provider is set up from the catalog's connector-providers
+		// listing (HAI-493), never from a list in this CLI.
+		return runConnectorsCreateFromCatalog(catalogConnectorCreate{
+			provider: provider, name: *name, accountModel: contract.AccountModel(*accountModelFlag),
+			values: values, credentialRef: *credentialRef, secretFile: *secretFile,
+			capabilities: splitList(*capabilitiesFlag), httpAPI: httpAPI, ws: ws,
+			access: connectorCreateAccess{allowGroups: allowGroups, defaultAccess: defaultAccess, noDefaultAccess: *noDefaultAccess},
+			yes:    *yes, jsonOutput: *jsonOutput,
+		}, stdout, stderr, stdin, client, store)
 	}
 	if *name == "" {
 		fmt.Fprintln(stderr, "connectors create requires --name")
@@ -877,9 +879,12 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	// request, then sealed to the workspace's runtime keys; plaintext never
 	// leaves the CLI.
 	secretField, hasSecret := connectorSecretField(provider, model)
+	if *secretFile != "" && (!hasSecret || *credentialRef != "") {
+		return fail(errors.New("--secret-file applies only to a provider's secret field, without --credential-ref"))
+	}
 	secret := ""
 	if hasSecret && *credentialRef == "" {
-		if secret, err = readSecretField(secretField, reader, stdin, stdout); err != nil {
+		if secret, err = readConnectorSecret(secretField, *secretFile, reader, stdin, stdout); err != nil {
 			return fail(err)
 		}
 	}
@@ -893,111 +898,15 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 		return fail(err)
 	}
 
-	orgID, err := organizationIDFromCLIToken(token)
-	if err != nil {
-		return fail(fmt.Errorf("%w; run kei login again", err))
-	}
-	var workspaceID string
-	if ws.pickDefault {
-		workspaceID, err = resolveWorkspaceSelection(context.Background(), client, baseURL, token, ws)
-	} else {
-		workspaceID, err = resolveScopedWorkspace(context.Background(), client, baseURL, token, ws)
-	}
+	session, err := newConnectorSession(client, baseURL, token, ws)
 	if err != nil {
 		return fail(err)
 	}
-	session := &connectorSession{client: client, baseURL: baseURL, token: token, orgID: orgID, workspaceID: workspaceID}
-	_, err = resolveConnectorGroupIDs(session, allowGroups)
-	if err != nil {
-		if defaultAccess && strings.Contains(err.Error(), `group "admins" was not found`) {
-			return fail(fmt.Errorf("workspace group %q was not found; pass --allow-group NAME or --no-default-access", "admins"))
-		}
-		return fail(err)
-	}
-	orgName, err := getOrganizationName(context.Background(), client, baseURL, token, orgID)
-	if err != nil {
-		fmt.Fprintf(stderr, "warning: could not fetch organization name: %v\n", err)
-		orgName = orgID
-	}
-	workspaceName := workspaceNameByID(context.Background(), client, baseURL, token, orgID, workspaceID)
-	fmt.Fprintf(stdout, "Organization: %s\nWorkspace: %s\n", orgName, workspaceName)
-	confirmText := "Create connector " + *name + "? This may grant the selected groups access."
-	if defaultAccess {
-		confirmText = "Create connector " + *name + "? This will allow the admins group to use it."
-	}
-	if !confirmWrite(stdin, stderr, *yes, confirmText) {
-		return 2
-	}
-	var sealed setSecretRequest
-	if secret != "" {
-		if sealed, err = session.sealForWorkspace(secretField.Name, secret); err != nil {
-			return fail(fmt.Errorf("%w. Nothing was created", err))
-		}
-	}
-	payload, err := session.do(http.MethodPost, "", request)
-	if err != nil {
-		return fail(err)
-	}
-	var created connector
-	if err := json.Unmarshal(payload, &created); err != nil {
-		return fail(fmt.Errorf("decode response: %w", err))
-	}
-	capabilityNames = make([]string, 0, len(request.Capabilities))
-	for _, capability := range request.Capabilities {
-		capabilityNames = append(capabilityNames, capability.Name)
-	}
-	policyNames, err := createConnectorGroupAllows(session, allowGroups, created.ID, *name, string(request.Provider), capabilityNames)
-	if err != nil {
-		return fail(fmt.Errorf("connector created, but group allow policy failed: %w", err))
-	}
-	for attempt := 0; len(allowGroups) > 0 && attempt < 3; attempt++ {
-		latestBody, pollErr := session.do(http.MethodGet, "/"+url.PathEscape(created.ID), nil)
-		if pollErr != nil {
-			break
-		}
-		var latest connector
-		if json.Unmarshal(latestBody, &latest) != nil {
-			break
-		}
-		created.Status = latest.Status
-		if latest.Status == string(contract.StatusActive) {
-			break
-		}
-		if attempt < 2 {
-			connectPollSleep(250 * time.Millisecond)
-		}
-	}
-	var delivery secretStatus
-	if secret != "" {
-		if delivery, err = session.setSecret(created.ID, sealed); err != nil {
-			return fail(fmt.Errorf("connector %s was created, but its secret %q was not set: %w. Retry with: kei connectors reconnect %s --workspace %s", created.ID, secretField.Name, err, created.ID, ws.value))
-		}
-	}
-	if *jsonOutput {
-		_, _ = stdout.Write(payload)
-		if *noDefaultAccess {
-			fmt.Fprintln(stderr, "Warning: nobody can connect until access is granted.")
-		}
-		return 0
-	}
-	fmt.Fprintf(stdout, "Created connector %s (%s, %s).\nConnector instance ID: %s\n", created.Name, created.Provider, connectorState(created.Status), created.ID)
-	for _, policy := range policyNames {
-		fmt.Fprintf(stdout, "Allowed group %s to use %s (policy %s).\n", policy.GroupName, *name, policy.Name)
-	}
-	if *noDefaultAccess {
-		fmt.Fprintln(stdout, "Warning: nobody can connect until access is granted.")
-	}
-	switch {
-	case request.CredentialSource == contract.CredentialSourceOAuth && model == contract.AccountModelShared:
-		fmt.Fprintf(stdout, "Next, connect the shared account: kei connectors reconnect %s --workspace %s\n", created.ID, ws.value)
-	case request.CredentialSource == contract.CredentialSourceOAuth:
-		fmt.Fprintf(stdout, "Next, connect your account: kei connectors connect %s --workspace %s\n", created.ID, ws.value)
-	case secret != "":
-		fmt.Fprintf(stdout, "Secret %q sealed and queued for delivery (generation %d); the connector becomes connected when the runtime stores it.\n", secretField.Name, delivery.Generation)
-	default:
-		fmt.Fprintf(stdout, "Once the secret is stored at its reference, activate the connector: kei connectors reconnect %s --workspace %s --keep-secret\n", created.ID, ws.value)
-	}
-	return 0
+	return completeConnectorCreate(session, connectorCreatePlan{
+		name: *name, request: request, model: model, secretField: secretField, secret: secret,
+		access: connectorCreateAccess{allowGroups: allowGroups, defaultAccess: defaultAccess, noDefaultAccess: *noDefaultAccess},
+		ws:     ws, yes: *yes, jsonOutput: *jsonOutput,
+	}, stdout, stderr, stdin)
 }
 
 func workspaceNameByID(ctx context.Context, client *http.Client, baseURL, token, orgID, workspaceID string) string {
