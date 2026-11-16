@@ -65,6 +65,11 @@ func newFakeConsole(t *testing.T, respond func(w http.ResponseWriter, r consoleR
 			_, _ = w.Write([]byte(`{"id":"org-1","name":"Acme Corp"}`))
 			return
 		}
+		// The catalog's connector-providers routes are read-only lookups,
+		// answered and not recorded (HAI-493).
+		if serveFakeCatalogProviders(w, r) {
+			return
+		}
 		raw, _ := io.ReadAll(r.Body)
 		req := consoleRequest{
 			Method: r.Method,
