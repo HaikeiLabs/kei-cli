@@ -451,6 +451,8 @@ redacted.
 ```sh
 kei policy list --workspace Main
 kei policy create --workspace Main --group Engineering --deny 'path:*.env'
+kei policy create --workspace Main --group db-readers --allow tool:mysql_query --connector mysql-seed
+kei policy create --workspace Main --group db-readers --allow tool:web_search --no-connector
 kei policy test --workspace Main --as group:Engineering 'path:*.env'
 kei policy delete deny-env --workspace Main --yes        # ID or name
 kei policy migration-report --workspace Main               # read-only dry run (ADR-038)
@@ -458,6 +460,13 @@ kei policy migration-report --workspace Main               # read-only dry run (
 # An agent gets access through group membership (kei policy create --group), not a per-policy scope.
 # --agent-id is deprecated and ignored.
 ```
+
+Kei releases a connector credential only to a permit that names that
+connector. A tool permit (`--allow tool:NAME`) takes `--connector ID|NAME`.
+Without it, the workspace's only connector is used and named on stderr. With
+no connector or several, the grant is created and a warning says "This tool
+will not receive connector credentials". `--no-connector` skips the lookup.
+Denies and non-tool targets are unchanged.
 
 `kei policies` remains a deprecated alias for `kei policy` and still carries
 `update` and `import`.
