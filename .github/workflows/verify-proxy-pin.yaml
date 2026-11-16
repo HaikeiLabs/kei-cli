@@ -1,5 +1,6 @@
 # Verifies that the in-repo KEI_PROXY_VERSION pin is valid, the proxy
-# artifact exists, and the binary version matches the pin. Runs on every PR
+# artifact exists, the binary version matches the pin, and forced policy sync
+# is supported. Runs on every PR
 # to main so the pin cannot drift unnoticed.
 name: Verify kei-proxy pin
 
@@ -53,3 +54,21 @@ jobs:
             exit 1
           fi
           echo "Verified: kei-proxy $VERSION matches pin $EXPECTED ✓"
+
+      - name: Verify forced policy refresh is supported
+        run: |
+          PROXY_BINARY="tmp/kei-proxy/linux/amd64/kei-proxy"
+          set +e
+          OUTPUT="$(env -u KEI_RUNTIME_TOKEN -u KEI_RUNTIME_CONTROL_PLANE_URL "$PROXY_BINARY" policy sync --force 2>&1)"
+          STATUS=$?
+          set -e
+          if [ "$STATUS" -eq 0 ]; then
+            echo "ERROR: policy sync unexpectedly succeeded without a runtime token."
+            exit 1
+          fi
+          if ! echo "$OUTPUT" | grep -q "KEI_RUNTIME_TOKEN is required"; then
+            echo "ERROR: policy sync --force did not reach runtime-token validation."
+            echo "$OUTPUT"
+            exit 1
+          fi
+          echo "Verified: policy sync --force is supported and requires a runtime token."
