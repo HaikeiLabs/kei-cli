@@ -335,6 +335,15 @@ kei groups members remove Support --service-principal kei-bug-intake --workspace
 A binding only authorizes that installation/agent pair to select the principal;
 ordinary group policy grants still control access.
 
+Move an agent (by ID or name) and its workspace-bound resources with an explicit plan. Dry runs never write; normal moves preview, refuse unresolved blockers, and require confirmation unless `--yes` is supplied:
+
+```sh
+kei agents move Default --to-workspace Playground --dry-run
+kei agents move Default --to-workspace Playground --group Analysts=copy --installation INSTALLATION_ID=detach --yes
+```
+
+Use repeatable `--group NAME=move|copy|leave` and `--installation ID=move_all|detach` options to resolve shared-resource decisions. `--json` prints the API plan/result as JSON.
+
 The CLI always targets the Kei production API at `https://app.haikeilabs.com`.
 Set the `KEI_WEB_URL` environment variable to override the endpoint for
 development and testing.
