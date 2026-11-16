@@ -122,6 +122,7 @@ type createPolicyRequest struct {
 }
 
 type createPolicySelectorV2 struct {
+	Tool        string `json:"tool,omitempty"`
 	Source      string `json:"source,omitempty"`
 	ConnectorID string `json:"connector_id,omitempty"`
 	Capability  string `json:"capability,omitempty"`
@@ -658,11 +659,13 @@ func standingRuleSource(group string) (string, error) {
 }
 
 func runPolicyCreate(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
-	lc := newCommandFlags("policy", "create", "Create a standing rule", stdout, stderr)
+	lc := newCommandFlags("policy", "create", policyCreateSummary, stdout, stderr)
 	workspace := workspaceFlag(lc.fs)
 	group := lc.fs.String("group", "", "group or autogroup the rule applies to")
 	allow := lc.fs.String("allow", "", "target to permit")
 	deny := lc.fs.String("deny", "", "target to deny")
+	connectorFlag := lc.fs.String("connector", "", "with --allow tool:NAME: connector (ID or name) whose credential the tool may receive")
+	noConnector := lc.fs.Bool("no-connector", false, "with --allow tool:NAME: grant the tool without connector credentials")
 	rc, ok := parseLeaf(lc, args)
 	if !ok {
 		return rc
@@ -689,6 +692,17 @@ func runPolicyCreate(args []string, stdout, stderr io.Writer, client *http.Clien
 		fmt.Fprintln(stderr, "policy create requires --allow or --deny")
 		return 2
 	}
+	tool, isToolGrant := toolGrantName(target, effect)
+	if *connectorFlag != "" || *noConnector {
+		if !isToolGrant {
+			fmt.Fprintln(stderr, "policy create: --connector and --no-connector apply only to --allow tool:NAME")
+			return 2
+		}
+		if *connectorFlag != "" && *noConnector {
+			fmt.Fprintln(stderr, "policy create: --connector and --no-connector cannot be used together")
+			return 2
+		}
+	}
 	ws, ok := requirePoliciesWorkspace("create", *workspace, stderr)
 	if !ok {
 		return 2
@@ -705,6 +719,17 @@ func runPolicyCreate(args []string, stdout, stderr io.Writer, client *http.Clien
 		Action:    effect,
 		Enabled:   true,
 	}
+	var chosen *connector
+	if isToolGrant {
+		chosen, err = chooseToolGrantConnector(session, *connectorFlag, *noConnector, stderr)
+		if err != nil {
+			fmt.Fprintf(stderr, "policy create: %v\n", err)
+			return 1
+		}
+		if chosen != nil {
+			request.SelectorV2 = &createPolicySelectorV2{Tool: tool, ConnectorID: chosen.ID}
+		}
+	}
 	payload, err := session.do(http.MethodPost, "", request, nil)
 	if err != nil {
 		fmt.Fprintf(stderr, "policy create: %v\n", err)
@@ -716,7 +741,84 @@ func runPolicyCreate(args []string, stdout, stderr io.Writer, client *http.Clien
 		return 1
 	}
 	fmt.Fprintf(stdout, "Created policy %s (%s → %s, %s).\nPolicy ID: %s\n", created.Name, src, target, effect, created.ID)
+	if chosen != nil {
+		fmt.Fprintf(stdout, "Connector: %s (%s)\n", chosen.label(), chosen.ID)
+	}
 	return 0
+}
+
+const policyCreateSummary = `Create a standing rule
+
+A tool permit can name the connector whose credential the tool may receive.
+Kei releases a connector credential only to a permit that names that
+connector; without one the tool call is allowed but gets no credential.
+When the workspace has exactly one connector it is used by default.
+
+Examples:
+  kei policy create --workspace Main --group Engineering --deny 'path:*.env'
+  kei policy create --workspace Main --group db-readers --allow tool:mysql_query --connector mysql-seed
+  kei policy create --workspace Main --group db-readers --allow tool:web_search --no-connector`
+
+const connectorCredentialWarning = "This tool will not receive connector credentials"
+
+// toolGrantName reports whether a standing rule permits a tool, and the tool.
+// Only a tool permit can name a connector: narrowing a deny to one connector
+// would weaken it.
+func toolGrantName(target, effect string) (string, bool) {
+	kind, value := parseTypedPattern(target)
+	if effect != "permit" || kind != "tool" || value == "" {
+		return "", false
+	}
+	return value, true
+}
+
+func (c connector) label() string {
+	if c.DisplayName != "" {
+		return c.DisplayName
+	}
+	return c.Name
+}
+
+// chooseToolGrantConnector picks the connector a tool permit names (HAI-1070).
+// An explicit --connector must match a workspace connector by ID, name,
+// display name or slug. Without one, the workspace's only connector is used;
+// with none or several, the grant is created without a connector and a warning
+// says the tool gets no connector credentials. A nil connector means none.
+func chooseToolGrantConnector(session *policySession, requested string, none bool, stderr io.Writer) (*connector, error) {
+	if none {
+		fmt.Fprintf(stderr, "Warning: %s.\n", connectorCredentialWarning)
+		return nil, nil
+	}
+	connectors := &connectorSession{client: session.client, baseURL: session.baseURL, token: session.token, orgID: session.orgID, workspaceID: session.workspaceID}
+	body, err := connectors.do(http.MethodGet, "", nil)
+	if err != nil {
+		return nil, fmt.Errorf("list workspace connectors: %w", err)
+	}
+	var list []connector
+	if err := json.Unmarshal(body, &list); err != nil {
+		return nil, fmt.Errorf("list workspace connectors: decode response: %w", err)
+	}
+	if requested != "" {
+		for i, c := range list {
+			if requested == c.ID || requested == c.Name || (c.DisplayName != "" && requested == c.DisplayName) || (c.Slug != "" && requested == c.Slug) {
+				return &list[i], nil
+			}
+		}
+		return nil, fmt.Errorf("connector %q not found in this workspace; list them with kei connectors list", requested)
+	}
+	switch len(list) {
+	case 1:
+		fmt.Fprintf(stderr, "Using connector %s (%s), the only connector in this workspace. Pass --connector to choose another or --no-connector to grant the tool without connector credentials.\n", list[0].label(), list[0].ID)
+		return &list[0], nil
+	case 0:
+		fmt.Fprintf(stderr, "Warning: %s: this workspace has no connectors.\n", connectorCredentialWarning)
+	default:
+		fmt.Fprintf(stderr, "Warning: %s. This workspace has %d connectors; pass --connector to name one:\n", connectorCredentialWarning, len(list))
+		for _, c := range list {
+			fmt.Fprintf(stderr, "  %s (%s)\n", c.label(), c.ID)
+		}
+	}
+	return nil, nil
 }
 
 func runPolicyTest(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
