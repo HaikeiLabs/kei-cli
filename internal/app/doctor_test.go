@@ -522,9 +522,9 @@ func TestCheckPolicyBundle(t *testing.T) {
 		want   string
 		detail string
 	}{
-		{name: "active", out: `{"state":"active","bundle_version":7,"not_after":"2026-10-11T12:00:00Z"}`, want: doctorPass, detail: "bundle 7 active, not_after 2026-10-11T12:00:00Z"},
+		{name: "active", out: `{"state":"active","bundle_version":7,"not_after":"2026-10-11T12:00:00Z","last_success":"2026-10-10T11:59:00Z"}`, want: doctorPass, detail: "bundle 7 active, not_after 2026-10-11T12:00:00Z, last refresh 2026-10-10T11:59:00Z"},
 		{name: "stale but valid", out: `{"state":"stale_but_valid","bundle_version":7,"not_after":"2026-10-11T12:00:00Z"}`, want: doctorWarn, detail: "stale_but_valid"},
-		{name: "expired by state", out: `{"state":"expired","bundle_version":7,"not_after":"2026-10-09T12:00:00Z"}`, err: errors.New("exit status 1"), want: doctorFail, detail: "expired (not_after 2026-10-09T12:00:00Z)"},
+		{name: "expired by state", out: `{"state":"expired","bundle_version":7,"not_after":"2026-10-09T12:00:00Z","last_success":"2026-10-10T11:59:00Z"}`, err: errors.New("exit status 1"), want: doctorFail, detail: "expired (not_after 2026-10-09T12:00:00Z, last refresh 2026-10-10T11:59:00Z)"},
 		{name: "active but past not_after", out: `{"state":"active","bundle_version":7,"not_after":"2026-10-10T11:59:59Z"}`, want: doctorFail, detail: "expired"},
 		{name: "cold", out: `{"state":"cold","policy_count":0,"tool_count":0}`, err: errors.New("exit status 1"), want: doctorFail, detail: "bundle state cold, not_after unknown"},
 		{name: "proxy missing", err: errors.New("executable file not found"), want: doctorFail, detail: "cannot run /opt/kei-proxy policy show"},
@@ -546,7 +546,7 @@ func TestCheckPolicyBundle(t *testing.T) {
 			if gotPath != "/opt/kei-proxy" || strings.Join(gotArgs, " ") != "policy show" {
 				t.Fatalf("ran %s %v", gotPath, gotArgs)
 			}
-			if got.Fix != "kei-proxy policy sync" {
+			if got.Fix != "kei-proxy policy sync --force" {
 				t.Fatalf("fix = %q", got.Fix)
 			}
 		})

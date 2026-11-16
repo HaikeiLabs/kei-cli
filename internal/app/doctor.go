@@ -622,13 +622,14 @@ type policyShow struct {
 	State         string    `json:"state"`
 	BundleVersion int64     `json:"bundle_version"`
 	NotAfter      time.Time `json:"not_after"`
+	LastSuccess   time.Time `json:"last_success"`
 }
 
 // checkPolicyBundle runs kei-proxy policy show, located the same way as
 // kei runtime bootstrap, and checks the persisted bundle is active and
 // unexpired.
 func checkPolicyBundle(p doctorProbes) doctorResult {
-	r := doctorResult{Name: "policy bundle", Fix: "kei-proxy policy sync"}
+	r := doctorResult{Name: "policy bundle", Fix: "kei-proxy policy sync --force"}
 	var env []string
 	proxyPath := ""
 	if config, err := p.loadConfig(p.configPath); err == nil {
@@ -655,15 +656,19 @@ func checkPolicyBundle(p doctorProbes) doctorResult {
 	if !show.NotAfter.IsZero() {
 		expiry = "not_after " + show.NotAfter.UTC().Format(time.RFC3339)
 	}
+	lastRefresh := "last refresh unknown"
+	if !show.LastSuccess.IsZero() {
+		lastRefresh = "last refresh " + show.LastSuccess.UTC().Format(time.RFC3339)
+	}
 	switch {
 	case !show.NotAfter.IsZero() && !show.NotAfter.After(p.now()):
-		r.Status, r.Detail = doctorFail, fmt.Sprintf("bundle %d expired (%s)", show.BundleVersion, expiry)
+		r.Status, r.Detail = doctorFail, fmt.Sprintf("bundle %d expired (%s, %s)", show.BundleVersion, expiry, lastRefresh)
 	case show.State == "active":
-		r.Status, r.Detail = doctorPass, fmt.Sprintf("bundle %d active, %s", show.BundleVersion, expiry)
+		r.Status, r.Detail = doctorPass, fmt.Sprintf("bundle %d active, %s, %s", show.BundleVersion, expiry, lastRefresh)
 	case show.State == "stale_but_valid":
-		r.Status, r.Detail = doctorWarn, fmt.Sprintf("bundle %d stale_but_valid (refresh failing), %s", show.BundleVersion, expiry)
+		r.Status, r.Detail = doctorWarn, fmt.Sprintf("bundle %d stale_but_valid (refresh failing), %s, %s", show.BundleVersion, expiry, lastRefresh)
 	default:
-		r.Status, r.Detail = doctorFail, fmt.Sprintf("bundle state %s, %s", show.State, expiry)
+		r.Status, r.Detail = doctorFail, fmt.Sprintf("bundle state %s, %s, %s", show.State, expiry, lastRefresh)
 	}
 	return r
 }
