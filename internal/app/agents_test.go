@@ -127,6 +127,17 @@ func TestParseAgentMoveOptionsRejectsInvalidAndDuplicateEntries(t *testing.T) {
 	}
 }
 
+func TestAgentMoveMissingDestinationProfileExplainsBlocker(t *testing.T) {
+	const profileID = "12345678-1234-1234-1234-123456789012"
+	var output bytes.Buffer
+	printAgentMoveBlockers(&output, []byte(`{"blockers":[{"reason":"model_profile_destination_missing","resource":"`+profileID+`","message":"missing destination profile"}]}`))
+	for _, want := range []string{"model_profile_destination_missing", profileID, "equivalent model profile in the destination workspace"} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("blocker output %q missing %q", output.String(), want)
+		}
+	}
+}
+
 func TestAgentMoveRequiresConfirmationBeforeApply(t *testing.T) {
 	calls := 0
 	server, store := newUsersGroupsServer(t, func(w http.ResponseWriter, r *http.Request) {
