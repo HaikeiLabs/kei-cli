@@ -22,7 +22,7 @@ var cliSubcommands = map[string]map[string]bool{
 	"connectors":              {"create": true, "test": true, "list": true, "get": true, "connect": true, "reconnect": true, "delete": true, "manifests": true, "tools": true, "templates": true},
 	"connectors.tools":        {"list": true, "show": true, "approve": true},
 	"connectors.manifests":    {"list": true, "show": true, "approve": true},
-	"credential-store":        {"get": true, "put": true, "update": true},
+	"credential-store":        {"get": true, "put": true, "update": true, "status": true},
 	"directory-sync":          {"get": true, "set": true, "enable": true, "disable": true, "report": true},
 	"groups":                  {"list": true, "create": true, "members": true},
 	"groups.members":          {"list": true, "add": true, "remove": true},

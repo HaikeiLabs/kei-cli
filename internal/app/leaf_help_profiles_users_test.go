@@ -309,6 +309,23 @@ func TestLeafHelpCredentialStore(t *testing.T) {
 		},
 		// credential-store update requires at least one change flag; skip (c)
 		// because the check is custom (not requireFlags) and exits 2 before network.
+
+		// ---- credential-store status ----
+		{
+			command:  "credential-store",
+			args:     []string{"status", "-h"},
+			wantCode: 0,
+			wantOut:  "Usage: kei credential-store status [flags]",
+			wantErr:  "",
+		},
+		{
+			command:  "credential-store",
+			args:     []string{"status", "--definitely-unknown"},
+			wantCode: 2,
+			wantOut:  "",
+			wantErr:  "Usage: kei credential-store status [flags]",
+		},
+		// credential-store status has no required flags; skip (c).
 	}
 
 	runLeafCases(t, tests)

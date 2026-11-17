@@ -273,7 +273,7 @@ func TestModelProfilesCreateNoRecipientsFailsBeforeCreate(t *testing.T) {
 		t.Fatalf("create exit = %d, want 1", code)
 	}
 	assertRequest(t, fake.only(t), http.MethodGet, recipientsPath)
-	if !strings.Contains(stderr.String(), "no runtime in this scope") {
+	if !strings.Contains(stderr.String(), "credential store not ready (no_sync_runtime)") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
