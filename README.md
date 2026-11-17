@@ -597,6 +597,19 @@ An older Kei API without this change (HAI-954) returns 404 or 400 for
 PATCH-create, and one without the route returns 405. `put` then says the
 catalog needs the HAI-954 update.
 
+`kei credential-store status [--workspace W] [--agent A] [--json]` shows
+whether a secret can be delivered in a workspace (or to the runtimes that
+serve one agent): the resolved store (organization or workspace override,
+backend, status), the number of credential-sync runtimes, `ready`, the
+reasons (`no_store`, `store_disabled`, `no_sync_runtime`), and the next step.
+It never prints key material. Connector secrets (create and reconnect,
+database connectors included) and API-key model profiles (create and update)
+check the same readiness first and print the same message, for example
+`credential store not ready (no_sync_runtime): <next step>`. With no store,
+the next step is the exact `kei credential-store put ...` command; the CLI
+never creates a store on its own. A connector that names an external secret
+with `--credential-ref` needs an active store but no credential-sync runtime.
+
 ```sh
 # Create the credential store (or replace its configuration), then change one field.
 kei credential-store put --secret-backend aws-secrets-manager \

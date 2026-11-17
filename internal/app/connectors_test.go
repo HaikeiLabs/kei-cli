@@ -37,7 +37,17 @@ type fakeConsole struct {
 	mu       sync.Mutex
 	requests []consoleRequest
 	respond  func(w http.ResponseWriter, r consoleRequest)
+	// readiness answers GET …/credential-store/readiness; empty means a
+	// ready store. readinessStatus overrides the 200. Readiness requests
+	// are recorded in readinessRequests, not requests, so tests that count
+	// the rest of the console traffic are unaffected.
+	readiness         string
+	readinessStatus   int
+	readinessRequests []consoleRequest
 }
+
+// readyCredentialStoreJSON is the readiness answer for a ready org store.
+const readyCredentialStoreJSON = `{"store":{"id":"77777777-7777-7777-7777-777777777777","scope":"organization","secret_backend":"aws-secrets-manager","status":"active"},"sync_runtimes":1,"ready":true,"reasons":[],"next_step":""}`
 
 type consoleRequest struct {
 	Method  string
@@ -68,6 +78,22 @@ func newFakeConsole(t *testing.T, respond func(w http.ResponseWriter, r consoleR
 		// The catalog's connector-providers routes are read-only lookups,
 		// answered and not recorded (HAI-493).
 		if serveFakeCatalogProviders(w, r) {
+			return
+		}
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/credential-store/readiness") {
+			fake.mu.Lock()
+			fake.readinessRequests = append(fake.readinessRequests, consoleRequest{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Auth: r.Header.Get("Authorization")})
+			body, status := fake.readiness, fake.readinessStatus
+			fake.mu.Unlock()
+			if body == "" {
+				body = readyCredentialStoreJSON
+			}
+			if status == 0 {
+				status = http.StatusOK
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(body))
 			return
 		}
 		raw, _ := io.ReadAll(r.Body)
@@ -1136,6 +1162,7 @@ const testRuntimeID = "88888888-8888-8888-8888-888888888888"
 // sync does.
 type secretConsole struct {
 	t             *testing.T
+	fake          *fakeConsole
 	server        *httptest.Server
 	store         *memoryCredentialStore
 	mu            sync.Mutex
@@ -1161,9 +1188,9 @@ func newSecretConsole(t *testing.T, connectorJSON string) *secretConsole {
 		t.Fatal(err)
 	}
 	rt := &secretConsole{t: t, private: private, connector: connectorJSON}
-	_, server, store := newFakeConsole(t, rt.respond)
+	fake, server, store := newFakeConsole(t, rt.respond)
 	store.token = workspaceTestToken() // sealForWorkspace needs a parseable JWT for orgID
-	rt.server, rt.store = server, store
+	rt.server, rt.store, rt.fake = server, store, fake
 	return rt
 }
 

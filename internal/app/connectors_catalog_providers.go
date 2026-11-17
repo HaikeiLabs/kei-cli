@@ -335,8 +335,16 @@ func completeConnectorCreate(session *connectorSession, plan connectorCreatePlan
 		return 2
 	}
 	var sealed setSecretRequest
-	if secret != "" {
+	switch {
+	case secret != "":
 		if sealed, err = session.sealForWorkspace(secretField.Name, secret); err != nil {
+			return fail(fmt.Errorf("%w. Nothing was created", err))
+		}
+	case plan.request.CredentialRef != "":
+		// An external secret needs the store (it names the secret
+		// manager) but no credential-sync runtime (owner decision,
+		// HAI-1023 Q3).
+		if err := session.preflightCredentialStore(false); err != nil {
 			return fail(fmt.Errorf("%w. Nothing was created", err))
 		}
 	}

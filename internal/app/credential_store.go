@@ -82,6 +82,7 @@ var credentialStoreGroup = commandGroup{
 		{name: "get", summary: "Get the credential store configuration"},
 		{name: "put", summary: "Create the credential store, or replace its configuration"},
 		{name: "update", summary: "Update the credential store configuration"},
+		{name: "status", summary: "Show whether secrets can be delivered in a workspace"},
 	},
 }
 
@@ -97,6 +98,8 @@ func runCredentialStoreCommand(args []string, stdout, stderr io.Writer, client *
 		return runCredentialStorePut(rest, stdout, stderr, client, store)
 	case "update":
 		return runCredentialStoreUpdate(rest, stdout, stderr, client, store)
+	case "status":
+		return runCredentialStoreStatus(rest, stdout, stderr, client, store)
 	default:
 		panic("unexpected subcommand: " + sub)
 	}

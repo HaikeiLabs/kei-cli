@@ -115,9 +115,13 @@ func connectorSecretField(provider contract.Provider, model contract.AccountMode
 }
 
 // sealForWorkspace seals a secret to every runtime key that can receive
-// secrets for the session's workspace. It fails when there is none, before
-// anything is created.
+// secrets for the session's workspace. It checks the workspace's credential
+// store readiness first and fails with the shared next step, before anything
+// is created.
 func (s *connectorSession) sealForWorkspace(field, secret string) (setSecretRequest, error) {
+	if err := s.preflightCredentialStore(true); err != nil {
+		return setSecretRequest{}, err
+	}
 	payload, err := s.doPath(http.MethodGet, "/api/v1/organizations/"+url.PathEscape(s.orgID)+"/credential-store/recipients", nil)
 	if err != nil {
 		return setSecretRequest{}, fmt.Errorf("list credential delivery recipients: %w", err)
@@ -126,8 +130,8 @@ func (s *connectorSession) sealForWorkspace(field, secret string) (setSecretRequ
 	if err := json.Unmarshal(payload, &store); err != nil {
 		return setSecretRequest{}, fmt.Errorf("decode credential delivery recipients: %w", err)
 	}
-	if store.CredentialStoreInstallationID == "" || len(store.Recipients) == 0 {
-		return setSecretRequest{}, errors.New("no runtime in this workspace can receive secrets; set up a credential store and a runtime with a credential-sync key first")
+	if err := recipientsNotReady(store); err != nil {
+		return setSecretRequest{}, err
 	}
 	request := setSecretRequest{Field: field, CredentialStoreInstallationID: store.CredentialStoreInstallationID}
 	for _, recipient := range store.Recipients {

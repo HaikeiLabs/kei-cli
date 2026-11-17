@@ -280,9 +280,15 @@ func (s *orgSession) do(method, path string, query url.Values, body any) (int, [
 }
 
 // sealForProfile lists the credential-sync keys that may receive a key for a
-// profile in scope and seals apiKey to each. It returns the credential store
-// the profile belongs to. With apiKey empty it only resolves the store.
+// profile in scope and seals apiKey to each, after the scope's credential
+// store readiness check. It returns the credential store the profile belongs
+// to. With apiKey empty it only resolves the store.
 func (s *orgSession) sealForProfile(agentID, apiKey string) (string, []sealedRecipient, error) {
+	if apiKey != "" {
+		if err := s.preflightCredentialStore(agentID); err != nil {
+			return "", nil, err
+		}
+	}
 	query := url.Values{}
 	if s.workspaceID != "" {
 		query.Set("workspace_id", s.workspaceID)
@@ -298,14 +304,14 @@ func (s *orgSession) sealForProfile(agentID, apiKey string) (string, []sealedRec
 	if err := json.Unmarshal(payload, &recipients); err != nil {
 		return "", nil, fmt.Errorf("decode credential delivery recipients: %w", err)
 	}
-	if recipients.CredentialStoreInstallationID == "" {
-		return "", nil, errors.New("no active credential store; configure one with kei credential-store put")
-	}
 	if apiKey == "" {
+		if recipients.CredentialStoreInstallationID == "" {
+			return "", nil, recipientsNotReady(recipients)
+		}
 		return recipients.CredentialStoreInstallationID, nil, nil
 	}
-	if len(recipients.Recipients) == 0 {
-		return "", nil, errors.New("no runtime in this scope can receive the API key; set up a runtime with a credential-sync key first")
+	if err := recipientsNotReady(recipients); err != nil {
+		return "", nil, err
 	}
 	sealed := make([]sealedRecipient, 0, len(recipients.Recipients))
 	for _, recipient := range recipients.Recipients {
