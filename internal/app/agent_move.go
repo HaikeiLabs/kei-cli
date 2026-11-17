@@ -304,8 +304,12 @@ func printAgentMoveBlockers(w io.Writer, payload []byte) {
 			reason = "unspecified blocker"
 		}
 		line := "  - " + reason
-		if name, ok := blocker["name"].(string); ok && name != "" {
-			line += " (" + name + ")"
+		resource, _ := blocker["resource"].(string)
+		if resource == "" {
+			resource, _ = blocker["name"].(string)
+		}
+		if resource != "" {
+			line += " (" + resource + ")"
 		}
 		fmt.Fprintln(w, line+agentMoveBlockerResolution(reason))
 	}
@@ -322,6 +326,8 @@ func agentMoveBlockerResolution(reason string) string {
 		return "; resolve the destination name collision before retrying"
 	case strings.Contains(r, "policy") && strings.Contains(r, "collision"):
 		return "; resolve the destination policy collision before retrying"
+	case strings.Contains(r, "model_profile") && strings.Contains(r, "destination"):
+		return "; create an equivalent model profile in the destination workspace before retrying"
 	case strings.Contains(r, "connector") || strings.Contains(r, "mcp") || strings.Contains(r, "tool"):
 		return "; add a matching connector/tool in the destination workspace before retrying"
 	case strings.Contains(r, "nested"):
