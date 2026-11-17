@@ -180,9 +180,9 @@ func printAgentMoveNextSteps(w io.Writer, payload []byte) {
 		if installation.Name != "" {
 			label += " (" + installation.Name + ")"
 		}
-		fmt.Fprintf(w, "  - Installation %s: restart its runtime service, then run `kei-proxy policy sync --force`.\n", label)
+		fmt.Fprintf(w, "  - Installation %s: run `kei-proxy policy sync --force`.\n", label)
 	}
-	fmt.Fprintln(w, "The running kei-proxy keeps its old workspace until it reloads.")
+	fmt.Fprintln(w, "The running kei-proxy re-resolves its identity on the next authorization.")
 }
 
 func parseAgentMoveOptions(groups, installations []string) (agentMoveOptions, error) {
