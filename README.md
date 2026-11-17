@@ -375,14 +375,30 @@ kei connectors create --workspace Main --provider skills_repo --name org-skills 
   --base-url https://crm.example.com --methods GET,HEAD,POST,PATCH \
   --paths '/api/investors,/api/investors/*' --query limit,cursor --auth-header X-KEI-API-Key
 
-# Databases (postgres, mysql, mssql): read from the catalog's connector
+# Databases (postgres, mysql, mssql, snowflake): read from the catalog's connector
 # providers, not built into the CLI. One shared account only (per_user is
-# rejected) and one secret field, the DSN of a read-only role. The DSN is read
-# without echo, from stdin, or from --secret-file; it is never a flag, and it is
-# sealed to the workspace's runtimes before anything is sent. Capability: query.run.
+# rejected) and one secret field: the DSN of a read-only role, or for snowflake
+# the key_pair JSON of a read-only service user. The secret is read without
+# echo, from stdin, or from --secret-file; it is never a flag, and it is sealed
+# to the workspace's runtimes before anything is sent. Capability: query.run.
 kei connectors create --workspace Main --provider postgres --name warehouse
 <secret-manager read> | kei connectors create --workspace Main --provider mysql --name orders-db
 kei connectors create --workspace Main --provider mssql --name finance-db --secret-file ./mssql.dsn
+
+# Rotate an existing database connector's secret (postgres, mysql, mssql,
+# snowflake), like Edit in the console: reconnect reads the secret field from
+# the catalog, seals the new value, and delivers it as a new generation through
+# :setSecret. The value is never a flag. Use --secret-file for a multi-line
+# value such as Snowflake's key_pair JSON. --keep-secret reactivates without
+# replacing the secret.
+kei connectors reconnect CONNECTOR_ID --workspace Main                         # no-echo prompt
+<secret-manager read> | kei connectors reconnect CONNECTOR_ID --workspace Main  # stdin
+kei connectors reconnect CONNECTOR_ID --workspace Main --secret-file ./snowflake-key-pair.json
+# Secret delivery status, the same as the console's "Secret delivery":
+kei connectors get CONNECTOR_ID --workspace Main
+#   Secret:      dsn set (generation 3, delivered 2026-11-11T15:00:00Z)
+#   Secret:      dsn pending delivery (generation 2)
+#   Secret:      dsn not set
 
 # Remote MCP server, from a catalog connector template. The template's kind
 # (read from the catalog) picks the path; --kind mcp only checks it. The slug

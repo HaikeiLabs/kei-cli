@@ -448,6 +448,12 @@ func runConnectorsGet(args []string, stdout, stderr io.Writer, client *http.Clie
 				for _, secret := range list.Secrets {
 					fmt.Fprintf(stdout, "Secret:      %s\n", describeSecretStatus(secret))
 				}
+				// Like the console, a catalog provider's secret field shows
+				// even before its first delivery (HAI-493).
+				if field, ok := catalogSecretFieldForGet(session, contract.Provider(c.Provider)); ok &&
+					!slices.ContainsFunc(list.Secrets, func(s secretStatus) bool { return s.Field == field.Name }) {
+					fmt.Fprintf(stdout, "Secret:      %s\n", describeSecretStatus(secretStatus{Field: field.Name}))
+				}
 			}
 		}
 	}
@@ -579,12 +585,17 @@ func runConnectorsReconnect(args []string, stdout, stderr io.Writer, stdin io.Re
 	workspace := workspaceFlag(lc.fs)
 	noBrowser := lc.fs.Bool("no-browser", false, "print the consent URL without opening a browser")
 	keepSecret := lc.fs.Bool("keep-secret", false, "reactivate a shared-secret connector without replacing its secret")
+	secretFile := lc.fs.String("secret-file", "", "read the replacement secret from this file instead of the prompt or stdin (use it for a multi-line value such as a Snowflake key pair); never pass a secret as a flag")
 	id, rc, ok := parseConnectorLeaf(lc, args)
 	if !ok {
 		return rc
 	}
 	ws, ok := requireConnectorWorkspace("reconnect", *workspace, stderr)
 	if !ok || !requireConnectorID("reconnect", id, stderr) {
+		return 2
+	}
+	if *keepSecret && *secretFile != "" {
+		fmt.Fprintln(stderr, "connectors reconnect: --secret-file replaces the secret; it cannot be combined with --keep-secret")
 		return 2
 	}
 	session, ok := openConnectorSession("reconnect", ws, stderr, client, store)
@@ -608,10 +619,23 @@ func runConnectorsReconnect(args []string, stdout, stderr io.Writer, stdin io.Re
 	}
 
 	// A shared-secret connector reconnects with a replacement secret: a new
-	// generation, sealed and delivered like the first (HAI-262).
-	field, hasSecret := connectorSecretField(contract.Provider(current.Provider), contract.AccountModel(current.AccountModel))
-	if current.CredentialSource == string(contract.CredentialSourceOpaqueRef) && hasSecret && !*keepSecret {
-		secret, err := readSecretField(field, bufio.NewReader(stdin), stdin, stdout)
+	// generation, sealed and delivered like the first (HAI-262). A provider
+	// the CLI knows only from the catalog (postgres, mysql, mssql, snowflake:
+	// HAI-493) takes its secret field from the catalog's setup schema.
+	provider := contract.Provider(current.Provider)
+	opaqueRef := current.CredentialSource == string(contract.CredentialSourceOpaqueRef)
+	field, hasSecret := connectorSecretField(provider, contract.AccountModel(current.AccountModel))
+	if _, builtIn := setup.SetupSchemaFor(provider); opaqueRef && !builtIn && !*keepSecret {
+		if field, err = session.catalogSecretField(provider); err != nil {
+			return fail(fmt.Errorf("%w; to reactivate without replacing the secret, pass --keep-secret", err))
+		}
+		hasSecret = true
+	}
+	if *secretFile != "" && (!opaqueRef || !hasSecret) {
+		return fail(errors.New("--secret-file applies only to a connector with a secret field"))
+	}
+	if opaqueRef && hasSecret && !*keepSecret {
+		secret, err := readConnectorSecret(field, *secretFile, bufio.NewReader(stdin), stdin, stdout)
 		if err != nil {
 			return fail(err)
 		}
@@ -1306,6 +1330,17 @@ func readSecretField(field setup.SetupField, reader *bufio.Reader, stdin io.Read
 		return "", err
 	}
 	return secret, nil
+}
+
+// catalogSecretFieldForGet is the secret field of a provider the CLI knows
+// only from the catalog. Built-in providers, and any catalog lookup failure,
+// report none, so get's output for them is unchanged.
+func catalogSecretFieldForGet(session *connectorSession, provider contract.Provider) (setup.SetupField, bool) {
+	if _, builtIn := setup.SetupSchemaFor(provider); builtIn {
+		return setup.SetupField{}, false
+	}
+	field, err := session.catalogSecretField(provider)
+	return field, err == nil
 }
 
 func describeSecretStatus(s secretStatus) string {

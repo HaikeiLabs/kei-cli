@@ -1150,6 +1150,8 @@ type secretConsole struct {
 	templates map[string]string
 	// openedFields is each setSecret's opened secret by field.
 	openedFields map[string]string
+	// secrets answers GET {connector}/secrets when set.
+	secrets string
 }
 
 func newSecretConsole(t *testing.T, connectorJSON string) *secretConsole {
@@ -1215,6 +1217,10 @@ func (rt *secretConsole) respond(w http.ResponseWriter, r consoleRequest) {
 	case r.Method == http.MethodGet && r.Path == base:
 		_, _ = w.Write([]byte(rt.connector))
 	case r.Method == http.MethodGet && r.Path == base+"/secrets":
+		if rt.secrets != "" {
+			_, _ = w.Write([]byte(rt.secrets))
+			return
+		}
 		_, _ = w.Write([]byte(`{"secrets":[{"field":"api_token","set":true,"generation":2,"delivered_at":"2026-09-29T15:00:00Z"}]}`))
 	case r.Method == http.MethodPost && r.Path == base+":reconnect":
 		if rt.authURL != "" {

@@ -232,6 +232,20 @@ func (s *connectorSession) catalogProvider(provider contract.Provider) (catalogP
 	return got.ConnectorProvider, nil
 }
 
+// catalogSecretField is the one secret field of a provider the CLI knows only
+// from the catalog (a database provider's DSN, Snowflake's key_pair).
+func (s *connectorSession) catalogSecretField(provider contract.Provider) (setup.SetupField, error) {
+	detail, err := s.catalogProvider(provider)
+	if err != nil {
+		return setup.SetupField{}, fmt.Errorf("read connector provider %q from the catalog: %w", provider, err)
+	}
+	field, ok := detail.sharedSecretOnly()
+	if !ok {
+		return setup.SetupField{}, fmt.Errorf("provider %q is listed by the catalog, but this kei cannot set its secret; use the console or upgrade kei", provider)
+	}
+	return field, nil
+}
+
 // readConnectorSecret reads a secret field from --secret-file when one is
 // given, and otherwise from the no-echo prompt or one line of stdin. Errors
 // name the field or the file, never the value.
