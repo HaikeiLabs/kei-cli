@@ -46,6 +46,7 @@ func runAgentsCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, 
 func runAgentMove(args []string, stdout, stderr io.Writer, stdin io.Reader, client *http.Client, store credentialStore) int {
 	lc := newCommandFlags("agents", "move", "Move an agent to another workspace", stdout, stderr).WithArgs("AGENT")
 	toWorkspace := lc.fs.String("to-workspace", "", "destination workspace name or ID (required)")
+	modelProfile := lc.fs.String("model-profile", "", "set to drop to explicitly remove an unmatched assignment; recreate it after the move")
 	var groupFlags, installationFlags repeatedFlag
 	lc.fs.Var(&groupFlags, "group", "group action NAME=move|copy|leave (repeatable)")
 	lc.fs.Var(&installationFlags, "installation", "installation action ID=move_all|detach (repeatable)")
@@ -63,6 +64,10 @@ func runAgentMove(args []string, stdout, stderr io.Writer, stdin io.Reader, clie
 	}
 	if strings.TrimSpace(*toWorkspace) == "" {
 		fmt.Fprintln(stderr, "agents move requires --to-workspace")
+		return 2
+	}
+	if *modelProfile != "" && *modelProfile != "drop" {
+		fmt.Fprintln(stderr, "agents move: --model-profile only accepts drop")
 		return 2
 	}
 	options, err := parseAgentMoveOptions(groupFlags, installationFlags)
@@ -93,6 +98,9 @@ func runAgentMove(args []string, stdout, stderr io.Writer, stdin io.Reader, clie
 		"groups":                options.groups,
 		"installations":         options.installations,
 		"validate_only":         true,
+	}
+	if *modelProfile != "" {
+		request["model_profile"] = *modelProfile
 	}
 	_, plan, err := session.do(http.MethodPost, path, nil, request)
 	if err != nil {
@@ -172,6 +180,7 @@ func printAgentMoveNextSteps(w io.Writer, payload []byte) {
 		}
 	}
 	if len(rescaled) == 0 {
+		printAgentMoveProfileFollowUp(w, payload)
 		return
 	}
 	fmt.Fprintln(w, "Next steps:")
@@ -183,6 +192,7 @@ func printAgentMoveNextSteps(w io.Writer, payload []byte) {
 		fmt.Fprintf(w, "  - Installation %s: run `kei-proxy policy sync --force`.\n", label)
 	}
 	fmt.Fprintln(w, "The running kei-proxy re-resolves its identity on the next authorization.")
+	printAgentMoveProfileFollowUp(w, payload)
 }
 
 func parseAgentMoveOptions(groups, installations []string) (agentMoveOptions, error) {
@@ -282,6 +292,38 @@ func printAgentMovePlan(w io.Writer, payload []byte) {
 		return
 	}
 	fmt.Fprintf(w, "Move plan:\n%s\n", formatted)
+	printAgentMoveProfileFollowUp(w, payload)
+}
+
+func printAgentMoveProfileFollowUp(w io.Writer, payload []byte) {
+	var plan struct {
+		Agent struct {
+			ID string `json:"id"`
+		} `json:"agent"`
+		DestinationWorkspace struct {
+			ID string `json:"id"`
+		} `json:"destination_workspace"`
+		ModelProfileAssignment *struct {
+			Name          string `json:"name"`
+			Action        string `json:"action"`
+			DestinationID string `json:"destination_profile_id"`
+		} `json:"model_profile_assignment"`
+	}
+	if json.Unmarshal(payload, &plan) != nil || plan.ModelProfileAssignment == nil {
+		return
+	}
+	assignment := plan.ModelProfileAssignment
+	if assignment.Action != "drop" && assignment.DestinationID != "" {
+		return
+	}
+	name := assignment.Name
+	if name == "" {
+		name = "the assigned profile"
+	}
+	if assignment.Action != "drop" {
+		fmt.Fprint(w, "The move is blocked by default; retry with --model-profile drop. ")
+	}
+	fmt.Fprintf(w, "Model profile follow-up: recreate %s in the destination workspace %s, assign it to agent %s with `kei model-profiles create --workspace %s --display-name %q ... --agent %s` (API keys are read from stdin), then restart the runtime.\n", name, plan.DestinationWorkspace.ID, plan.Agent.ID, plan.DestinationWorkspace.ID, assignment.Name, plan.Agent.ID)
 }
 
 func printAgentMoveBlockers(w io.Writer, payload []byte) {
@@ -327,7 +369,7 @@ func agentMoveBlockerResolution(reason string) string {
 	case strings.Contains(r, "policy") && strings.Contains(r, "collision"):
 		return "; resolve the destination policy collision before retrying"
 	case strings.Contains(r, "model_profile") && strings.Contains(r, "destination"):
-		return "; create an equivalent model profile in the destination workspace before retrying"
+		return "; retry with --model-profile drop to proceed; recreate and assign the profile in the destination workspace after the move, then restart the runtime"
 	case strings.Contains(r, "connector") || strings.Contains(r, "mcp") || strings.Contains(r, "tool"):
 		return "; add a matching connector/tool in the destination workspace before retrying"
 	case strings.Contains(r, "nested"):
