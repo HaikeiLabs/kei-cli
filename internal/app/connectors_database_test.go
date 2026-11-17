@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -21,24 +22,33 @@ const fakeCatalogProviders = `{"connector_providers":[
 {"id":"http_api","display_name":"HTTP API","capabilities":["http.get"],"access_kinds":["read"]},
 {"id":"postgres","display_name":"PostgreSQL","capabilities":["query.run"],"account_models":["shared"],"access_kinds":["read"]},
 {"id":"mysql","display_name":"MySQL","capabilities":["query.run"],"account_models":["shared"],"access_kinds":["read"]},
-{"id":"mssql","display_name":"Microsoft SQL Server","capabilities":["query.run"],"account_models":["shared"],"access_kinds":["read"]}
+{"id":"mssql","display_name":"Microsoft SQL Server","capabilities":["query.run"],"account_models":["shared"],"access_kinds":["read"]},
+{"id":"snowflake","display_name":"Snowflake","capabilities":["query.run"],"account_models":["shared"],"access_kinds":["read"]}
 ]}`
 
 // fakeCatalogProviderDetail is GET /api/v1/connector-providers/{provider} for
 // a database provider: one shared account over opaque_ref and one secret DSN.
 func fakeCatalogProviderDetail(provider, display, label string) string {
+	return fakeCatalogSecretProviderDetail(provider, display, "dsn", label, 8, 4096)
+}
+
+// fakeCatalogSecretProviderDetail is a catalog database provider whose one
+// secret credential field is named field (Snowflake's is key_pair).
+func fakeCatalogSecretProviderDetail(provider, display, field, label string, minLength, maxLength int) string {
 	return `{"connector_provider":{"id":"` + provider + `","display_name":"` + display + `",
 "capabilities":[{"name":"query.run","action":"read","description":"Run a read-only SQL query"}],
 "account_models":["shared"],
 "setup_schema":{"schema":"kei.connector.setup/v1","provider":"` + provider + `",
 "auth":[{"credential_source":"opaque_ref","account_models":["shared"],"default_account_model":"shared"}],
-"fields":[{"name":"dsn","label":"` + label + `","type":"string","location":"credential","required":true,"secret":true,"min_length":8,"max_length":4096}]}}}`
+"fields":[{"name":"` + field + `","label":"` + label + `","type":"string","location":"credential","required":true,"secret":true,"min_length":` + strconv.Itoa(minLength) + `,"max_length":` + strconv.Itoa(maxLength) + `}]}}}`
 }
 
 var fakeCatalogDetails = map[string]string{
 	"postgres": fakeCatalogProviderDetail("postgres", "PostgreSQL", "Connection string (DSN) for a read-only role (Postgres or Supabase)"),
 	"mysql":    fakeCatalogProviderDetail("mysql", "MySQL", "Connection string (DSN) for a read-only MySQL user"),
 	"mssql":    fakeCatalogProviderDetail("mssql", "Microsoft SQL Server", "Connection string (DSN) for a read-only SQL Server login"),
+	"snowflake": fakeCatalogSecretProviderDetail("snowflake", "Snowflake", "key_pair",
+		"Key pair JSON (account, user, role, warehouse, private_key as unencrypted PEM) of a read-only service user", 64, 16384),
 }
 
 // serveFakeCatalogProviders answers the catalog's connector-providers routes.
@@ -196,7 +206,7 @@ func TestConnectorsCreateUnknownProviderStillRejected(t *testing.T) {
 			if code != 2 {
 				t.Fatalf("exit = %d stderr=%q, want 2", code, stderr)
 			}
-			want := "connectors create: --provider must be one of gmail, google_drive, linear, github, tito, skills_repo, http_api, postgres, mysql, mssql\n"
+			want := "connectors create: --provider must be one of gmail, google_drive, linear, github, tito, skills_repo, http_api, postgres, mysql, mssql, snowflake\n"
 			if stderr != want {
 				t.Fatalf("stderr = %q, want %q", stderr, want)
 			}
