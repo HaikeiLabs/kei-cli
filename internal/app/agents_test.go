@@ -30,7 +30,7 @@ func TestAgentMoveDryRunResolvesNameAndSendsPlanRequest(t *testing.T) {
 			if body["destination_workspace"] != testWorkspaceID || body["validate_only"] != true {
 				t.Fatalf("move request = %#v", body)
 			}
-			_, _ = w.Write([]byte(`{"agent":{"id":"` + testMoveAgentID + `"},"groups":[],"users_added":[],"installations":[],"connector_bindings":[],"model_profile_assignment":null,"access_grants":[],"blockers":[]}`))
+			_, _ = w.Write([]byte(`{"agent":{"id":"` + testMoveAgentID + `"},"groups":[],"users_added":[],"installations":[{"id":"` + testMoveInstallID + `","display_name":"runtime","action":"move_all"}],"connector_bindings":[],"model_profile_assignment":null,"access_grants":[],"blockers":[]}`))
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
 		}
@@ -41,6 +41,9 @@ func TestAgentMoveDryRunResolvesNameAndSendsPlanRequest(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), `"blockers":[]`) {
 		t.Fatalf("dry-run output = %s", stdout.String())
+	}
+	if strings.Contains(stderr.String(), "Next steps") {
+		t.Fatalf("dry-run printed apply instructions: %s", stderr.String())
 	}
 }
 
@@ -72,7 +75,7 @@ func TestAgentMoveApplyPreviewsThenWrites(t *testing.T) {
 				t.Fatalf("options = groups:%#v installations:%#v", groups, installations)
 			}
 		}
-		_, _ = w.Write([]byte(`{"agent":{"id":"` + testMoveAgentID + `"},"blockers":[]}`))
+		_, _ = w.Write([]byte(`{"agent":{"id":"` + testMoveAgentID + `"},"installations":[{"id":"` + testMoveInstallID + `","display_name":"runtime","action":"move_all"}],"blockers":[]}`))
 	})
 	var stdout, stderr bytes.Buffer
 	args := []string{testMoveAgentID, "--to-workspace", "Main", "--group", "Engineering=copy", "--installation", testMoveInstallID + "=detach", "--yes", "--json"}
@@ -82,8 +85,12 @@ func TestAgentMoveApplyPreviewsThenWrites(t *testing.T) {
 	if calls != 2 {
 		t.Fatalf("POST count = %d, want preview + apply", calls)
 	}
-	if strings.Count(stdout.String(), "\n") != 1 {
-		t.Fatalf("JSON should contain only the applied result: %s", stdout.String())
+	wantJSON := `{"agent":{"id":"` + testMoveAgentID + `"},"installations":[{"id":"` + testMoveInstallID + `","display_name":"runtime","action":"move_all"}],"blockers":[]}` + "\n"
+	if stdout.String() != wantJSON {
+		t.Fatalf("JSON output changed: got %s want %s", stdout.String(), wantJSON)
+	}
+	if strings.Contains(stderr.String(), "Next steps") {
+		t.Fatalf("JSON mode printed human instructions: %s", stderr.String())
 	}
 }
 

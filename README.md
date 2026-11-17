@@ -342,7 +342,7 @@ kei agents move Default --to-workspace Playground --dry-run
 kei agents move Default --to-workspace Playground --group Analysts=copy --installation INSTALLATION_ID=detach --yes
 ```
 
-Use repeatable `--group NAME=move|copy|leave` and `--installation ID=move_all|detach` options to resolve shared-resource decisions. `--json` prints the API plan/result as JSON.
+Use repeatable `--group NAME=move|copy|leave` and `--installation ID=move_all|detach` options to resolve shared-resource decisions. After a successful move, human output lists each installation whose credential was re-scoped and instructs you to restart its runtime service, then run `kei-proxy policy sync --force`. The running kei-proxy keeps its old workspace until it reloads. This note is omitted with `--dry-run` and `--json`; `--json` stdout remains the API response.
 
 The CLI always targets the Kei production API at `https://app.haikeilabs.com`.
 Set the `KEI_WEB_URL` environment variable to override the endpoint for

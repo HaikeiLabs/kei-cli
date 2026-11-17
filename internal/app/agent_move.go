@@ -143,8 +143,46 @@ func runAgentMove(args []string, stdout, stderr io.Writer, stdin io.Reader, clie
 		}
 	} else {
 		fmt.Fprintf(stdout, "Moved agent %s to workspace %s.\n", pos[0], destination)
+		printAgentMoveNextSteps(stderr, result)
 	}
 	return 0
+}
+
+func printAgentMoveNextSteps(w io.Writer, payload []byte) {
+	var result struct {
+		Installations []struct {
+			ID     string `json:"id"`
+			Name   string `json:"display_name"`
+			Action string `json:"action"`
+		} `json:"installations"`
+	}
+	if json.Unmarshal(payload, &result) != nil {
+		return
+	}
+	var rescaled []struct {
+		ID   string
+		Name string
+	}
+	for _, installation := range result.Installations {
+		if installation.Action == "move_all" {
+			rescaled = append(rescaled, struct {
+				ID   string
+				Name string
+			}{ID: installation.ID, Name: installation.Name})
+		}
+	}
+	if len(rescaled) == 0 {
+		return
+	}
+	fmt.Fprintln(w, "Next steps:")
+	for _, installation := range rescaled {
+		label := installation.ID
+		if installation.Name != "" {
+			label += " (" + installation.Name + ")"
+		}
+		fmt.Fprintf(w, "  - Installation %s: restart its runtime service, then run `kei-proxy policy sync --force`.\n", label)
+	}
+	fmt.Fprintln(w, "The running kei-proxy keeps its old workspace until it reloads.")
 }
 
 func parseAgentMoveOptions(groups, installations []string) (agentMoveOptions, error) {
