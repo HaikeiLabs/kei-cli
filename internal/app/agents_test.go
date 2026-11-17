@@ -131,9 +131,62 @@ func TestAgentMoveMissingDestinationProfileExplainsBlocker(t *testing.T) {
 	const profileID = "12345678-1234-1234-1234-123456789012"
 	var output bytes.Buffer
 	printAgentMoveBlockers(&output, []byte(`{"blockers":[{"reason":"model_profile_destination_missing","resource":"`+profileID+`","message":"missing destination profile"}]}`))
-	for _, want := range []string{"model_profile_destination_missing", profileID, "equivalent model profile in the destination workspace"} {
+	for _, want := range []string{"model_profile_destination_missing", profileID, "--model-profile drop", "recreate and assign the profile in the destination workspace", "restart the runtime"} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("blocker output %q missing %q", output.String(), want)
+		}
+	}
+}
+
+func TestAgentMoveDropProfileRequestAndNextSteps(t *testing.T) {
+	calls := 0
+	server, store := newUsersGroupsServer(t, func(w http.ResponseWriter, r *http.Request) {
+		requireBearer(t, r)
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/agents/"+testMoveAgentID+":move" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		calls++
+		if body["model_profile"] != "drop" || body["validate_only"] != (calls == 1) {
+			t.Fatalf("request %d = %#v", calls, body)
+		}
+		_, _ = w.Write([]byte(`{"agent":{"id":"` + testMoveAgentID + `"},"destination_workspace":{"id":"` + testWorkspaceID + `","name":"Main"},"model_profile_assignment":{"profile_id":"12345678-1234-1234-1234-123456789012","name":"Bedrock","action":"drop"},"installations":[],"blockers":[]}`))
+	})
+	var stdout, stderr bytes.Buffer
+	args := []string{testMoveAgentID, "--to-workspace", "Main", "--model-profile", "drop", "--yes"}
+	if code := runAgentMove(args, &stdout, &stderr, strings.NewReader(""), server.Client(), store); code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	if calls != 2 {
+		t.Fatalf("POST count=%d, want preview + apply", calls)
+	}
+	for _, want := range []string{"Bedrock", "--workspace", "--agent", "destination workspace", "restart the runtime"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("next steps %q missing %q", stderr.String(), want)
+		}
+	}
+}
+
+func TestAgentMoveRejectsUnsupportedModelProfileAction(t *testing.T) {
+	server, store := newUsersGroupsServer(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+	})
+	var stdout, stderr bytes.Buffer
+	code := runAgentMove([]string{testMoveAgentID, "--to-workspace", "Main", "--model-profile", "move"}, &stdout, &stderr, strings.NewReader(""), server.Client(), store)
+	if code != 2 || !strings.Contains(stderr.String(), "only accepts drop") {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+}
+
+func TestAgentMoveDryRunProfileBlockerExplainsDropAndRecreation(t *testing.T) {
+	var output bytes.Buffer
+	printAgentMovePlan(&output, []byte(`{"agent":{"id":"`+testMoveAgentID+`"},"destination_workspace":{"id":"`+testWorkspaceID+`"},"model_profile_assignment":{"profile_id":"12345678-1234-1234-1234-123456789012","name":"Bedrock"},"blockers":[{"reason":"model_profile_destination_missing"}]}`))
+	for _, want := range []string{"--model-profile drop", "recreate Bedrock in the destination workspace", "--agent", "restart the runtime"} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("dry-run plan %q missing %q", output.String(), want)
 		}
 	}
 }
