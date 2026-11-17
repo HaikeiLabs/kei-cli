@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestAgentMoveApplyPrintsCredentialReloadStepsForRescopedInstallations(t *testing.T) {
+func TestAgentMoveApplyPrintsPolicySyncStepsForRescopedInstallations(t *testing.T) {
 	server, store := newUsersGroupsServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/agents/"+testMoveAgentID+":move" {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
@@ -22,16 +22,18 @@ func TestAgentMoveApplyPrintsCredentialReloadStepsForRescopedInstallations(t *te
 	for _, want := range []string{
 		"Next steps:",
 		testMoveInstallID + " (moved-runtime)",
-		"restart its runtime service",
 		"kei-proxy policy sync --force",
-		"The running kei-proxy keeps its old workspace until it reloads.",
+		"The running kei-proxy re-resolves its identity on the next authorization.",
 	} {
 		if !strings.Contains(stderr.String(), want) {
 			t.Errorf("stderr missing %q:\n%s", want, stderr.String())
 		}
 	}
+	if strings.Contains(stderr.String(), "restart") {
+		t.Errorf("restart hint remains in move output:\n%s", stderr.String())
+	}
 	if strings.Contains(stderr.String(), "detached-runtime") {
-		t.Errorf("detached installation received credential reload instructions:\n%s", stderr.String())
+		t.Errorf("detached installation received policy sync instructions:\n%s", stderr.String())
 	}
 }
 
