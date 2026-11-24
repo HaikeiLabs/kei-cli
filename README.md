@@ -328,9 +328,15 @@ kei service-principals bind kei-bug-intake --installation INSTALLATION_ID --agen
 kei service-principals bindings list --workspace Main
 kei service-principals unbind kei-bug-intake --installation INSTALLATION_ID --agent AGENT_ID --workspace Main --yes
 kei service-principals unbind --binding-id BINDING_ID --workspace Main --yes
+kei groups members list GROUP_ID --service-principals --workspace Main [--json]
 kei groups members add Support --service-principal kei-bug-intake --workspace Main --yes
 kei groups members remove Support --service-principal kei-bug-intake --workspace Main --yes
 ```
+
+`groups members list` lists users by default, preserving the existing output.
+Use `--service-principals` to list the other member type; that mode requires
+`--workspace` and follows all API pages. JSON output is an array of
+`service_principal_id`, `name`, and `assigned_at` records.
 
 A binding only authorizes that installation/agent pair to select the principal;
 ordinary group policy grants still control access.

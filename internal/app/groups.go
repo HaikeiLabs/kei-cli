@@ -367,7 +367,8 @@ func groupsQuery(session *apiSession, workspaceID string) url.Values {
 func runGroupsMembersList(args []string, stdout, stderr io.Writer, client *http.Client, store credentialStore) int {
 	lc := newCommandFlags("groups", "members list", "List group members", stdout, stderr).WithArgs("GROUP")
 	jsonOutput := jsonFlag(lc.fs)
-	workspace := workspaceFlagHelp(lc.fs, "workspace name or ID (default: the organization's default workspace)")
+	servicePrincipals := lc.fs.Bool("service-principals", false, "list service principals instead of users")
+	workspace := workspaceFlagHelp(lc.fs, "workspace name or ID (required with --service-principals)")
 	// Intercept -h/--help before parsePositionals.
 	for _, a := range args {
 		if a == "-h" || a == "--help" {
@@ -388,6 +389,17 @@ func runGroupsMembersList(args []string, stdout, stderr io.Writer, client *http.
 	session, ok := openAPISession("groups members list", stderr, client, store)
 	if !ok {
 		return 1
+	}
+	if *servicePrincipals {
+		if *workspace == "" {
+			fmt.Fprintln(stderr, "groups members list: --workspace is required with --service-principals")
+			return 2
+		}
+		workspaceID, ok := resolveGroupsWorkspace("members list", *workspace, session, stderr, true)
+		if !ok {
+			return 1
+		}
+		return runServicePrincipalGroupMembersList(session, groupID, workspaceID, *jsonOutput, stdout, stderr)
 	}
 	workspaceID, ok := resolveGroupsWorkspace("members list", *workspace, session, stderr)
 	if !ok {
