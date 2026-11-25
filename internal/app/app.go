@@ -139,6 +139,14 @@ type aipErrorDetail struct {
 
 // Main dispatches CLI commands and returns the process exit code.
 func Main(version, command string, args []string, stdout, stderr io.Writer, stdin io.Reader) int {
+	finishUpdateNotice := startUpdateNotice(command, args, stdout, stderr, version)
+	code := dispatch(version, command, args, stdout, stderr, stdin)
+	finishUpdateNotice()
+	return code
+}
+
+// dispatch runs one command and returns its exit code.
+func dispatch(version, command string, args []string, stdout, stderr io.Writer, stdin io.Reader) int {
 	commandPath := dispatchedCommandPath(command, args)
 	newClient := func(timeout time.Duration) *http.Client {
 		return newHTTPClient(version, commandPath, timeout)
@@ -264,6 +272,9 @@ func runLoginCommand(version string, args []string, stdout, stderr io.Writer, cl
 	if err := login(context.Background(), keiWebURL(), version, stdout, client, store, time.Sleep, openBrowser); err != nil {
 		fmt.Fprintf(stderr, "login failed: %v\n", err)
 		return 1
+	}
+	if baseURL, err := normalizedKeiWebURL(keiWebURL()); err == nil {
+		writeLoginUpdateSummary(context.Background(), stdout, client, baseURL, store, version)
 	}
 	maybePromptSkillsUpdate(skillsPromptStdin, isTerminalReader(skillsPromptStdin), stdout, stderr, client, *installSkills)
 	return 0

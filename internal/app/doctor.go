@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/HaikeiLabs/kei-cli/internal/harness"
+	"github.com/HaikeiLabs/kei-cli/internal/updatecheck"
 )
 
 // Doctor check outcomes, printed first on each line.
@@ -492,8 +493,9 @@ func checkStaleServeProcess(p doctorProbes) doctorResult {
 	return r
 }
 
-// checkUpgradeAvailable reports when a newer kei-cli release is published, so
-// `kei doctor` nudges the user to upgrade. It never fails the run and never
+// checkUpgradeAvailable reports the installed kei and kei-proxy against the
+// latest release, and warns when either is behind, so `kei doctor` nudges the
+// user to upgrade. It never fails the run and never
 // upgrades: when the release endpoint cannot be reached or parsed, it passes
 // with a quiet note.
 func checkUpgradeAvailable(p doctorProbes) doctorResult {
@@ -513,18 +515,19 @@ func checkUpgradeAvailable(p doctorProbes) doctorResult {
 		r.Detail = "could not check for a newer release (unknown running version)"
 		return r
 	}
-	if compareVersions(running, latest) >= 0 {
-		r.Detail = "kei " + running + " is the latest release"
+	status := updatecheck.Status{
+		Installed: updatecheck.Versions{Kei: running},
+		Latest:    updatecheck.Versions{Kei: latest, Proxy: pinnedProxy},
+	}
+	if installedProxy, ok := p.binaryVersion(doctorProxyPath(p), "kei-proxy"); ok {
+		status.Installed.Proxy = installedProxy
+	}
+	if status.Notice() == "" {
+		r.Detail = status.Summary() + " (up to date)"
 		return r
 	}
 	r.Status = doctorWarn
-	r.Detail = "kei " + running + " is installed, " + latest + " is available"
-	// Report the kei-proxy transition only when both ends are known; the
-	// upgrade command prints the real transition anyway.
-	if installedProxy, ok := p.binaryVersion(doctorProxyPath(p), "kei-proxy"); ok && pinnedProxy != "" {
-		r.Detail += fmt.Sprintf(" (kei-proxy %s -> %s)", installedProxy, pinnedProxy)
-	}
-	r.Detail += ". Run: kei upgrade"
+	r.Detail = status.Summary() + ". Run: " + updatecheck.UpgradeCommand
 	return r
 }
 
