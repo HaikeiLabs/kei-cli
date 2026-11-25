@@ -358,15 +358,17 @@ func TestCheckUpgradeAvailable(t *testing.T) {
 		wantDetail string
 	}{
 		{name: "newer release", latest: "0.3.0", pinned: "0.2.5", keiVer: "0.2.0", keiOK: true, proxyVer: "0.2.4", proxyOK: true,
-			want: doctorWarn, wantDetail: "kei 0.2.0 is installed, 0.3.0 is available (kei-proxy 0.2.4 -> 0.2.5). Run: kei upgrade"},
+			want: doctorWarn, wantDetail: "kei 0.2.0 installed, 0.3.0 latest; kei-proxy 0.2.4 installed, 0.2.5 latest. Run: kei upgrade"},
 		{name: "newer release, pinned kei-proxy unreadable", latest: "0.3.0", keiVer: "0.2.0", keiOK: true, proxyVer: "0.2.4", proxyOK: true,
-			want: doctorWarn, wantDetail: "kei 0.2.0 is installed, 0.3.0 is available. Run: kei upgrade"},
+			want: doctorWarn, wantDetail: "kei 0.2.0 installed, 0.3.0 latest; kei-proxy 0.2.4 installed. Run: kei upgrade"},
 		{name: "newer release, installed kei-proxy unknown", latest: "0.3.0", pinned: "0.2.5", keiVer: "0.2.0", keiOK: true,
-			want: doctorWarn, wantDetail: "kei 0.2.0 is installed, 0.3.0 is available. Run: kei upgrade"},
-		{name: "up to date", latest: "0.2.0", keiVer: "0.2.0", keiOK: true,
-			want: doctorPass, wantDetail: "kei 0.2.0 is the latest release"},
+			want: doctorWarn, wantDetail: "kei 0.2.0 installed, 0.3.0 latest; kei-proxy not found, 0.2.5 latest. Run: kei upgrade"},
+		{name: "only the bundled kei-proxy is newer", latest: "0.3.0", pinned: "0.12.0", keiVer: "0.3.0", keiOK: true, proxyVer: "0.9.1", proxyOK: true,
+			want: doctorWarn, wantDetail: "kei 0.3.0 installed, 0.3.0 latest; kei-proxy 0.9.1 installed, 0.12.0 latest. Run: kei upgrade"},
+		{name: "up to date", latest: "0.2.0", pinned: "0.12.0", keiVer: "0.2.0", keiOK: true, proxyVer: "0.12.0", proxyOK: true,
+			want: doctorPass, wantDetail: "kei 0.2.0 installed, 0.2.0 latest; kei-proxy 0.12.0 installed, 0.12.0 latest (up to date)"},
 		{name: "running newer than latest", latest: "0.2.0", keiVer: "9.9.9", keiOK: true,
-			want: doctorPass, wantDetail: "kei 9.9.9 is the latest release"},
+			want: doctorPass, wantDetail: "kei 9.9.9 installed, 0.2.0 latest; kei-proxy not found (up to date)"},
 		{name: "offline", relErr: errors.New("connection refused"),
 			want: doctorPass, wantDetail: "could not check for a newer release (offline?)"},
 		{name: "running version unknown", latest: "0.3.0", keiOK: false,
@@ -618,7 +620,7 @@ func TestRunDoctor(t *testing.T) {
 		if code := runDoctor(p, &out); code != 0 {
 			t.Fatalf("exit %d, output:\n%s", code, out.String())
 		}
-		if !strings.Contains(out.String(), "WARN  upgrade available: kei 0.2.0 is installed, 9.9.9 is available") {
+		if !strings.Contains(out.String(), "WARN  upgrade available: kei 0.2.0 installed, 9.9.9 latest") {
 			t.Fatalf("output:\n%s", out.String())
 		}
 	})

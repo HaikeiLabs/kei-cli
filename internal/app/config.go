@@ -23,6 +23,9 @@ type runtimeConfig struct {
 	ProxyRegistry   string
 	ModelEndpoint   string
 	Model           string
+	// UpdateCheckDisabled turns off the daily release check and its notice
+	// (update_check: false), for CI and air-gapped installs.
+	UpdateCheckDisabled bool
 }
 
 func defaultConfigPath() (string, error) {
@@ -98,6 +101,12 @@ func loadRuntimeConfig(path string) (runtimeConfig, error) {
 			config.ModelEndpoint = value
 		case "model":
 			config.Model = value
+		case "update_check":
+			enabled, err := strconv.ParseBool(value)
+			if err != nil {
+				return runtimeConfig{}, fmt.Errorf("config key %q must be true or false", key)
+			}
+			config.UpdateCheckDisabled = !enabled
 		default:
 			return runtimeConfig{}, fmt.Errorf("unknown config key %q", key)
 		}
@@ -115,7 +124,7 @@ func saveRuntimeConfig(path string, config runtimeConfig) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
 	}
-	contents := strings.Join([]string{
+	lines := []string{
 		"# Kei CLI runtime configuration. Keep this file private.",
 		"control_plane_url: " + strconv.Quote(config.ControlPlaneURL),
 		"runtime_token: " + strconv.Quote(config.RuntimeToken),
@@ -124,8 +133,11 @@ func saveRuntimeConfig(path string, config runtimeConfig) error {
 		"proxy_registry: " + strconv.Quote(config.ProxyRegistry),
 		"model_endpoint: " + strconv.Quote(config.ModelEndpoint),
 		"model: " + strconv.Quote(config.Model),
-		"",
-	}, "\n")
+	}
+	if config.UpdateCheckDisabled {
+		lines = append(lines, "update_check: false")
+	}
+	contents := strings.Join(append(lines, ""), "\n")
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}

@@ -82,6 +82,8 @@ func runSetupCommand(args []string, stdout, stderr io.Writer, stdin io.Reader, c
 		ProxyRegistry:   strings.TrimSpace(*proxyRegistry),
 		ModelEndpoint:   strings.TrimSpace(*modelEndpoint),
 		Model:           strings.TrimSpace(*model),
+		// Keep the user's update_check setting across a re-run of setup.
+		UpdateCheckDisabled: configDisablesUpdateCheck(*path),
 	}
 	if err := config.validate(); err != nil {
 		fmt.Fprintf(stderr, "setup failed: %v\n", err)

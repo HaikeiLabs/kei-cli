@@ -89,9 +89,26 @@ still running the previous binary (started by a harness or by hand, so no
 service restart covered it) with the pid to kill. `kei doctor` also reports
 the policy bundle's last successful refresh time; if needed, run
 `kei-proxy policy sync --force` to request an installation-scoped refresh.
-The `upgrade available` check compares the running kei against the latest
-release, and the stale-process checks end with `run kei upgrade (it restarts
-installed services) or restart the process`.
+The `upgrade available` check shows the installed kei and kei-proxy against
+the latest release (and the kei-proxy that release bundles), and the
+stale-process checks end with `run kei upgrade (it restarts installed services)
+or restart the process`.
+
+#### Update check
+
+Commands check the same release index as `kei upgrade` at most once a day
+(cached in `~/.config/kei-update-check.json`, short timeout, silent offline).
+When a newer kei or bundled kei-proxy is published they print one line on
+stderr, at most once a day:
+
+```text
+kei 0.4.0 is available (you have 0.3.7) — run kei upgrade
+```
+
+Nothing is printed with `--json` or `--quiet`, or when stdout is not a
+terminal. Turn the check off with `KEI_NO_UPDATE_CHECK=1`, or with
+`update_check: false` in `~/.config/kei.yaml` (CI and air-gapped installs).
+Set `KEI_DEBUG=1` to see why a check failed.
 
 ### Building from source
 
@@ -173,6 +190,13 @@ environment.
 
 The login token is stored in the operating system credential store. It is not
 printed or written to the repository.
+
+After a successful login, `kei login` prints a short summary: this kei and its
+kei-proxy against the latest release, and every runtime installation in the
+organization whose reported kei-proxy is below the organization's minimum
+runtime version (name, current version, the version needed, what it misses,
+and the upgrade step). The summary never blocks the login; a lookup that fails
+is left out. With `KEI_NO_UPDATE_CHECK=1` the release part is skipped.
 
 ## Logout
 

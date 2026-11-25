@@ -15,9 +15,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
+
+	"github.com/HaikeiLabs/kei-cli/internal/updatecheck"
 )
 
 const defaultReleaseBase = "https://kei-cli-releases.s3.us-east-1.amazonaws.com"
@@ -90,10 +91,7 @@ func runUpgradeCommand(args []string, stdout, stderr io.Writer, client *http.Cli
 		fmt.Fprintf(stderr, "upgrade failed: %v\n", err)
 		return 1
 	}
-	base := strings.TrimRight(getenv("AWS_S3_RELEASES_URL_BASE"), "/")
-	if base == "" {
-		base = defaultReleaseBase
-	}
+	base := releaseBaseURL(getenv)
 	if client == nil {
 		client = &http.Client{Timeout: 2 * time.Minute}
 	}
@@ -303,7 +301,7 @@ func resolveReleaseVersion(client *http.Client, base, project string) (string, e
 // never hangs on a slow or absent network.
 func probeUpgradeRelease() (string, string, error) {
 	client := &http.Client{Timeout: 3 * time.Second}
-	return upgradeReleaseInfo(client, defaultReleaseBase)
+	return upgradeReleaseInfo(client, releaseBaseURL(os.Getenv))
 }
 
 // upgradeReleaseInfo fetches <base>/kei-cli/latest.txt through
@@ -346,48 +344,9 @@ func binaryVersion(path, name string) (string, bool) {
 }
 
 // compareVersions orders two release versions by semver. It returns -1 if a
-// is older than b, 0 if they are equal, and 1 if a is newer. A release
-// (no prerelease tag) sorts after its own prereleases.
+// is older than b, 0 if they are equal, and 1 if a is newer.
 func compareVersions(a, b string) int {
-	an, ap := numericAndPrerelease(a)
-	bn, bp := numericAndPrerelease(b)
-	for i := range an {
-		if an[i] != bn[i] {
-			if an[i] < bn[i] {
-				return -1
-			}
-			return 1
-		}
-	}
-	if ap == bp {
-		return 0
-	}
-	if ap == "" {
-		return 1
-	}
-	if bp == "" {
-		return -1
-	}
-	if ap < bp {
-		return -1
-	}
-	return 1
-}
-
-func numericAndPrerelease(v string) ([3]int, string) {
-	v = strings.TrimPrefix(v, "v")
-	prerelease := ""
-	if i := strings.IndexByte(v, '-'); i >= 0 {
-		prerelease = v[i+1:]
-		v = v[:i]
-	}
-	parts := strings.Split(v, ".")
-	var nums [3]int
-	for i := 0; i < 3 && i < len(parts); i++ {
-		n, _ := strconv.Atoi(parts[i])
-		nums[i] = n
-	}
-	return nums, prerelease
+	return updatecheck.Compare(a, b)
 }
 
 func fetchVerifiedArchive(client *http.Client, base, project, version, archiveName string) ([]byte, error) {
