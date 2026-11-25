@@ -311,6 +311,38 @@ jobs:
           fi
           echo "Verified: kei-proxy $VERSION matches pin $EXPECTED ✓"
 
+      - name: Generate and sign runtime release manifest
+        env:
+          RELEASE_ID: ${{ needs.validate-tag.outputs.tag }}
+          CLI_VERSION: ${{ needs.validate-tag.outputs.version }}
+        run: |
+          python3 scripts/generate-runtime-release-manifest.py \
+            --release-id "$RELEASE_ID" \
+            --cli-version "$CLI_VERSION" \
+            --proxy-version "$KEI_PROXY_VERSION" \
+            --artifact-dir dist \
+            --checksums "dist/kei-cli_${CLI_VERSION}_checksums.txt" \
+            --output "dist/kei-runtime-release_${CLI_VERSION}.json"
+          gpg --batch --local-user "$GORELEASER_KEY" --armor --detach-sign \
+            --output "dist/kei-runtime-release_${CLI_VERSION}.json.asc" \
+            "dist/kei-runtime-release_${CLI_VERSION}.json"
+
+      - name: Publish versioned runtime release manifest
+        env:
+          CLI_VERSION: ${{ needs.validate-tag.outputs.version }}
+        run: |
+          BUCKET="${{ env.AWS_S3_RELEASES_BUCKET }}"
+          MANIFEST="dist/kei-runtime-release_${CLI_VERSION}.json"
+          PREFIX="s3://${BUCKET}/kei-cli/runtime-manifests/${CLI_VERSION}"
+          aws s3 cp "$MANIFEST" "$PREFIX/manifest.json" \
+            --region "${{ env.AWS_REGION }}" \
+            --content-type "application/json" \
+            --cache-control "public, max-age=31536000, immutable"
+          aws s3 cp "${MANIFEST}.asc" "$PREFIX/manifest.json.asc" \
+            --region "${{ env.AWS_REGION }}" \
+            --content-type "application/pgp-signature" \
+            --cache-control "public, max-age=31536000, immutable"
+
       - name: Upload install.sh to public release endpoint
         run: |
           BUCKET="${{ env.AWS_S3_RELEASES_BUCKET }}"
