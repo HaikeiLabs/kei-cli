@@ -20,7 +20,8 @@ Check these before you cut a release:
   whoever owns the release runner Pod.
 - **Signing key present.** The `release` environment must have the
   `GORELEASER_SIGNING_KEY` secret: the GPG key for
-  `kei-cli-releases@haikeilabs.com`.
+  `kei-cli-releases@haikeilabs.com`. The key signs both the GoReleaser
+  checksums and the versioned runtime release manifest.
 - **Bundled proxy exists.** The kei-proxy version the release will bundle
   must already be published at
   `s3://kei-cli-releases/kei-proxy/<version>/`. The version is read from the
@@ -89,6 +90,22 @@ Release job was skipped still shows green. That is how v0.1.6's tag push
 looked before #44.
 
 ## 4. Verify the release
+
+Each release also publishes a signed runtime manifest at
+`kei-cli/runtime-manifests/<version>/manifest.json` and its detached armored
+signature at `manifest.json.asc`. The manifest maps the approved `v<version>`
+release identifier to the kei-cli and bundled kei-proxy versions and the four
+platform archive paths and SHA-256 checksums. Artifact paths are relative to
+the release storage origin; clients choose the origin themselves. The release
+workflow signs this metadata with the existing release key. This is release
+metadata only: it does not enable automatic updates or MDM and does not change
+`kei upgrade apply` behavior.
+
+For a local, no-publish generation check, create a GoReleaser `dist/` with all
+four archives and the corresponding checksums file, then run
+`scripts/generate-runtime-release-manifest.py` with the tag, component versions,
+artifact directory, and checksum file. CI unit tests cover malformed and
+incomplete inputs; do not run a release workflow to validate the generator.
 
 ```sh
 BASE=https://kei-cli-releases.s3.us-east-1.amazonaws.com/kei-cli

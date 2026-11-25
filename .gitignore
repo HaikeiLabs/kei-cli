@@ -1,3 +1,5 @@
 dist/
 /kei
 tmp/
+__pycache__/
+*.py[cod]

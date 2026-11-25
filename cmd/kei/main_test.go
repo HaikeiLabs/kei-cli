@@ -601,6 +601,35 @@ func TestWorkflowUploadsInstallScriptToCustomerURL(t *testing.T) {
 	}
 }
 
+func TestReleaseWorkflowPublishesSignedVersionedRuntimeManifest(t *testing.T) {
+	root := findRepoRoot(t)
+	workflowSrc, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(workflowSrc)
+	for _, want := range []string{
+		"scripts/generate-runtime-release-manifest.py",
+		"gpg --batch --local-user",
+		"--armor --detach-sign",
+		"kei-cli/runtime-manifests/${CLI_VERSION}",
+		"manifest.json.asc",
+	} {
+		if !strings.Contains(workflow, want) {
+			t.Errorf("release workflow missing signed runtime manifest behavior %q", want)
+		}
+	}
+
+	generatorSrc, err := os.ReadFile(filepath.Join(root, "scripts", "generate-runtime-release-manifest.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	generator := string(generatorSrc)
+	if strings.Contains(generator, "https://") || strings.Contains(generator, "http://") {
+		t.Error("runtime release manifest generator must not embed an artifact origin")
+	}
+}
+
 func TestWorkflowLatestResolutionIsBackedByArtifact(t *testing.T) {
 	// The install script resolves "latest" by fetching latest.txt from:
 	//   $AWS_S3_RELEASES_URL_BASE/kei-cli/latest.txt
