@@ -797,6 +797,12 @@ func (s setupValues) Set(value string) error {
 // workspace group, so it exists in every workspace (ADR-049).
 const defaultConnectorAllowGroup = "autogroup:member"
 
+// defaultAccessConfirmText is the confirmation `connectors create` shows when
+// it will add the default permit for defaultConnectorAllowGroup.
+func defaultAccessConfirmText(connectorName string) string {
+	return "Create connector " + connectorName + "? This will allow " + defaultConnectorAllowGroup + " (everyone in the workspace) to use it."
+}
+
 // connectorAllowPrincipal returns the policy principal pattern for an
 // --allow-group value: autogroups as they are, anything else as a group.
 func connectorAllowPrincipal(groupName string) string {

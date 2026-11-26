@@ -315,9 +315,6 @@ func completeConnectorCreate(session *connectorSession, plan connectorCreatePlan
 	allowGroups, defaultAccess := plan.access.allowGroups, plan.access.defaultAccess
 	_, err := resolveConnectorGroupIDs(session, allowGroups)
 	if err != nil {
-		if defaultAccess && strings.Contains(err.Error(), `group "admins" was not found`) {
-			return fail(fmt.Errorf("workspace group %q was not found; pass --allow-group NAME or --no-default-access", "admins"))
-		}
 		return fail(err)
 	}
 	orgName, err := getOrganizationName(context.Background(), session.client, session.baseURL, session.token, session.orgID)
@@ -329,7 +326,7 @@ func completeConnectorCreate(session *connectorSession, plan connectorCreatePlan
 	fmt.Fprintf(stdout, "Organization: %s\nWorkspace: %s\n", orgName, workspaceName)
 	confirmText := "Create connector " + plan.name + "? This may grant the selected groups access."
 	if defaultAccess {
-		confirmText = "Create connector " + plan.name + "? This will allow the admins group to use it."
+		confirmText = defaultAccessConfirmText(plan.name)
 	}
 	if !confirmWrite(stdin, stderr, plan.yes, confirmText) {
 		return 2
