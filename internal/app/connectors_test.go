@@ -950,10 +950,11 @@ func TestConnectorsConnect403(t *testing.T) {
 	}
 }
 
-// TestConnectorsCreateDefaultsToAutogroupAdminAllowPolicy: with no
-// --allow-group, the default permit targets autogroup:admin (ADR-049), so
+// TestConnectorsCreateDefaultsToAutogroupMemberAllowPolicy: with no
+// --allow-group, the default permit targets autogroup:member (everyone in the
+// workspace; ADR-049), so
 // creation succeeds in a workspace that has no seeded "admins" group.
-func TestConnectorsCreateDefaultsToAutogroupAdminAllowPolicy(t *testing.T) {
+func TestConnectorsCreateDefaultsToAutogroupMemberAllowPolicy(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
 		switch {
 		case r.Method == http.MethodGet && r.Path == "/api/v1/groups":
@@ -986,13 +987,13 @@ func TestConnectorsCreateDefaultsToAutogroupAdminAllowPolicy(t *testing.T) {
 	selector, _ := policy.Body["selector_v2"].(map[string]any)
 	principal, _ := policy.Body["principal"].(map[string]any)
 	target, _ := policy.Body["target"].(map[string]any)
-	if principal["kind"] != "autogroup" || principal["value"] != "admin" || target["kind"] != "capability" || target["value"] != fmt.Sprint(selector["capability"]) || policy.Body["action"] != "permit" {
+	if principal["kind"] != "autogroup" || principal["value"] != "member" || target["kind"] != "capability" || target["value"] != fmt.Sprint(selector["capability"]) || policy.Body["action"] != "permit" {
 		t.Fatalf("default policy principal=%v target=%v body=%#v", principal, target, policy.Body)
 	}
 	if selector["connector_id"] != testConnectorID || selector["source"] != "gmail" {
 		t.Fatalf("default selector = %#v", selector)
 	}
-	if !strings.Contains(fmt.Sprint(policy.Body["name"]), "autogroup:admin") || !strings.Contains(stdout, "Allowed group autogroup:admin to use team-mail") || !strings.Contains(stdout, "policy ") {
+	if !strings.Contains(fmt.Sprint(policy.Body["name"]), "autogroup:member") || !strings.Contains(stdout, "Allowed group autogroup:member to use team-mail") || !strings.Contains(stdout, "policy ") {
 		t.Fatalf("stdout=%q policy=%#v", stdout, policy.Body)
 	}
 }

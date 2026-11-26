@@ -795,7 +795,7 @@ func (s setupValues) Set(value string) error {
 // defaultConnectorAllowGroup is the subject `connectors create` permits when
 // no --allow-group is given. It is a built-in autogroup, not a seeded
 // workspace group, so it exists in every workspace (ADR-049).
-const defaultConnectorAllowGroup = "autogroup:admin"
+const defaultConnectorAllowGroup = "autogroup:member"
 
 // connectorAllowPrincipal returns the policy principal pattern for an
 // --allow-group value: autogroups as they are, anything else as a group.
@@ -830,8 +830,8 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	secretFile := lc.fs.String("secret-file", "", "read the provider's secret field (a database provider's read-only DSN) from this file instead of the prompt or stdin; never pass a secret as a flag")
 	capabilitiesFlag := lc.fs.String("capabilities", "", "comma-separated capabilities (default: the provider's read capabilities)")
 	var allowGroups repeatedStrings
-	lc.fs.Var(&allowGroups, "allow-group", "group name to allow (repeatable; defaults to autogroup:admin)")
-	noDefaultAccess := lc.fs.Bool("no-default-access", false, "skip the default autogroup:admin allow policy")
+	lc.fs.Var(&allowGroups, "allow-group", "group name to allow (repeatable; defaults to autogroup:member, everyone in the workspace)")
+	noDefaultAccess := lc.fs.Bool("no-default-access", false, "skip the default autogroup:member allow policy")
 	yes := lc.fs.Bool("yes", false, "confirm without prompting")
 	httpAPI := registerHTTPAPIFlags(lc.fs)
 	fromTemplate := registerTemplateCreateFlags(lc.fs)
