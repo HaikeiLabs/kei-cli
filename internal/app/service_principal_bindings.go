@@ -27,6 +27,70 @@ func servicePrincipalGroupMembersPath(orgID, workspaceID, groupID string) string
 	return "/api/v1/organizations/" + url.PathEscape(orgID) + "/workspaces/" + url.PathEscape(workspaceID) + "/groups/" + url.PathEscape(groupID) + "/service-principals"
 }
 
+type servicePrincipalGroupMember struct {
+	ServicePrincipalID string `json:"service_principal_id"`
+	Name               string `json:"name"`
+	AssignedAt         string `json:"assigned_at"`
+}
+
+func listServicePrincipalGroupMembers(session *apiSession, workspaceID, groupID string) ([]servicePrincipalGroupMember, error) {
+	path := servicePrincipalGroupMembersPath(session.orgID, workspaceID, groupID)
+	members := make([]servicePrincipalGroupMember, 0)
+	pageToken := ""
+	seenTokens := make(map[string]struct{})
+	for {
+		query := url.Values{"page_size": {"100"}}
+		if pageToken != "" {
+			query.Set("page_token", pageToken)
+		}
+		_, payload, err := session.do(http.MethodGet, path, query, nil)
+		if err != nil {
+			return nil, err
+		}
+		var page struct {
+			ServicePrincipals []servicePrincipalGroupMember `json:"service_principals"`
+			NextPageToken     string                        `json:"next_page_token"`
+		}
+		if err := json.Unmarshal(payload, &page); err != nil {
+			return nil, fmt.Errorf("decode service principal group members: %w", err)
+		}
+		members = append(members, page.ServicePrincipals...)
+		if page.NextPageToken == "" {
+			return members, nil
+		}
+		if _, exists := seenTokens[page.NextPageToken]; exists {
+			return nil, fmt.Errorf("service principal group membership pagination repeated a page token")
+		}
+		seenTokens[page.NextPageToken] = struct{}{}
+		pageToken = page.NextPageToken
+	}
+}
+
+func runServicePrincipalGroupMembersList(session *apiSession, groupID, workspaceID string, jsonOutput bool, stdout, stderr io.Writer) int {
+	members, err := listServicePrincipalGroupMembers(session, workspaceID, groupID)
+	if err != nil {
+		fmt.Fprintf(stderr, "groups members list: %v\n", err)
+		return 1
+	}
+	if jsonOutput {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(members)
+		return 0
+	}
+	if len(members) == 0 {
+		fmt.Fprintf(stdout, "No service principal members in group %s.\n", groupID)
+		return 0
+	}
+	tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "SERVICE PRINCIPAL ID\tNAME\tASSIGNED AT")
+	for _, member := range members {
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", member.ServicePrincipalID, member.Name, member.AssignedAt)
+	}
+	_ = tw.Flush()
+	return 0
+}
+
 // The identity API represents a principal's resource name as
 // organizations/{org}/servicePrincipals/{short-name} and supplies its UUID.
 func resolveServicePrincipalID(session *apiSession, name string) (string, error) {
