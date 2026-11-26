@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -89,7 +92,7 @@ func fakeDoctorProbes(t *testing.T, files map[string][]byte) doctorProbes {
 		binaryVersion:       func(string, string) (string, bool) { return "", false },
 		configPath:          "/home/test/.config/kei/config.yaml",
 		registry:            harness.NewRegistry(),
-		heartbeatFromServer: func(config runtimeConfig) (*time.Time, error) { return nil, errHeartbeatNotAvailable },
+		heartbeatFromServer: func(config runtimeConfig, _ credentialStore) (*time.Time, error) { return nil, errHeartbeatNotAvailable },
 	}
 }
 
@@ -195,7 +198,7 @@ func TestCheckHeartbeatServer(t *testing.T) {
 					return runtimeConfig{}, os.ErrNotExist
 				}
 			}
-			p.heartbeatFromServer = func(config runtimeConfig) (*time.Time, error) {
+			p.heartbeatFromServer = func(config runtimeConfig, _ credentialStore) (*time.Time, error) {
 				return tt.lastHB, tt.err
 			}
 			got := checkHeartbeat(p, doctorResult{Status: doctorPass})
@@ -205,6 +208,70 @@ func TestCheckHeartbeatServer(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCheckHeartbeatTokenStoreFallback proves the heartbeat check reads the
+// CLI token through the injected credential store: a keyring-less machine
+// with a token file still gets a server-side PASS, and a machine with no
+// token anywhere warns "not logged in" instead of pointing at journalctl.
+func TestCheckHeartbeatTokenStoreFallback(t *testing.T) {
+	hb := doctorNow.Add(-40 * time.Second)
+	var gotCLIAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/runtime/whoami":
+			fmt.Fprint(w, `{"id":"inst-1","org_id":"org-1","platform":"cli"}`)
+		case r.URL.Path == "/api/v1/organizations/org-1/runtime-installations/inst-1":
+			gotCLIAuth = r.Header.Get("Authorization")
+			fmt.Fprintf(w, `{"id":"inst-1","last_heartbeat_at":%q}`, hb.UTC().Format(time.RFC3339))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("KEI_WEB_URL", server.URL)
+
+	newProbes := func(t *testing.T) doctorProbes {
+		p := fakeDoctorProbes(t, nil)
+		p.loadConfig = func(string) (runtimeConfig, error) {
+			return runtimeConfig{ControlPlaneURL: server.URL, RuntimeToken: doctorTestToken}, nil
+		}
+		p.credentialStore = &tokenStore{
+			keyringGet: func(string, string) (string, error) { return "", errors.New("keyring unavailable") },
+		}
+		p.heartbeatFromServer = defaultHeartbeatFromServer
+		return p
+	}
+
+	t.Run("token file fallback passes", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		path := filepath.Join(home, ".config", "kei", "tokens", tokenFileAccount(server.URL))
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("kei_cli_file_token"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		got := checkHeartbeat(newProbes(t), doctorResult{Status: doctorPass})
+		if got.Status != doctorPass || !strings.Contains(got.Detail, "last heartbeat 40s ago") || got.Fix != "" {
+			t.Fatalf("got %+v, want PASS with last heartbeat 40s ago", got)
+		}
+		if gotCLIAuth != "Bearer kei_cli_file_token" {
+			t.Fatalf("server saw Authorization %q, want the token file's token", gotCLIAuth)
+		}
+	})
+
+	t.Run("no token anywhere warns not logged in", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		got := checkHeartbeat(newProbes(t), doctorResult{Status: doctorPass})
+		if got.Status != doctorWarn || !strings.Contains(got.Detail, "not logged in; run kei login") {
+			t.Fatalf("got %+v, want WARN not logged in", got)
+		}
+		if strings.Contains(got.Detail, "journalctl") {
+			t.Fatalf("detail must not point at journalctl: %q", got.Detail)
+		}
+	})
 }
 
 func TestFriendlyDuration(t *testing.T) {
@@ -238,7 +305,9 @@ func TestParsePSElapsed(t *testing.T) {
 		{"99:59:59", 99*time.Hour + 59*time.Minute + 59*time.Second, true},
 		{"3-04:05:06", 3*24*time.Hour + 4*time.Hour + 5*time.Minute + 6*time.Second, true},
 		{"", 0, false},
-		{"12:34", 0, false},
+		{"12:34", 12*time.Minute + 34*time.Second, true},
+		{"05:07", 5*time.Minute + 7*time.Second, true},
+		{"1-02:03", 24*time.Hour + 2*time.Minute + 3*time.Second, true},
 		{"abc", 0, false},
 	}
 	for _, tt := range tests {

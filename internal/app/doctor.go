@@ -78,11 +78,15 @@ type doctorProbes struct {
 	upgradeRelease func() (latest, proxy string, err error)
 	binaryVersion  func(path, name string) (string, bool)
 	// heartbeatFromServer reports the last heartbeat time from the Kei API.
-	// Returns errHeartbeatNotAvailable when the installation cannot be
-	// resolved or the user is not logged in (silent skip, keeps WARN).
-	// Returns a non-nil error when a server request was attempted but failed
-	// (caller keeps WARN on error).
-	heartbeatFromServer func(config runtimeConfig) (*time.Time, error)
+	// It loads the CLI token with the injected credentialStore. Returns
+	// errHeartbeatNotAvailable when the installation cannot be resolved
+	// (silent skip, keeps WARN) and errDoctorNotLoggedIn when no CLI token is
+	// found. Returns a non-nil error when a server request was attempted but
+	// failed (caller keeps WARN on error).
+	heartbeatFromServer func(config runtimeConfig, store credentialStore) (*time.Time, error)
+	// credentialStore loads the CLI bearer token; the default &tokenStore{}
+	// reads the OS keychain and falls back to ~/.config/kei/tokens/.
+	credentialStore credentialStore
 	configPath          string
 	harnessEnv          harness.Env
 	registry            *harness.Registry
@@ -117,6 +121,7 @@ func defaultDoctorProbes() (doctorProbes, error) {
 		harnessEnv:          harness.OSEnv(),
 		registry:            harness.Default,
 		heartbeatFromServer: defaultHeartbeatFromServer,
+		credentialStore:     &tokenStore{},
 	}, nil
 }
 
@@ -158,6 +163,8 @@ func probeHeartbeatProcessStart(now time.Time) (time.Time, bool) {
 }
 
 // parsePSElapsed parses ps's etime field, "[DD-]HH:MM:SS", into a duration.
+// MM:SS (a process under an hour old) is accepted, and defensively so is
+// "[DD-]MM:SS".
 func parsePSElapsed(s string) (time.Duration, bool) {
 	var days int
 	rest := s
@@ -170,16 +177,23 @@ func parsePSElapsed(s string) (time.Duration, bool) {
 		rest = s[i+1:]
 	}
 	parts := strings.Split(rest, ":")
-	if len(parts) != 3 {
+	if len(parts) < 2 || len(parts) > 3 {
 		return 0, false
 	}
-	h, errH := strconv.Atoi(parts[0])
-	m, errM := strconv.Atoi(parts[1])
-	sec, errS := strconv.Atoi(parts[2])
-	if errH != nil || errM != nil || errS != nil {
+	var hours int
+	if len(parts) == 3 {
+		var err error
+		hours, err = strconv.Atoi(parts[0])
+		if err != nil {
+			return 0, false
+		}
+	}
+	m, errM := strconv.Atoi(parts[len(parts)-2])
+	sec, errS := strconv.Atoi(parts[len(parts)-1])
+	if errM != nil || errS != nil {
 		return 0, false
 	}
-	return time.Duration(days)*24*time.Hour + time.Duration(h)*time.Hour +
+	return time.Duration(days)*24*time.Hour + time.Duration(hours)*time.Hour +
 		time.Duration(m)*time.Minute + time.Duration(sec)*time.Second, true
 }
 
@@ -313,16 +327,23 @@ func checkRuntimeService(p doctorProbes) doctorResult {
 }
 
 // errHeartbeatNotAvailable is returned by heartbeatFromServer when the
-// installation cannot be resolved or the user is not logged in. The caller
-// treats it as a silent skip and keeps the WARN fallback.
+// installation cannot be resolved. The caller treats it as a silent skip and
+// keeps the WARN fallback.
 var errHeartbeatNotAvailable = errors.New("heartbeat data not available")
 
+// errDoctorNotLoggedIn is returned by heartbeatFromServer when no CLI token
+// is found in the credential store (keychain or token file): the user is not
+// logged in.
+var errDoctorNotLoggedIn = errors.New("not logged in")
+
 // defaultHeartbeatFromServer tries to fetch the last heartbeat from the Kei
-// API. It loads the CLI bearer token from the keychain, resolves the runtime
-// installation via the runtime whoami endpoint, and reads last_heartbeat_at
-// from the runtime installation status endpoint. Returns errHeartbeatNotAvailable
-// when not logged in or the installation cannot be resolved (silent skip).
-func defaultHeartbeatFromServer(config runtimeConfig) (*time.Time, error) {
+// API. It loads the CLI bearer token from the injected credential store
+// (OS keychain, then the ~/.config/kei/tokens/ fallback), resolves the
+// runtime installation via the runtime whoami endpoint, and reads
+// last_heartbeat_at from the runtime installation status endpoint. Returns
+// errDoctorNotLoggedIn when not logged in and errHeartbeatNotAvailable when
+// the installation cannot be resolved (silent skip).
+func defaultHeartbeatFromServer(config runtimeConfig, store credentialStore) (*time.Time, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -332,10 +353,9 @@ func defaultHeartbeatFromServer(config runtimeConfig) (*time.Time, error) {
 		return nil, errHeartbeatNotAvailable
 	}
 
-	store := osKeychainStore{}
 	cliToken, err := store.Load(baseURL)
 	if err != nil {
-		return nil, errHeartbeatNotAvailable // not logged in
+		return nil, errDoctorNotLoggedIn // not logged in
 	}
 
 	identity, err := verifyRuntimeToken(ctx, client, config.ControlPlaneURL, config.RuntimeToken)
@@ -387,7 +407,11 @@ func checkHeartbeat(p doctorProbes, service doctorResult) doctorResult {
 
 	// Attempt server-side heartbeat check when local config is available.
 	if config, err := p.loadConfig(p.configPath); err == nil && config.RuntimeToken != "" && config.ControlPlaneURL != "" {
-		lastHB, reqErr := p.heartbeatFromServer(config)
+		store := p.credentialStore
+		if store == nil {
+			store = &tokenStore{}
+		}
+		lastHB, reqErr := p.heartbeatFromServer(config, store)
 		if reqErr == nil {
 			// Server responded with a heartbeat timestamp.
 			if lastHB != nil {
@@ -406,9 +430,14 @@ func checkHeartbeat(p doctorProbes, service doctorResult) doctorResult {
 			r.Detail = "no heartbeat received yet; run 'kei runtime service install' and check the service is running"
 			return r
 		}
+		if errors.Is(reqErr, errDoctorNotLoggedIn) {
+			r.Detail = "not logged in; run kei login"
+			r.Fix = "kei login"
+			return r
+		}
 		if errors.Is(reqErr, errHeartbeatNotAvailable) {
-			// Not logged in or installation not resolved — silently fall
-			// through to the WARN fallback below.
+			// Installation not resolved — silently fall through to the WARN
+			// fallback below.
 		} else {
 			// Network or server error — also fall through to WARN.
 		}
