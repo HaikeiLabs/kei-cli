@@ -413,6 +413,11 @@ func TestFeedbackExportDeclineSendsNothingAndHidesContent(t *testing.T) {
 		return &TranscriptDeps{HomeDir: home, Cwd: cwd, CacheDir: cache}
 	}
 	defer func() { feedbackTranscriptDeps = oldDeps }()
+	// The test simulates an interactive user answering the y/N prompt; the
+	// strings.Reader stdin is not a real terminal, so fake the TTY check.
+	oldTTY := feedbackStdinIsTerminal
+	feedbackStdinIsTerminal = func(io.Reader) bool { return true }
+	defer func() { feedbackStdinIsTerminal = oldTTY }()
 
 	var requests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -20,6 +21,112 @@ func TestInstallScriptIsValidBash(t *testing.T) {
 	if out, err := exec.Command("bash", "-n", scriptPath).CombinedOutput(); err != nil {
 		t.Fatalf("bash -n failed: %v\n%s", err, out)
 	}
+}
+
+// extractInstallScriptFunction pulls one shell function out of install.sh so
+// a test can source it in isolation: install.sh runs its main flow on source,
+// but the helper functions are plain POSIX definitions between
+// "<name>() {" and the first column-0 "}".
+func extractInstallScriptFunction(t *testing.T, src, name string) string {
+	t.Helper()
+	marker := name + "() {"
+	start := strings.Index(src, marker)
+	if start < 0 {
+		t.Fatalf("install script missing %s", marker)
+	}
+	end := strings.Index(src[start:], "\n}")
+	if end < 0 {
+		t.Fatalf("install script %s has no closing brace", name)
+	}
+	return src[start : start+end+2]
+}
+
+// TestInstallScriptZshKubectlAliasWarning runs the installer's zsh check with
+// a fake HOME. The oh-my-zsh kubectl plugin defines `alias kei='kubectl edit
+// ingress'`, which shadows the installed kei CLI in new zsh sessions.
+func TestInstallScriptZshKubectlAliasWarning(t *testing.T) {
+	scriptPath := filepath.Join(findRepoRoot(t), "scripts", "install.sh")
+	src, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := extractInstallScriptFunction(t, string(src), "check_zsh_kei_alias")
+
+	run := func(t *testing.T, home string) string {
+		t.Helper()
+		script := "HOME=" + strconv.Quote(home) + "\n" + fn + "\ncheck_zsh_kei_alias\n"
+		out, err := exec.Command("sh", "-c", script).CombinedOutput()
+		if err != nil {
+			t.Fatalf("check_zsh_kei_alias exited with error: %v\n%s", err, out)
+		}
+		return string(out)
+	}
+
+	writeZshrc := func(t *testing.T, home, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(home, ".zshrc"), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	warning := "kubectl edit ingress"
+	t.Run("warns when the kubectl plugin is enabled", func(t *testing.T) {
+		home := t.TempDir()
+		writeZshrc(t, home, "export ZSH=\"$HOME/.oh-my-zsh\"\nplugins=(git kubectl zsh-autosuggestions)\nsource \"$ZSH/oh-my-zsh.sh\"\n")
+		out := run(t, home)
+		for _, want := range []string{"kubectl plugin", "shadow", "unalias kei", "command kei"} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("output = %q, want it to mention %q", out, want)
+			}
+		}
+	})
+	t.Run("warns for a multi-line plugins block", func(t *testing.T) {
+		home := t.TempDir()
+		writeZshrc(t, home, "plugins=(\n  git\n  kubectl\n)\n")
+		if out := run(t, home); !strings.Contains(out, warning) {
+			t.Fatalf("output = %q, want the alias warning", out)
+		}
+	})
+	t.Run("silent when the plugin is absent", func(t *testing.T) {
+		home := t.TempDir()
+		writeZshrc(t, home, "plugins=(git zsh-autosuggestions)\nsource \"$ZSH/oh-my-zsh.sh\"\n")
+		if out := run(t, home); strings.Contains(out, "Warning") {
+			t.Fatalf("output = %q, want no warning", out)
+		}
+	})
+	t.Run("silent for a commented-out plugin list", func(t *testing.T) {
+		home := t.TempDir()
+		writeZshrc(t, home, "# plugins=(git kubectl)\nplugins=(git)\n")
+		if out := run(t, home); strings.Contains(out, "Warning") {
+			t.Fatalf("output = %q, want no warning", out)
+		}
+	})
+	t.Run("silent when kubectl appears outside plugins", func(t *testing.T) {
+		home := t.TempDir()
+		writeZshrc(t, home, "plugins=(git)\nalias kubectl='k'\n# see docs on kubectl\n")
+		if out := run(t, home); strings.Contains(out, "Warning") {
+			t.Fatalf("output = %q, want no warning", out)
+		}
+	})
+	t.Run("silent without a .zshrc", func(t *testing.T) {
+		home := t.TempDir()
+		if out := run(t, home); strings.Contains(out, "Warning") {
+			t.Fatalf("output = %q, want no warning", out)
+		}
+	})
+	t.Run("does not edit the rc file", func(t *testing.T) {
+		home := t.TempDir()
+		content := "plugins=(git kubectl)\n"
+		writeZshrc(t, home, content)
+		_ = run(t, home)
+		got, err := os.ReadFile(filepath.Join(home, ".zshrc"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != content {
+			t.Fatalf(".zshrc was modified: %q", got)
+		}
+	})
 }
 
 func TestInstallScriptStaticChecks(t *testing.T) {

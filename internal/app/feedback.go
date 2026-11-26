@@ -21,6 +21,11 @@ import (
 
 const maxFeedbackRequestBytes = 4 << 20
 
+// feedbackStdinIsTerminal reports whether stdin is an interactive terminal.
+// Package-level like feedbackTranscriptDeps so tests can fake a TTY; the
+// production value reuses the shared isTerminalReader check.
+var feedbackStdinIsTerminal = isTerminalReader
+
 type feedbackFiles []string
 
 func (f *feedbackFiles) String() string { return strings.Join(*f, ",") }
@@ -217,6 +222,14 @@ func runFeedbackCommand(args []string, stdout, stderr io.Writer, stdin io.Reader
 		fmt.Fprintf(stderr, "WARNING: Kei runtime token found in the %s transcript. This is a leak: rotate the credential (kei bot credential --rotate) and report where it came from.\n", label)
 	}
 	if !*yes {
+		// Reading a y/N answer from a pipe (for example Claude Code's `!`
+		// prefix) gets EOF or a canned line and silently drops the report.
+		// Same non-TTY contract as confirmWrite (api_session.go): without a
+		// terminal and without --yes, fail loudly instead.
+		if !feedbackStdinIsTerminal(stdin) {
+			fmt.Fprintln(stderr, "stdin is not a terminal, so kei can't ask for confirmation; re-run with --yes to send this feedback")
+			return 1
+		}
 		fmt.Fprint(stdout, "Send? [y/N] ")
 		answer, err := bufio.NewReader(stdin).ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {

@@ -1584,6 +1584,11 @@ func TestFeedbackDeclineDoesNotSubmit(t *testing.T) {
 	defer server.Close()
 	t.Setenv("KEI_WEB_URL", server.URL)
 	store := &memoryCredentialStore{server: server.URL, token: "cli-session-token"}
+	// The test simulates an interactive user answering the y/N prompt; the
+	// strings.Reader stdin is not a real terminal, so fake the TTY check.
+	oldTTY := feedbackStdinIsTerminal
+	feedbackStdinIsTerminal = func(io.Reader) bool { return true }
+	defer func() { feedbackStdinIsTerminal = oldTTY }()
 	var stdout, stderr bytes.Buffer
 	code := runFeedbackCommand([]string{"--description", "A report"}, &stdout, &stderr, strings.NewReader("n\n"), server.Client(), store, "1.2.3")
 	if code != 0 {

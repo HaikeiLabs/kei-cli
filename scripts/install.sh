@@ -294,6 +294,30 @@ restart_service_if_installed() {
   esac
 }
 
+# Warn when the oh-my-zsh kubectl plugin would shadow the kei CLI: that
+# plugin defines `alias kei='kubectl edit ingress'`, so `kei ...` runs
+# kubectl in new interactive zsh sessions. curl | sh cannot see interactive
+# aliases, so the check reads ~/.zshrc directly. This only prints a hint; it
+# never edits the user's rc file. Handles single-line and multi-line
+# plugins=(...) blocks and ignores comments.
+check_zsh_kei_alias() {
+  CHECK_ZSHRC="$HOME/.zshrc"
+  [ -f "$CHECK_ZSHRC" ] || return 0
+  if awk '
+    { sub(/[[:space:]]+#.*$/, "") }
+    {
+      if ($0 !~ /^[[:space:]]*plugins=[[:space:]]*\(/ && !in_plugins) next
+      in_plugins = 1
+      if ($0 ~ /(^|[[:space:](])kubectl([[:space:])]|$)/) { found = 1; exit }
+      if ($0 ~ /\)/) { in_plugins = 0 }
+    }
+    END { exit found ? 0 : 1 }
+  ' "$CHECK_ZSHRC"; then
+    echo "Warning: your ~/.zshrc enables the oh-my-zsh kubectl plugin, which defines \`alias kei='kubectl edit ingress'\` and shadows the kei CLI." >&2
+    echo "  Add \`unalias kei\` after \`source \$ZSH/oh-my-zsh.sh\` in ~/.zshrc, or run \`command kei\`." >&2
+  fi
+}
+
 # ---- Temporary directory ---------------------------------------------------
 if [ -z "${TMP_DIR:-}" ]; then
   TMP_DIR="$(mktemp -d)"
@@ -419,6 +443,7 @@ if [ "$MODE" = "install" ]; then
   fi
 
   restart_service_if_installed
+  check_zsh_kei_alias
   exit 0
 fi
 
