@@ -223,15 +223,12 @@ func runConnectorsCreateFromTemplate(f templateCreateFlags, name string, ws work
 	workspaceName := workspaceNameByID(context.Background(), client, session.baseURL, session.token, session.orgID, session.workspaceID)
 	_, err = resolveConnectorGroupIDs(session, allowGroups)
 	if err != nil {
-		if defaultAccess && strings.Contains(err.Error(), `group "admins" was not found`) {
-			return fail(fmt.Errorf("workspace group %q was not found; pass --allow-group NAME or --no-default-access", "admins"))
-		}
 		return fail(err)
 	}
 	fmt.Fprintf(stdout, "Organization: %s\nWorkspace: %s\n", orgName, workspaceName)
 	confirmText := "Create connector " + name + "? This may grant the selected groups access."
 	if defaultAccess {
-		confirmText = "Create connector " + name + "? This will allow the admins group to use it."
+		confirmText = defaultAccessConfirmText(name)
 	}
 	if !confirmWrite(stdin, stderr, yes, confirmText) {
 		return 2

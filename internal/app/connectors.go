@@ -792,6 +792,26 @@ func (s setupValues) Set(value string) error {
 	return nil
 }
 
+// defaultConnectorAllowGroup is the subject `connectors create` permits when
+// no --allow-group is given. It is a built-in autogroup, not a seeded
+// workspace group, so it exists in every workspace (ADR-049).
+const defaultConnectorAllowGroup = "autogroup:member"
+
+// defaultAccessConfirmText is the confirmation `connectors create` shows when
+// it will add the default permit for defaultConnectorAllowGroup.
+func defaultAccessConfirmText(connectorName string) string {
+	return "Create connector " + connectorName + "? This will allow " + defaultConnectorAllowGroup + " (everyone in the workspace) to use it."
+}
+
+// connectorAllowPrincipal returns the policy principal pattern for an
+// --allow-group value: autogroups as they are, anything else as a group.
+func connectorAllowPrincipal(groupName string) string {
+	if strings.HasPrefix(groupName, "autogroup:") {
+		return groupName
+	}
+	return "group:" + groupName
+}
+
 type repeatedStrings []string
 
 func (s *repeatedStrings) String() string { return strings.Join(*s, ",") }
@@ -816,8 +836,8 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	secretFile := lc.fs.String("secret-file", "", "read the provider's secret field (a database provider's read-only DSN) from this file instead of the prompt or stdin; never pass a secret as a flag")
 	capabilitiesFlag := lc.fs.String("capabilities", "", "comma-separated capabilities (default: the provider's read capabilities)")
 	var allowGroups repeatedStrings
-	lc.fs.Var(&allowGroups, "allow-group", "group name to allow (repeatable; defaults to admins)")
-	noDefaultAccess := lc.fs.Bool("no-default-access", false, "skip the default admins allow policy")
+	lc.fs.Var(&allowGroups, "allow-group", "group name to allow (repeatable; defaults to autogroup:member, everyone in the workspace)")
+	noDefaultAccess := lc.fs.Bool("no-default-access", false, "skip the default autogroup:member allow policy")
 	yes := lc.fs.Bool("yes", false, "confirm without prompting")
 	httpAPI := registerHTTPAPIFlags(lc.fs)
 	fromTemplate := registerTemplateCreateFlags(lc.fs)
@@ -839,7 +859,7 @@ func runConnectorsCreate(args []string, stdout, stderr io.Writer, stdin io.Reade
 	}
 	defaultAccess := len(allowGroups) == 0 && !*noDefaultAccess
 	if defaultAccess {
-		allowGroups = []string{"admins"}
+		allowGroups = []string{defaultConnectorAllowGroup}
 	}
 	if *fromTemplate.template != "" {
 		return runConnectorsCreateFromTemplate(fromTemplate, *name, ws, splitList(*capabilitiesFlag), allowGroups, defaultAccess, *noDefaultAccess, *yes, stdin, *jsonOutput, stdout, stderr, client, store)
@@ -1005,6 +1025,9 @@ func resolveConnectorGroupIDs(connectorSession *connectorSession, groupNames []s
 		}
 	}
 	for _, name := range groupNames {
+		if strings.HasPrefix(name, "autogroup:") {
+			continue // built in; not a workspace group
+		}
 		if resolved[name] == "" {
 			return nil, fmt.Errorf("group %q was not found in this workspace", name)
 		}
@@ -1035,7 +1058,7 @@ func createConnectorGroupAllows(connectorSession *connectorSession, groupNames [
 				selector.Source = source
 				selector.Capability = capability
 			}
-			request := createPolicyRequest{Name: policyName, Principal: typedPrincipal("group:" + groupName), Target: typedTarget(dstPattern), Effect: "permit", Action: "permit", Enabled: true, SelectorV2: selector}
+			request := createPolicyRequest{Name: policyName, Principal: typedPrincipal(connectorAllowPrincipal(groupName)), Target: typedTarget(dstPattern), Effect: "permit", Action: "permit", Enabled: true, SelectorV2: selector}
 			if _, err := policies.do(http.MethodPost, "", request, nil); err != nil {
 				return nil, err
 			}

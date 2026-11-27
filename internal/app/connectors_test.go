@@ -950,12 +950,15 @@ func TestConnectorsConnect403(t *testing.T) {
 	}
 }
 
-func TestConnectorsCreateDefaultsToAdminsAllowPolicy(t *testing.T) {
-	const adminGroupID = "77777777-7777-7777-7777-777777777777"
+// TestConnectorsCreateDefaultsToAutogroupMemberAllowPolicy: with no
+// --allow-group, the default permit targets autogroup:member (everyone in the
+// workspace; ADR-049), so
+// creation succeeds in a workspace that has no seeded "admins" group.
+func TestConnectorsCreateDefaultsToAutogroupMemberAllowPolicy(t *testing.T) {
 	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
 		switch {
 		case r.Method == http.MethodGet && r.Path == "/api/v1/groups":
-			_, _ = w.Write([]byte(`[{"id":"` + adminGroupID + `","name":"admins"}]`))
+			_, _ = w.Write([]byte(`[{"id":"55555555-5555-5555-5555-555555555555","name":"Engineering"}]`))
 		case r.Method == http.MethodPost && r.Path == "/api/v1/data-connectors":
 			createdResponse(w, r)
 		case r.Method == http.MethodPost && r.Path == typedPoliciesPath():
@@ -984,34 +987,14 @@ func TestConnectorsCreateDefaultsToAdminsAllowPolicy(t *testing.T) {
 	selector, _ := policy.Body["selector_v2"].(map[string]any)
 	principal, _ := policy.Body["principal"].(map[string]any)
 	target, _ := policy.Body["target"].(map[string]any)
-	if principal["kind"] != "group" || principal["value"] != "admins" || target["kind"] != "capability" || target["value"] != fmt.Sprint(selector["capability"]) || policy.Body["action"] != "permit" {
-		t.Fatalf("default policy = %#v", policy)
+	if principal["kind"] != "autogroup" || principal["value"] != "member" || target["kind"] != "capability" || target["value"] != fmt.Sprint(selector["capability"]) || policy.Body["action"] != "permit" {
+		t.Fatalf("default policy principal=%v target=%v body=%#v", principal, target, policy.Body)
 	}
 	if selector["connector_id"] != testConnectorID || selector["source"] != "gmail" {
 		t.Fatalf("default selector = %#v", selector)
 	}
-	if !strings.Contains(fmt.Sprint(policy.Body["name"]), "admins") || !strings.Contains(stdout, "Allowed group admins to use team-mail") || !strings.Contains(stdout, "policy ") {
+	if !strings.Contains(fmt.Sprint(policy.Body["name"]), "autogroup:member") || !strings.Contains(stdout, "Allowed group autogroup:member to use team-mail") || !strings.Contains(stdout, "policy ") {
 		t.Fatalf("stdout=%q policy=%#v", stdout, policy.Body)
-	}
-}
-
-func TestConnectorsCreateMissingAdminsFailsBeforeCreate(t *testing.T) {
-	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
-		if r.Method == http.MethodGet && r.Path == "/api/v1/groups" {
-			_, _ = w.Write([]byte(`[{"id":"55555555-5555-5555-5555-555555555555","name":"Engineering"}]`))
-			return
-		}
-		t.Errorf("unexpected request %s %s", r.Method, r.Path)
-		http.Error(w, "unexpected", http.StatusNotFound)
-	})
-	code, _, stderr := runConnectors(t, server, store, "", "create", "--workspace", "Main", "--provider", "gmail", "--name", "team-mail")
-	if code != 1 || !strings.Contains(stderr, "admins") || !strings.Contains(stderr, "--allow-group NAME") || !strings.Contains(stderr, "--no-default-access") {
-		t.Fatalf("exit=%d stderr=%q", code, stderr)
-	}
-	for _, req := range fake.requests {
-		if req.Method == http.MethodPost && req.Path == "/api/v1/data-connectors" {
-			t.Fatal("connector was created without an admins group")
-		}
 	}
 }
 
@@ -1542,4 +1525,104 @@ func testUserToken(sub string) string {
 	hdr := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
 	pld := base64.RawURLEncoding.EncodeToString([]byte(`{"org_id":"org-1","sub":"` + sub + `"}`))
 	return hdr + "." + pld + "."
+}
+
+// defaultAccessConsole fakes a workspace with no seeded "admins" group
+// (ADR-049) that answers every connector create path: built-in provider,
+// catalog provider (sealed DSN), and MCP template.
+func defaultAccessConsole(t *testing.T) (*fakeConsole, *httptest.Server, *memoryCredentialStore) {
+	t.Helper()
+	private, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake, server, store := newFakeConsole(t, func(w http.ResponseWriter, r consoleRequest) {
+		switch {
+		case r.Method == http.MethodGet && r.Path == "/api/v1/groups":
+			_, _ = w.Write([]byte(`[{"id":"55555555-5555-5555-5555-555555555555","name":"Engineering"}]`))
+		case r.Method == http.MethodGet && r.Path == "/api/v1/connector-templates/grafana":
+			_, _ = w.Write([]byte(grafanaTemplate))
+		case r.Method == http.MethodGet && r.Path == "/api/v1/organizations/org-1/credential-store/recipients":
+			_, _ = w.Write([]byte(`{"credential_store_installation_id":"` + testStoreID + `","secret_backend":"aws-secrets-manager","recipients":[{"runtime_installation_id":"` + testRuntimeID + `","key_id":"k1","public_key":"` + base64.RawStdEncoding.EncodeToString(private.PublicKey().Bytes()) + `"}]}`))
+		case r.Method == http.MethodPost && r.Path == "/api/v1/data-connectors":
+			createdResponse(w, r)
+		case r.Method == http.MethodPost && r.Path == "/api/v1/data-connectors/"+testConnectorID+":setSecret":
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"field":"dsn","set":false,"generation":1,"delivered_at":null}`))
+		case r.Method == http.MethodPost && r.Path == typedPoliciesPath():
+			_, _ = w.Write([]byte(`{"id":"` + testPolicyID + `"}`))
+		case r.Method == http.MethodGet && r.Path == "/api/v1/data-connectors/"+testConnectorID:
+			_, _ = w.Write([]byte(`{"id":"` + testConnectorID + `","name":"c","status":"active"}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.Path)
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	store.token = workspaceTestToken()
+	return fake, server, store
+}
+
+var defaultAccessCreatePaths = []struct {
+	name, stdin string
+	args        []string
+}{
+	{"built-in provider", "", []string{"create", "--workspace", "Main", "--provider", "gmail", "--name", "team-mail"}},
+	{"catalog provider", databaseDSNs["postgres"] + "\n", []string{"create", "--workspace", "Main", "--provider", "postgres", "--name", "warehouse"}},
+	{"mcp template", "", []string{"create", "--workspace", "Main", "--template", "grafana", "--label", "Grafana"}},
+}
+
+// TestConnectorsCreateDefaultAccessConfirmNamesAutogroupMember: every create
+// path's confirmation names the group it will actually allow by default.
+func TestConnectorsCreateDefaultAccessConfirmNamesAutogroupMember(t *testing.T) {
+	for _, tc := range defaultAccessCreatePaths {
+		t.Run(tc.name, func(t *testing.T) {
+			fake, server, store := defaultAccessConsole(t)
+			var stdout, stderr bytes.Buffer
+			// No --yes: the confirmation is printed, and a non-terminal stdin declines it.
+			code := runConnectorsCommand(tc.args, &stdout, &stderr, strings.NewReader(tc.stdin), server.Client(), store)
+			if code != 2 {
+				t.Fatalf("exit=%d stderr=%q", code, stderr.String())
+			}
+			if want := "This will allow autogroup:member (everyone in the workspace) to use it."; !strings.Contains(stderr.String(), want) {
+				t.Fatalf("stderr=%q, want %q", stderr.String(), want)
+			}
+			if strings.Contains(stderr.String(), "admins") {
+				t.Fatalf("stderr still names the admins group: %q", stderr.String())
+			}
+			for _, req := range fake.requests {
+				if req.Method == http.MethodPost {
+					t.Fatalf("declined create sent %s %s", req.Method, req.Path)
+				}
+			}
+		})
+	}
+}
+
+// TestConnectorsCreateDefaultAccessPermitsAutogroupMemberOnEveryPath: every
+// create path's default permit subject is autogroup:member, in a workspace
+// with no admins group.
+func TestConnectorsCreateDefaultAccessPermitsAutogroupMemberOnEveryPath(t *testing.T) {
+	for _, tc := range defaultAccessCreatePaths {
+		t.Run(tc.name, func(t *testing.T) {
+			fake, server, store := defaultAccessConsole(t)
+			code, _, stderr := runConnectors(t, server, store, tc.stdin, tc.args...)
+			if code != 0 {
+				t.Fatalf("exit=%d stderr=%s", code, stderr)
+			}
+			policies := 0
+			for _, req := range fake.requests {
+				if req.Method != http.MethodPost || req.Path != typedPoliciesPath() {
+					continue
+				}
+				policies++
+				principal, _ := req.Body["principal"].(map[string]any)
+				if principal["kind"] != "autogroup" || principal["value"] != "member" {
+					t.Fatalf("default permit principal = %v, want autogroup:member", principal)
+				}
+			}
+			if policies == 0 {
+				t.Fatal("no default permit was created")
+			}
+		})
+	}
 }
